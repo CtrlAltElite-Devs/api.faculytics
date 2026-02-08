@@ -30,7 +30,13 @@
     ]
   },
   "dependencies": {
+    "@mikro-orm/core": "^6.6.6",
+    "@mikro-orm/migrations": "^6.6.6",
+    "@mikro-orm/nestjs": "^6.1.1",
+    "@mikro-orm/postgresql": "^6.6.6",
+    "@mikro-orm/seeder": "^6.6.6",
     "@nestjs/common": "^11.0.1",
+    "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/swagger": "^11.2.6",
@@ -39,11 +45,13 @@
     "dotenv": "^17.2.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "uuid": "^13.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
     "@eslint/js": "^9.18.0",
+    "@mikro-orm/cli": "^6.6.6",
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",

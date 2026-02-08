@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import {
   ApplyConfigurations,
   envPortResolve,
+  InitializeDatabase,
   useNestFactoryCustomOptions,
   usePostBootstrap,
 } from './configurations/index.config';
@@ -14,6 +15,7 @@ async function bootstrap() {
   );
 
   ApplyConfigurations(app);
+  await InitializeDatabase(app);
   app.enableShutdownHooks();
   const port = envPortResolve();
   await app.listen(port);

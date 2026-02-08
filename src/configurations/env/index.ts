@@ -4,8 +4,10 @@ import { moodleEnvSchema } from './moodle.env';
 import { serverEnvSchema } from './server.env';
 import { corsEnvSchema } from './cors.env';
 import { DEFAULT_PORT } from '../common/constants';
+import { databaseEnvSchema } from './database.env';
 
 export const envSchema = z.object({
+  ...databaseEnvSchema.shape,
   ...serverEnvSchema.shape,
   ...corsEnvSchema.shape,
   ...moodleEnvSchema.shape,

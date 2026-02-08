@@ -6,7 +6,13 @@ export default function UseCorsConfigurations(app: INestApplication<any>) {
   console.log("cors: ", corsOrigins);
   app.enableCors({
     credentials: true,
-    origin: (origin, callback) => {
+    origin: (
+      origin: string | undefined,
+      callback: (
+        err: Error | null,
+        origin?: boolean | string | RegExp | (string | RegExp)[],
+      ) => void,
+    ) => {
       // Non-browser requests (curl, server-to-server)
       if (!origin) {
         return callback(null, true);

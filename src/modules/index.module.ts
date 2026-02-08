@@ -6,6 +6,7 @@ import { JwtModule } from '@nestjs/jwt';
 import AuthModule from './auth/auth.module';
 import HealthModule from './health/health.module';
 import MoodleModule from './moodle/moodle.module';
+import { PassportModule } from '@nestjs/passport';
 
 export const ApplicationModules = [HealthModule, MoodleModule, AuthModule];
 
@@ -14,6 +15,7 @@ export const InfrastructureModules = [
     isGlobal: true,
     validate: validateEnv,
   }),
+  PassportModule.register({ defaultStrategy: 'jwt' }),
   MikroOrmModule.forRootAsync({ useFactory: () => config }),
   JwtModule.register({
     global: true,

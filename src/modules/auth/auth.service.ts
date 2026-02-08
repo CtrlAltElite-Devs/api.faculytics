@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { MoodleService } from '../moodle/moodle.service';
 import { LoginRequest } from './dto/requests/login.request.dto';
 import { MoodleSyncService } from '../moodle/moodle-sync.service';
@@ -7,6 +7,8 @@ import UnitOfWork from '../common/unit-of-work';
 import { JwtPayload } from '../common/custom-jwt-service/jwt-payload.dto';
 import { CustomJwtService } from '../common/custom-jwt-service';
 import { LoginResponse } from './dto/responses/login.response.dto';
+import { User } from 'src/entities/user.entity';
+import { MeResponse } from './dto/responses/me.response.dto';
 
 @Injectable()
 export class AuthService {
@@ -40,5 +42,11 @@ export class AuthService {
     const jwtPayload = JwtPayload.Create(user.id, user.moodleUserId);
     const signedTokens = await this.jwtService.CreateSignedTokens(jwtPayload);
     return LoginResponse.Map(signedTokens);
+  }
+
+  Me(user: User | null | undefined) {
+    if (user === null || user === undefined)
+      throw new NotFoundException('user not found');
+    else return MeResponse.Map(user);
   }
 }

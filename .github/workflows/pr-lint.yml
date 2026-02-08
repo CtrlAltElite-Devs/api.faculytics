@@ -1,0 +1,36 @@
+name: PR Lint
+
+on:
+    push:
+        branches:
+            - main
+            - staging
+            - develop
+    pull_request:
+        branches:
+            - "**"
+
+jobs:
+    lint:
+        name: Lint Code
+        runs-on: ubuntu-latest
+
+        steps:
+            # Checkout
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            # Setup Node.js with npm cache
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+                  cache: "npm"
+
+            # Install dependencies
+            - name: Install dependencies
+              run: npm ci
+
+            # Run lint
+            - name: Run lint
+              run: npm run lint

@@ -1,9 +1,9 @@
-import { INestApplication } from "@nestjs/common";
-import { env } from "../env";
+import { INestApplication } from '@nestjs/common';
+import { env } from '../env';
 
 export default function UseCorsConfigurations(app: INestApplication<any>) {
   const corsOrigins = env.CORS_ORIGINS;
-  console.log("cors: ", corsOrigins);
+  console.log('cors: ', corsOrigins);
   app.enableCors({
     credentials: true,
     origin: (
@@ -19,7 +19,7 @@ export default function UseCorsConfigurations(app: INestApplication<any>) {
       }
 
       // Logical wildcard
-      if (corsOrigins.includes("*")) {
+      if (corsOrigins.includes('*')) {
         return callback(null, origin); // reflect request origin
       }
 
@@ -28,7 +28,7 @@ export default function UseCorsConfigurations(app: INestApplication<any>) {
         return callback(null, origin);
       }
 
-      callback(new Error("Not allowed by CORS"));
+      callback(new Error('Not allowed by CORS'));
     },
   });
 }

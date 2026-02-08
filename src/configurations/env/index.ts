@@ -1,14 +1,14 @@
-import "dotenv/config";
-import z from "zod";
-import { moodleEnvSchema } from "./moodle.env";
-import { serverEnvSchema } from "./server.env";
-import { corsEnvSchema } from "./cors.env";
+import 'dotenv/config';
+import z from 'zod';
+import { moodleEnvSchema } from './moodle.env';
+import { serverEnvSchema } from './server.env';
+import { corsEnvSchema } from './cors.env';
 
 export const envSchema = z.object({
   ...serverEnvSchema.shape,
   ...corsEnvSchema.shape,
-  ...moodleEnvSchema.shape
-})
+  ...moodleEnvSchema.shape,
+});
 
 export type Env = z.infer<typeof envSchema>;
 

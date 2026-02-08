@@ -1,19 +1,19 @@
-import { INestApplication } from "@nestjs/common";
-import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import { ACCESS_TOKEN } from "../common/constants";
+import { INestApplication } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ACCESS_TOKEN } from '../common/constants';
 
 export default function UseApiDocumentations(app: INestApplication) {
   const config = new DocumentBuilder()
-    .setTitle("Faculytics API")
-    .setDescription("This is the official API documentation for Faculytics")
-    .setVersion("1.0")
+    .setTitle('Faculytics API')
+    .setDescription('This is the official API documentation for Faculytics')
+    .setVersion('1.0')
     .addBearerAuth(
       {
-        type: "http",
-        scheme: "bearer",
-        bearerFormat: "JWT",
-        name: "Authorization",
-        in: "header",
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'Authorization',
+        in: 'header',
       },
       ACCESS_TOKEN,
     )
@@ -21,5 +21,5 @@ export default function UseApiDocumentations(app: INestApplication) {
 
   const documentFactory = () => SwaggerModule.createDocument(app, config);
 
-  SwaggerModule.setup("swagger", app, documentFactory);
+  SwaggerModule.setup('swagger', app, documentFactory);
 }

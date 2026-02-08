@@ -4,8 +4,8 @@ import { ACCESS_TOKEN } from "../common/constants";
 
 export default function UseApiDocumentations(app: INestApplication) {
   const config = new DocumentBuilder()
-    .setTitle("MCWD API")
-    .setDescription("This is the official MCWD API")
+    .setTitle("Faculytics API")
+    .setDescription("This is the official API documentation for Faculytics")
     .setVersion("1.0")
     .addBearerAuth(
       {

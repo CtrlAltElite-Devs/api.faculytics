@@ -1,3 +1,4 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { MoodleEndpoint, MoodleWebServiceFunction } from './moodle.constants';
 import {
   MoodleTokenResponse,
@@ -32,7 +33,15 @@ export class MoodleClient {
       }),
     });
 
-    const tokenRes = (await res.json()) as MoodleTokenResponse;
+    const data = (await res.json()) as MoodleTokenResponse & { error?: string };
+
+    if (res.status === 201 || data.error) {
+      throw new UnauthorizedException(
+        data.error || 'Invalid login, please try again',
+      );
+    }
+
+    const tokenRes = data;
     if (tokenRes.token) {
       this.token = tokenRes.token;
     }
@@ -72,12 +81,18 @@ export class MoodleClient {
     );
   }
 
-  async getEnrolledCourses(userid: number): Promise<MoodleCourse[]> {
+  async getEnrolledCourses(moodleUserId: number): Promise<MoodleCourse[]> {
     return await this.call<MoodleCourse[]>(
       MoodleWebServiceFunction.GET_USER_COURSES,
       {
-        userid: userid.toString(),
+        userid: moodleUserId.toString(),
       },
     );
+  }
+
+  async getEnrolledUsersByCourse(moodleCourseId: number) {
+    return await this.call(MoodleWebServiceFunction.GET_ENROLLED_USERS, {
+      courseid: moodleCourseId.toString(),
+    });
   }
 }

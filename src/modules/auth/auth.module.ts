@@ -8,6 +8,7 @@ import { User } from '../../entities/user.entity';
 import MoodleModule from '../moodle/moodle.module';
 import DataLoaderModule from '../common/data-loaders/index.module';
 import { JwtStrategy } from 'src/security/passport-strategys/jwt.strategy';
+import { JwtRefreshStrategy } from 'src/security/passport-strategys/refresh-jwt.strategy';
 
 @Module({
   imports: [
@@ -17,7 +18,7 @@ import { JwtStrategy } from 'src/security/passport-strategys/jwt.strategy';
     DataLoaderModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, JwtRefreshStrategy],
   exports: [AuthService],
 })
 export default class AuthModule {}

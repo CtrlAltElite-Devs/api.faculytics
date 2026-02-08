@@ -1,7 +1,8 @@
 import z from 'zod';
+import { DEFAULT_PORT } from '../common/constants';
 
 export const serverEnvSchema = z.object({
-  PORT: z.coerce.number().default(5200),
+  PORT: z.coerce.number().default(DEFAULT_PORT),
   NODE_ENV: z
     .enum(['development', 'production', 'test'])
     .default('development'),

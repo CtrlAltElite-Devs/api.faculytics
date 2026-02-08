@@ -4,6 +4,9 @@ import { LoginRequest } from './dto/requests/login.request.dto';
 import { MoodleSyncService } from '../moodle/moodle-sync.service';
 import { MoodleTokenRepository } from '../../repositories/moodle-token.repository';
 import UnitOfWork from '../common/unit-of-work';
+import { JwtPayload } from '../common/custom-jwt-service/jwt-payload.dto';
+import { CustomJwtService } from '../common/custom-jwt-service';
+import { LoginResponse } from './dto/responses/login.response.dto';
 
 @Injectable()
 export class AuthService {
@@ -11,6 +14,7 @@ export class AuthService {
     private readonly moodleService: MoodleService,
     private readonly moodleSyncService: MoodleSyncService,
     private readonly moodleTokenRepository: MoodleTokenRepository,
+    private readonly jwtService: CustomJwtService,
     private readonly unitOfWork: UnitOfWork,
   ) {}
 
@@ -31,8 +35,10 @@ export class AuthService {
     );
 
     await this.unitOfWork.CommitChangesAsync();
-    // return jwt
 
-    return user;
+    // return jwt
+    const jwtPayload = JwtPayload.Create(user.id, user.moodleUserId);
+    const signedTokens = await this.jwtService.CreateSignedTokens(jwtPayload);
+    return LoginResponse.Map(signedTokens);
   }
 }

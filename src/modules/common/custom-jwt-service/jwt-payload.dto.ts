@@ -1,10 +1,10 @@
 export class JwtPayload {
-  userId: string;
+  sub: string;
   moodleUserId: number;
 
   static Create(userId: string, moodleUserId: number): JwtPayload {
     return {
-      userId,
+      sub: userId,
       moodleUserId,
     };
   }

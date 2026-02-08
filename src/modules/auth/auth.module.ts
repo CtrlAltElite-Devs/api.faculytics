@@ -6,15 +6,18 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { User } from '../../entities/user.entity';
 import MoodleModule from '../moodle/moodle.module';
+import DataLoaderModule from '../common/data-loaders/index.module';
+import { JwtStrategy } from 'src/security/passport-strategys/jwt.strategy';
 
 @Module({
   imports: [
     MikroOrmModule.forFeature([User, MoodleToken]),
     CommonModule,
     MoodleModule,
+    DataLoaderModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService],
+  providers: [AuthService, JwtStrategy],
   exports: [AuthService],
 })
 export default class AuthModule {}

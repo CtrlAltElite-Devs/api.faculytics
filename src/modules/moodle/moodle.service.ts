@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { MoodleClient } from './lib/moodle.client';
-import { env } from 'src/configurations/env';
+import { env } from '../../configurations/env';
 import { LoginMoodleRequest } from './dto/requests/login-moodle.request.dto';
 import { GetSiteInfoRequest } from './dto/requests/get-site-info.request.dto';
 import { GetEnrolledCoursesRequest } from './dto/requests/get-enrolled-courses.request.dto';

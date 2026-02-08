@@ -1,11 +1,11 @@
-import { NestFactory } from "@nestjs/core";
+import { NestFactory } from '@nestjs/core';
 import {
   ApplyConfigurations,
   envPortResolve,
   useNestFactoryCustomOptions,
   usePostBootstrap,
-} from "./configurations/index.config";
-import AppModule from "./app.module";
+} from './configurations/index.config';
+import AppModule from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(
@@ -14,10 +14,13 @@ async function bootstrap() {
   );
 
   ApplyConfigurations(app);
-
+  app.enableShutdownHooks();
   const port = envPortResolve();
   await app.listen(port);
-
-  usePostBootstrap();
 }
-bootstrap();
+bootstrap()
+  .then(usePostBootstrap)
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

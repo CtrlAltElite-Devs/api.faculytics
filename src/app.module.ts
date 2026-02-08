@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
-import { ApplicationModules } from './modules/index.module';
+import {
+  ApplicationModules,
+  InfrastructureModules,
+} from './modules/index.module';
 
 @Module({
-  imports: [...ApplicationModules],
+  imports: [...InfrastructureModules, ...ApplicationModules],
 })
 export default class AppModule {}

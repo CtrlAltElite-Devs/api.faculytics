@@ -1,5 +1,3 @@
-import HealthModule from "./health/health.module";
+import HealthModule from './health/health.module';
 
-export const ApplicationModules = [
-  HealthModule
-]
+export const ApplicationModules = [HealthModule];

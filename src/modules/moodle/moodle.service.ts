@@ -4,6 +4,8 @@ import { env } from '../../configurations/env';
 import { LoginMoodleRequest } from './dto/requests/login-moodle.request.dto';
 import { GetSiteInfoRequest } from './dto/requests/get-site-info.request.dto';
 import { GetEnrolledCoursesRequest } from './dto/requests/get-enrolled-courses.request.dto';
+import { GetEnrolledUsersByCourseRequest } from './dto/requests/get-enrolled-users-by-course.request.dto';
+import { GetCourseUserProfilesRequest } from './dto/requests/get-course-user-profiles.request.dto';
 
 @Injectable()
 export class MoodleService {
@@ -26,5 +28,19 @@ export class MoodleService {
     const client = this.BuildMoodleClient();
     client.setToken(dto.token);
     return await client.getEnrolledCourses(dto.userId);
+  }
+
+  async GetEnrolledUsersByCourse(dto: GetEnrolledUsersByCourseRequest) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getEnrolledUsersByCourse(dto.courseId);
+  }
+
+  async GetCourseUserProfiles(dto: GetCourseUserProfilesRequest) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getCourseUserProfiles([
+      { userId: dto.userId, courseId: dto.courseId },
+    ]);
   }
 }

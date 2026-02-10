@@ -3,6 +3,8 @@ import { LoginMoodleRequest } from './dto/requests/login-moodle.request.dto';
 import { MoodleService } from './moodle.service';
 import { GetSiteInfoRequest } from './dto/requests/get-site-info.request.dto';
 import { GetEnrolledCoursesRequest } from './dto/requests/get-enrolled-courses.request.dto';
+import { GetEnrolledUsersByCourseRequest } from './dto/requests/get-enrolled-users-by-course.request.dto';
+import { GetCourseUserProfilesRequest } from './dto/requests/get-course-user-profiles.request.dto';
 
 @Controller('moodle')
 export class MoodleController {
@@ -21,5 +23,17 @@ export class MoodleController {
   @Post('get-enrolled-courses')
   async GetEnrolledCourses(@Body() body: GetEnrolledCoursesRequest) {
     return await this.moodleService.GetEnrolledCourses(body);
+  }
+
+  @Post('get-enrolled-users-by-course')
+  async GetEnrolledUsersByCourse(
+    @Body() body: GetEnrolledUsersByCourseRequest,
+  ) {
+    return await this.moodleService.GetEnrolledUsersByCourse(body);
+  }
+
+  @Post('get-course-user-profiles')
+  async GetCourseUserProfiles(@Body() body: GetCourseUserProfilesRequest) {
+    return await this.moodleService.GetCourseUserProfiles(body);
   }
 }

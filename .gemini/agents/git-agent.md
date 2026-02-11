@@ -1,6 +1,6 @@
 ---
 name: git-agent
-description: Git expert agent which should be used for all local and remote git operations. For example: making commits (Conventional Commits), branching, searching for regressions with bisect, and interacting with source control and issue providers like GitHub.
+description: 'Git expert agent which should be used for all local and remote git operations. For example: making commits (Conventional Commits), branching, searching for regressions with bisect, and interacting with source control and issue providers like GitHub.'
 model: gemini-2.0-flash
 kind: local
 tools:

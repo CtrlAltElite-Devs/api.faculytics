@@ -4,7 +4,9 @@ import {
   MoodleTokenResponse,
   MoodleSiteInfoResponse,
   MoodleCourse,
+  MoodleEnrolledUser,
 } from './moodle.types';
+import { MoodleUserProfile } from '../dto/responses/user-profile.response.dto';
 
 export class MoodleClient {
   private baseUrl: string;
@@ -90,9 +92,29 @@ export class MoodleClient {
     );
   }
 
-  async getEnrolledUsersByCourse(moodleCourseId: number) {
-    return await this.call(MoodleWebServiceFunction.GET_ENROLLED_USERS, {
-      courseid: moodleCourseId.toString(),
+  async getEnrolledUsersByCourse(
+    moodleCourseId: number,
+  ): Promise<MoodleEnrolledUser[]> {
+    return await this.call<MoodleEnrolledUser[]>(
+      MoodleWebServiceFunction.GET_ENROLLED_USERS,
+      {
+        courseid: moodleCourseId.toString(),
+      },
+    );
+  }
+
+  async getCourseUserProfiles(
+    userList: { userId: number; courseId: number }[],
+  ): Promise<MoodleUserProfile[]> {
+    const params: Record<string, string> = {};
+    userList.forEach((user, index) => {
+      params[`userlist[${index}][userid]`] = user.userId.toString();
+      params[`userlist[${index}][courseid]`] = user.courseId.toString();
     });
+
+    return await this.call<MoodleUserProfile[]>(
+      MoodleWebServiceFunction.GET_COURSE_USER_PROFILES,
+      params,
+    );
   }
 }

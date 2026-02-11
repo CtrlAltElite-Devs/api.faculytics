@@ -76,3 +76,6 @@ To ensure efficiency and adherence to project standards, use the following speci
 - **git-agent**: Git expert agent for all local and remote operations (commits, branching, bisect, remote sync).
   - **Tools**: `run_shell_command`, `read_file`, `grep_search`, `list_directory`.
   - **Usage**: Invoke for any version control tasks, preparing PRs, or investigating history.
+- **pr-agent**: PR expert agent for automating pull requests and release workflows.
+  - **Tools**: `run_shell_command`, `read_file`, `grep_search`, `list_directory`.
+  - **Usage**: Invoke to create PRs, automate cherry-picking between branches (develop/staging/master), and generate descriptions.

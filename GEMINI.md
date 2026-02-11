@@ -68,3 +68,11 @@ The application follows the standard NestJS modular architecture, split into **I
   - Use `MikroORM` for all database interactions.
   - Run migrations via MikroORM CLI (commands not explicitly in package.json scripts, likely accessed via `npx mikro-orm`).
 - **Code Style:** strict ESLint and Prettier rules are enforced via `husky` pre-commit hooks.
+
+## Available Agents
+
+To ensure efficiency and adherence to project standards, use the following specialized agents for their respective domains:
+
+- **git-agent**: Git expert agent for all local and remote operations (commits, branching, bisect, remote sync).
+  - **Tools**: `run_shell_command`, `read_file`, `grep_search`, `list_directory`.
+  - **Usage**: Invoke for any version control tasks, preparing PRs, or investigating history.

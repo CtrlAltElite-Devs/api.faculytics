@@ -41,10 +41,10 @@ describe('AuthService', () => {
         {
           provide: UnitOfWork,
           useValue: {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
             runInTransaction: jest
               .fn()
               .mockImplementation((cb: (em: any) => any) =>
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-return
                 cb({ getRepository: jest.fn() }),
               ),
           },

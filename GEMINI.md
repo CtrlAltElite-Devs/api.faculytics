@@ -79,3 +79,7 @@ To ensure efficiency and adherence to project standards, use the following speci
 - **pr-agent**: PR expert agent for automating pull requests and release workflows.
   - **Tools**: `run_shell_command`, `read_file`, `grep_search`, `list_directory`.
   - **Usage**: Invoke to create PRs, automate cherry-picking between branches (develop/staging/master), and generate descriptions.
+- **e2e-test-agent**: Expert in End-to-End testing for the NestJS application.
+  - **Usage**: Invoke for scenario generation, database management for tests, and failure investigation.
+- **moodle-api-agent**: Expert in Moodle Web Service integration.
+  - **Usage**: Invoke to scaffold Moodle API calls, generate DTOs, and integrate with MoodleClient and MoodleService.

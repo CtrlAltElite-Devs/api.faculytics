@@ -7,8 +7,14 @@ import AuthModule from './auth/auth.module';
 import HealthModule from './health/health.module';
 import MoodleModule from './moodle/moodle.module';
 import { PassportModule } from '@nestjs/passport';
+import { ChatKitModule } from './chat-kit/chat-kit.module';
 
-export const ApplicationModules = [HealthModule, MoodleModule, AuthModule];
+export const ApplicationModules = [
+  HealthModule,
+  MoodleModule,
+  AuthModule,
+  ChatKitModule,
+];
 
 export const InfrastructureModules = [
   ConfigModule.forRoot({

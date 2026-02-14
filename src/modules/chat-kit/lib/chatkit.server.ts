@@ -38,9 +38,9 @@ export class ChatKitServerImpl extends ChatKitServer<ChatKitContext> {
     })) as AsyncIterable<any>;
 
     // Stream events to the client
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument -- SDK type mismatch between bundled agents versions
     for await (const event of agents.streamAgentResponse(
       agentContext,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       runnerStream,
     )) {
       yield event;

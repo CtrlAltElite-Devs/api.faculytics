@@ -9,4 +9,6 @@ export enum MoodleWebServiceFunction {
   GET_USER_COURSES = 'core_enrol_get_users_courses',
   GET_ENROLLED_USERS = 'core_enrol_get_enrolled_users',
   GET_COURSE_USER_PROFILES = 'core_user_get_course_user_profiles',
+  GET_ALL_COURSES = 'core_course_get_courses',
+  GET_COURSE_CATEGORIES = 'core_course_get_categories',
 }

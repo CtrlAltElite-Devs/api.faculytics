@@ -5,6 +5,8 @@ import { GetSiteInfoRequest } from './dto/requests/get-site-info.request.dto';
 import { GetEnrolledCoursesRequest } from './dto/requests/get-enrolled-courses.request.dto';
 import { GetEnrolledUsersByCourseRequest } from './dto/requests/get-enrolled-users-by-course.request.dto';
 import { GetCourseUserProfilesRequest } from './dto/requests/get-course-user-profiles.request.dto';
+import { GetMoodleCoursesRequest } from './dto/requests/get-courses-request.dto';
+import { GetCourseCategoriesRequest } from './dto/requests/get-course-categories.request.dto';
 
 @Controller('moodle')
 export class MoodleController {
@@ -35,5 +37,15 @@ export class MoodleController {
   @Post('get-course-user-profiles')
   async GetCourseUserProfiles(@Body() body: GetCourseUserProfilesRequest) {
     return await this.moodleService.GetCourseUserProfiles(body);
+  }
+
+  @Post('get-moodle-courses')
+  async GetMoodleCourses(@Body() body: GetMoodleCoursesRequest) {
+    return await this.moodleService.GetCourses(body);
+  }
+
+  @Post('get-course-categories')
+  async GetCategories(@Body() body: GetCourseCategoriesRequest) {
+    return await this.moodleService.GetCategories(body);
   }
 }

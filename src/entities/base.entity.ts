@@ -3,7 +3,7 @@ import { v4 } from 'uuid';
 
 export abstract class CustomBaseEntity {
   @PrimaryKey()
-  id = v4();
+  id: string & Opt = v4();
 
   @Property()
   createdAt: Date & Opt = new Date();

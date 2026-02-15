@@ -8,6 +8,7 @@ import HealthModule from './health/health.module';
 import MoodleModule from './moodle/moodle.module';
 import { PassportModule } from '@nestjs/passport';
 import { ChatKitModule } from './chat-kit/chat-kit.module';
+import { EnrollmentsModule } from './enrollments/enrollments.module';
 import { ScheduleModule } from '@nestjs/schedule';
 
 export const ApplicationModules = [
@@ -15,6 +16,7 @@ export const ApplicationModules = [
   MoodleModule,
   AuthModule,
   ChatKitModule,
+  EnrollmentsModule,
 ];
 
 export const InfrastructureModules = [

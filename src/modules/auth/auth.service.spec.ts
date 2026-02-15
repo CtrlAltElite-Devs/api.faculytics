@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AuthService } from './auth.service';
 import { MoodleService } from '../moodle/moodle.service';
 import { MoodleSyncService } from '../moodle/moodle-sync.service';
+import { MoodleUserHydrationService } from '../moodle/moodle-user-hydration.service';
 import { CustomJwtService } from '../common/custom-jwt-service';
 import UnitOfWork from '../common/unit-of-work';
 
@@ -11,6 +12,8 @@ describe('AuthService', () => {
   let moodleService: MoodleService;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let moodleSyncService: MoodleSyncService;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  let moodleUserHydrationService: MoodleUserHydrationService;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let jwtService: CustomJwtService;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -30,6 +33,12 @@ describe('AuthService', () => {
           provide: MoodleSyncService,
           useValue: {
             // TODO: Mock methods
+          },
+        },
+        {
+          provide: MoodleUserHydrationService,
+          useValue: {
+            hydrateUserCourses: jest.fn(),
           },
         },
         {
@@ -55,6 +64,9 @@ describe('AuthService', () => {
     service = module.get<AuthService>(AuthService);
     moodleService = module.get<MoodleService>(MoodleService);
     moodleSyncService = module.get<MoodleSyncService>(MoodleSyncService);
+    moodleUserHydrationService = module.get<MoodleUserHydrationService>(
+      MoodleUserHydrationService,
+    );
     jwtService = module.get<CustomJwtService>(CustomJwtService);
     unitOfWork = module.get<UnitOfWork>(UnitOfWork);
   });

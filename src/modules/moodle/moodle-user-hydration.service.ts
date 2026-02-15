@@ -1,4 +1,3 @@
-import { EntityManager } from '@mikro-orm/core';
 import { Injectable, Logger } from '@nestjs/common';
 import { MoodleService } from './moodle.service';
 import { User } from 'src/entities/user.entity';
@@ -12,7 +11,6 @@ export class MoodleUserHydrationService {
   private readonly logger = new Logger(MoodleUserHydrationService.name);
 
   constructor(
-    private readonly em: EntityManager,
     private readonly moodleService: MoodleService,
     private readonly unitOfWork: UnitOfWork,
   ) {}
@@ -22,6 +20,7 @@ export class MoodleUserHydrationService {
    * This is triggered on login to ensure immediate consistency.
    */
   async hydrateUserCourses(moodleUserId: number, moodleToken: string) {
+    const startTime = Date.now();
     this.logger.log(`Hydrating courses for Moodle user ${moodleUserId}...`);
 
     const remoteCourses = await this.moodleService.GetEnrolledCourses({
@@ -31,12 +30,21 @@ export class MoodleUserHydrationService {
 
     await this.unitOfWork.runInTransaction(async (tx) => {
       const user = await tx.findOneOrFail(User, { moodleUserId });
+      const programCache = new Map<number, Program>();
 
       for (const remoteCourse of remoteCourses) {
         // Find the program (category) this course belongs to
-        const program = await tx.findOne(Program, {
-          moodleCategoryId: remoteCourse.category,
-        });
+        let program = programCache.get(remoteCourse.category);
+
+        if (!program) {
+          const foundProgram = await tx.findOne(Program, {
+            moodleCategoryId: remoteCourse.category,
+          });
+          if (foundProgram) {
+            program = foundProgram;
+            programCache.set(remoteCourse.category, program);
+          }
+        }
 
         if (!program) {
           this.logger.warn(
@@ -62,7 +70,7 @@ export class MoodleUserHydrationService {
           { managed: false },
         );
 
-        await tx.upsert(Course, courseData, {
+        const course = await tx.upsert(Course, courseData, {
           onConflictFields: ['moodleCourseId'],
           onConflictMergeFields: [
             'shortname',
@@ -74,11 +82,6 @@ export class MoodleUserHydrationService {
             'isActive',
             'updatedAt',
           ],
-        });
-
-        // Load course reference to ensure we have the internal ID
-        const course = await tx.findOneOrFail(Course, {
-          moodleCourseId: remoteCourse.id,
         });
 
         // 2. Upsert Enrollment
@@ -106,8 +109,9 @@ export class MoodleUserHydrationService {
       }
     });
 
+    const duration = Date.now() - startTime;
     this.logger.log(
-      `Finished hydrating courses for Moodle user ${moodleUserId}`,
+      `Finished hydrating courses for Moodle user ${moodleUserId} in ${duration}ms`,
     );
   }
 }

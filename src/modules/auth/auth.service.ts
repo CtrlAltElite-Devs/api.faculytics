@@ -47,7 +47,7 @@ export class AuthService {
 
       await moodleTokenRepository.UpsertFromMoodle(user, moodleTokenResponse);
 
-      // 🚀 Hydrate user courses and enrollments immediately
+      // Hydrate user courses and enrollments immediately
       await this.moodleUserHydrationService.hydrateUserCourses(
         user.moodleUserId,
         moodleTokenResponse.token,

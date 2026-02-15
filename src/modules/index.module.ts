@@ -8,6 +8,7 @@ import HealthModule from './health/health.module';
 import MoodleModule from './moodle/moodle.module';
 import { PassportModule } from '@nestjs/passport';
 import { ChatKitModule } from './chat-kit/chat-kit.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 export const ApplicationModules = [
   HealthModule,
@@ -30,4 +31,5 @@ export const InfrastructureModules = [
       expiresIn: '300s',
     },
   }),
+  ScheduleModule.forRoot(),
 ];

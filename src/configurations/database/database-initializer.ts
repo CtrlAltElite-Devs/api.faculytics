@@ -14,7 +14,7 @@ export default async function InitializeDatabase(app: INestApplication<any>) {
 
 async function migrate(app: INestApplication<any>) {
   const orm = app.get(MikroORM);
-  const migrator = orm.getMigrator();
+  const migrator = orm.migrator;
   const migrationResult = await migrator.up();
   console.log('migration result: ', JSON.stringify(migrationResult, null, 3));
 }

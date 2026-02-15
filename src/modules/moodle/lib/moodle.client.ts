@@ -130,4 +130,17 @@ export class MoodleClient {
       MoodleWebServiceFunction.GET_COURSE_CATEGORIES,
     );
   }
+
+  async getCoursesByField(
+    field: string,
+    value: string,
+  ): Promise<{ courses: MoodleCourse[] }> {
+    return await this.call<{ courses: MoodleCourse[] }>(
+      MoodleWebServiceFunction.GET_COURSES_BY_FIELD,
+      {
+        field,
+        value,
+      },
+    );
+  }
 }

@@ -8,6 +8,7 @@ import { GetEnrolledUsersByCourseRequest } from './dto/requests/get-enrolled-use
 import { GetCourseUserProfilesRequest } from './dto/requests/get-course-user-profiles.request.dto';
 import { GetMoodleCoursesRequest } from './dto/requests/get-courses-request.dto';
 import { GetCourseCategoriesRequest } from './dto/requests/get-course-categories.request.dto';
+import { GetCoursesByFieldRequest } from './dto/requests/get-courses-by-field-request.dto';
 
 @Injectable()
 export class MoodleService {
@@ -56,5 +57,17 @@ export class MoodleService {
     const client = this.BuildMoodleClient();
     client.setToken(dto.token);
     return await client.getCategories();
+  }
+
+  async GetCoursesByField(dto: GetCoursesByFieldRequest) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getCoursesByField(dto.field, dto.value);
+  }
+
+  async GetCoursesByCategory(token: string, categoryId: number) {
+    const client = this.BuildMoodleClient();
+    client.setToken(token);
+    return await client.getCoursesByField('category', categoryId.toString());
   }
 }

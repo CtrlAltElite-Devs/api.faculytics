@@ -1,8 +1,9 @@
-import { Property, Index, ManyToOne, Entity } from '@mikro-orm/core';
+import { Property, Index, ManyToOne, Entity, Unique } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { Program } from './program.entity';
 
 @Entity()
+@Unique({ properties: ['moodleCourseId'] })
 export class Course extends CustomBaseEntity {
   @Property({ unique: true })
   @Index()
@@ -28,4 +29,7 @@ export class Course extends CustomBaseEntity {
 
   @Property()
   timeModified!: Date;
+
+  @Property({ default: true })
+  isActive!: boolean;
 }

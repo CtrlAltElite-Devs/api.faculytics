@@ -1,8 +1,8 @@
-import { Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
+import { Logger, OnApplicationShutdown } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { JobRecordType, StartupJobRegistry } from './startup-job-registry';
 
-export abstract class BaseJob implements OnModuleInit, OnApplicationShutdown {
+export abstract class BaseJob implements OnApplicationShutdown {
   protected readonly logger: Logger;
 
   protected constructor(
@@ -12,8 +12,8 @@ export abstract class BaseJob implements OnModuleInit, OnApplicationShutdown {
     this.logger = new Logger(jobName);
   }
 
-  // 🔹 Called automatically on app startup
-  async onModuleInit() {
+  // 🔹 Executed in sequence during app bootstrap
+  async executeStartup() {
     await Promise.resolve();
     this.logger.log(`Running startup check for ${this.jobName}...`);
     try {

@@ -11,4 +11,5 @@ export enum MoodleWebServiceFunction {
   GET_COURSE_USER_PROFILES = 'core_user_get_course_user_profiles',
   GET_ALL_COURSES = 'core_course_get_courses',
   GET_COURSE_CATEGORIES = 'core_course_get_categories',
+  GET_COURSES_BY_FIELD = 'core_course_get_courses_by_field',
 }

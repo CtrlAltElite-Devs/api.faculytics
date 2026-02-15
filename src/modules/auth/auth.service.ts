@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { MoodleService } from '../moodle/moodle.service';
 import { LoginRequest } from './dto/requests/login.request.dto';
 import { MoodleSyncService } from '../moodle/moodle-sync.service';
+import { MoodleUserHydrationService } from '../moodle/moodle-user-hydration.service';
 import { MoodleTokenRepository } from '../../repositories/moodle-token.repository';
 import UnitOfWork from '../common/unit-of-work';
 import { JwtPayload } from '../common/custom-jwt-service/jwt-payload.dto';
@@ -23,6 +24,7 @@ export class AuthService {
   constructor(
     private readonly moodleService: MoodleService,
     private readonly moodleSyncService: MoodleSyncService,
+    private readonly moodleUserHydrationService: MoodleUserHydrationService,
     private readonly jwtService: CustomJwtService,
     private readonly unitOfWork: UnitOfWork,
   ) {}
@@ -44,6 +46,12 @@ export class AuthService {
         em.getRepository(MoodleToken);
 
       await moodleTokenRepository.UpsertFromMoodle(user, moodleTokenResponse);
+
+      // 🚀 Hydrate user courses and enrollments immediately
+      await this.moodleUserHydrationService.hydrateUserCourses(
+        user.moodleUserId,
+        moodleTokenResponse.token,
+      );
 
       // create jwt tokens
       const jwtPayload = JwtPayload.Create(user.id, user.moodleUserId);

@@ -9,6 +9,7 @@ import { Department } from './department.entity';
 import { MoodleCategory } from './moodle-category.entity';
 import { Program } from './program.entity';
 import { Semester } from './semester.entity';
+import { Enrollment } from './enrollment.entity';
 
 export { ChatKitThread, ChatKitThreadItem, MoodleToken, User };
 export const entities = [
@@ -23,4 +24,5 @@ export const entities = [
   MoodleCategory,
   Program,
   Semester,
+  Enrollment,
 ];

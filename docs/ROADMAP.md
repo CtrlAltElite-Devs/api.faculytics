@@ -68,8 +68,8 @@ Enforcing institutional boundaries and extending the system reach.
 
 ## Immediate Next Steps (To-Do)
 
-1. **[Safety]** Add integration tests for `DatabaseSeeder` to verify idempotency and error handling.
-2. **[Infrastructure]** Expand `InfrastructureSeeder` to include default `Roles` and `SystemConfig`.
+1. **[Safety]** Add integration tests for `DatabaseSeeder` to verify idempotency and error handling. (Completed)
+2. **[Infrastructure]** Expand `InfrastructureSeeder` to include default `Roles` and `SystemConfig`. (Completed)
 3. **[Feature]** Finalize the `QuestionnaireSubmission` API, ensuring all institutional snapshots are correctly captured.
 4. **[Ingestion]** Design the `SourceAdapter` interface to support upcoming file-based ingestion.
 5. **[Architecture]** Define AI inference event contract to prevent future model refactoring.

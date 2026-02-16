@@ -23,6 +23,7 @@ import {
 import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { UserRole } from '../../auth/roles.enum';
 
 @Injectable()
 export class QuestionnaireService {
@@ -171,7 +172,7 @@ export class QuestionnaireService {
       questionnaireVersion: version,
       respondent,
       faculty,
-      respondentRole: respondent.roles.includes('DEAN')
+      respondentRole: respondent.roles.includes(UserRole.DEAN)
         ? RespondentRole.DEAN
         : RespondentRole.STUDENT,
       semester,

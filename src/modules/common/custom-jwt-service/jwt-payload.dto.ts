@@ -1,8 +1,8 @@
 export class JwtPayload {
   sub: string;
-  moodleUserId: number;
+  moodleUserId?: number;
 
-  static Create(userId: string, moodleUserId: number): JwtPayload {
+  static Create(userId: string, moodleUserId?: number): JwtPayload {
     return {
       sub: userId,
       moodleUserId,

@@ -31,27 +31,47 @@ export class AuthService {
 
   async Login(body: LoginRequest, metaData: RequestMetadata) {
     return await this.unitOfWork.runInTransaction(async (em) => {
-      // login via moodle create token
-      const moodleTokenResponse = await this.moodleService.Login({
-        username: body.username,
-        password: body.password,
-      });
+      let user: User | null = null;
+      let moodleToken: string | undefined;
 
-      // handle post login
-      const user = await this.moodleSyncService.SyncUserContext(
-        moodleTokenResponse.token,
-      );
+      const localUser = await em.findOne(User, { userName: body.username });
 
-      const moodleTokenRepository: MoodleTokenRepository =
-        em.getRepository(MoodleToken);
+      if (localUser && localUser.password) {
+        const isPasswordValid = await bcrypt.compare(
+          body.password,
+          localUser.password,
+        );
+        if (!isPasswordValid) {
+          throw new UnauthorizedException('Invalid credentials');
+        }
+        user = localUser;
+      } else {
+        // login via moodle create token
+        const moodleTokenResponse = await this.moodleService.Login({
+          username: body.username,
+          password: body.password,
+        });
 
-      await moodleTokenRepository.UpsertFromMoodle(user, moodleTokenResponse);
+        moodleToken = moodleTokenResponse.token;
 
-      // Hydrate user courses and enrollments immediately
-      await this.moodleUserHydrationService.hydrateUserCourses(
-        user.moodleUserId,
-        moodleTokenResponse.token,
-      );
+        // handle post login
+        user = await this.moodleSyncService.SyncUserContext(
+          moodleTokenResponse.token,
+        );
+
+        const moodleTokenRepository: MoodleTokenRepository =
+          em.getRepository(MoodleToken);
+
+        await moodleTokenRepository.UpsertFromMoodle(user, moodleTokenResponse);
+      }
+
+      // Hydrate user courses and enrollments immediately (Moodle users only)
+      if (user.moodleUserId && moodleToken) {
+        await this.moodleUserHydrationService.hydrateUserCourses(
+          user.moodleUserId,
+          moodleToken,
+        );
+      }
 
       // create jwt tokens
       const jwtPayload = JwtPayload.Create(user.id, user.moodleUserId);

@@ -1,5 +1,5 @@
 import { EntityManager } from '@mikro-orm/core';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { MoodleService } from './moodle.service';
 import { env } from 'src/configurations/env';
 import { Program } from 'src/entities/program.entity';
@@ -8,6 +8,8 @@ import UnitOfWork from '../common/unit-of-work';
 
 @Injectable()
 export class MoodleCourseSyncService {
+  private readonly logger = new Logger(MoodleCourseSyncService.name);
+
   constructor(
     private readonly moodleService: MoodleService,
     private readonly em: EntityManager,
@@ -19,7 +21,14 @@ export class MoodleCourseSyncService {
     const programs = await em.find(Program, {});
 
     for (const program of programs) {
-      await this.syncProgramCourses(program);
+      try {
+        await this.syncProgramCourses(program);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Failed to sync courses for program ${program.code}: ${message}`,
+        );
+      }
     }
   }
 

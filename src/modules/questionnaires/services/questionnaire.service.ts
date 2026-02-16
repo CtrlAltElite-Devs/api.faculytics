@@ -44,7 +44,8 @@ export class QuestionnaireService {
       type: data.type,
       status: QuestionnaireStatus.DRAFT,
     });
-    await this.em.persistAndFlush(questionnaire);
+    this.em.persist(questionnaire);
+    await this.em.flush();
     return questionnaire;
   }
 
@@ -71,7 +72,8 @@ export class QuestionnaireService {
       isActive: false,
     });
 
-    await this.em.persistAndFlush(version);
+    this.em.persist(version);
+    await this.em.flush();
     return version;
   }
 
@@ -212,7 +214,8 @@ export class QuestionnaireService {
       submission.answers.add(answer);
     }
 
-    await this.em.persistAndFlush(submission);
+    this.em.persist(submission);
+    await this.em.flush();
     return submission;
   }
 

@@ -9,7 +9,7 @@ This document describes the high-level components, technology stack, and module 
 - **Authentication:** Authenticating users via Moodle tokens and issuing local JWTs.
 - **Data Synchronization:** Mirroring Moodle's institutional hierarchy (Campuses, Semesters, Departments, Programs) and course enrollments.
 - **Entity Management:** Maintaining a normalized local database for analytics and extended features.
-- **Questionnaire Management:** Managing weighted questionnaires for student and faculty feedback.
+- **Questionnaire Management:** Managing weighted questionnaires for student and faculty feedback. See [Questionnaire Management](./questionnaire-management.md) for detailed architecture.
 
 ## 2. Technology Stack
 

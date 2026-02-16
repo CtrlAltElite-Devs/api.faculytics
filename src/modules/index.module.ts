@@ -17,6 +17,7 @@ export const ApplicationModules = [
   AuthModule,
   ChatKitModule,
   EnrollmentsModule,
+  MoodleModule,
 ];
 
 export const InfrastructureModules = [

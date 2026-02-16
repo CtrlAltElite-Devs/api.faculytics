@@ -5,7 +5,6 @@ import { MoodleService } from './moodle.service';
 import { env } from 'src/configurations/env';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { User } from 'src/entities/user.entity';
-import { MoodleEnrolledUser } from './lib/moodle.types';
 import UnitOfWork from '../common/unit-of-work';
 
 @Injectable()
@@ -85,7 +84,7 @@ export class EnrollmentSyncService {
         });
 
         // 3. Upsert Enrollment
-        const role = this.extractRole(remote);
+        const role = this.moodleService.ExtractRole(remote);
         const enrollmentData = tx.create(
           Enrollment,
           {
@@ -117,10 +116,5 @@ export class EnrollmentSyncService {
         }
       }
     });
-  }
-
-  private extractRole(user: MoodleEnrolledUser): string {
-    if (!user.roles?.length) return 'unknown';
-    return user.roles[0].shortname;
   }
 }

@@ -9,6 +9,7 @@ export class MeResponse {
   userProfilePicture: string;
   fullName: string;
   roles: string[];
+  campus?: { id: string; name?: string; code: string };
 
   static Map(user: User): MeResponse {
     return {
@@ -20,6 +21,9 @@ export class MeResponse {
       userProfilePicture: user.userProfilePicture,
       fullName: user.fullName ?? '',
       roles: user.roles,
+      campus: user.campus
+        ? { id: user.campus.id, name: user.campus.name, code: user.campus.code }
+        : undefined,
     };
   }
 }

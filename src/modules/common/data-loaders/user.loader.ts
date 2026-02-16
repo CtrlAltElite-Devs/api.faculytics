@@ -10,9 +10,14 @@ export class UserLoader {
   constructor(private readonly userRepository: UserRepository) {
     this.loader = new DataLoader<string, User | null>(
       async (userIds: readonly string[]) => {
-        const users = await this.userRepository.find({
-          id: { $in: [...userIds] },
-        });
+        const users = await this.userRepository.find(
+          {
+            id: { $in: [...userIds] },
+          },
+          {
+            populate: ['campus'],
+          },
+        );
 
         const map = new Map(users.map((u) => [u.id, u]));
         return userIds.map((id) => map.get(id) ?? null);

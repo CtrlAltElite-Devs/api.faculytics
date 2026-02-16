@@ -6,6 +6,7 @@ import { corsEnvSchema } from './cors.env';
 import { DEFAULT_PORT } from '../common/constants';
 import { databaseEnvSchema } from './database.env';
 import { jwtEnvSchema } from './jwt.env';
+import { openaiEnvSchema } from './openai.env';
 
 export const envSchema = z.object({
   ...databaseEnvSchema.shape,
@@ -13,6 +14,7 @@ export const envSchema = z.object({
   ...jwtEnvSchema.shape,
   ...corsEnvSchema.shape,
   ...moodleEnvSchema.shape,
+  ...openaiEnvSchema.shape,
 });
 
 export type Env = z.infer<typeof envSchema>;

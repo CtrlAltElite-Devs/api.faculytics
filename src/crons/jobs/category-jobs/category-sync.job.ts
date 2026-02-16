@@ -46,6 +46,7 @@ export class CategorySyncJob extends BaseJob {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Error syncing categories:`, message);
+      this.isRunning = false;
       return { status: 'failed', details: message };
     }
   }

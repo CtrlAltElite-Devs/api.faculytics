@@ -95,6 +95,12 @@ erDiagram
     DIMENSION {
         uuid id
         string code
-        string name
+        string displayName
+        string questionnaireType
+        boolean active
     }
 ```
+
+### Constraints & Idempotency
+
+- **Dimension Registry:** Enforced by a composite unique constraint on `(code, questionnaireType)`. This prevents duplicate dimensions for the same questionnaire context while allowing the same code (e.g., 'PLANNING') to exist across different types if necessary.

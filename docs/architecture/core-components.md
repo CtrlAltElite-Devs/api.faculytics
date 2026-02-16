@@ -76,3 +76,11 @@ classDiagram
         +QuestionnaireSchemaValidator
     }
 ```
+
+## 4. Startup & Initialization Flow
+
+The application enforces a strict initialization sequence in `InitializeDatabase` before it begins accepting traffic. This ensures that the database schema and required infrastructure state are always synchronized with the code.
+
+1.  **Migration (`orm.migrator.up()`):** Automatically applies any pending database migrations.
+2.  **Infrastructure Seeding (`orm.seeder.seed(DatabaseSeeder)`):** Executes idempotent seeders (e.g., `DimensionSeeder`) to populate required reference data.
+3.  **Application Bootstrap:** Only after both steps succeed does `app.listen()` execute. If any step fails, the process exits with code 1.

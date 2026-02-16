@@ -25,6 +25,11 @@ export class MoodleToken extends CustomBaseEntity {
   user: Rel<User>;
 
   static Create(user: User, moodleTokens: MoodleTokenResponse) {
+    if (!user.moodleUserId) {
+      throw new Error(
+        'Cannot create MoodleToken for user without moodleUserId',
+      );
+    }
     const newMoodleToken = new MoodleToken();
     newMoodleToken.token = moodleTokens.token;
     newMoodleToken.moodleUserId = user.moodleUserId;

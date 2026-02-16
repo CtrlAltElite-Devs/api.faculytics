@@ -10,8 +10,34 @@ import { MoodleCategory } from './moodle-category.entity';
 import { Program } from './program.entity';
 import { Semester } from './semester.entity';
 import { Enrollment } from './enrollment.entity';
+import { Dimension } from './dimension.entity';
+import { Questionnaire } from './questionnaire.entity';
+import { QuestionnaireVersion } from './questionnaire-version.entity';
+import { QuestionnaireSubmission } from './questionnaire-submission.entity';
+import { QuestionnaireAnswer } from './questionnaire-answer.entity';
+import { UserInstitutionalRole } from './user-institutional-role.entity';
 
-export { ChatKitThread, ChatKitThreadItem, MoodleToken, User };
+export {
+  ChatKitThread,
+  ChatKitThreadItem,
+  MoodleToken,
+  User,
+  Dimension,
+  Questionnaire,
+  QuestionnaireVersion,
+  QuestionnaireSubmission,
+  QuestionnaireAnswer,
+  Campus,
+  Course,
+  Department,
+  MoodleCategory,
+  Program,
+  Semester,
+  Enrollment,
+  RefreshToken,
+  UserInstitutionalRole,
+};
+
 export const entities = [
   User,
   MoodleToken,
@@ -25,4 +51,10 @@ export const entities = [
   Program,
   Semester,
   Enrollment,
+  Dimension,
+  Questionnaire,
+  QuestionnaireVersion,
+  QuestionnaireSubmission,
+  QuestionnaireAnswer,
+  UserInstitutionalRole,
 ];

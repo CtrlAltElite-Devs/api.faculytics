@@ -40,6 +40,19 @@ export class MoodleService {
     return await client.getEnrolledUsersByCourse(dto.courseId);
   }
 
+  async GetUsersWithCapability(dto: {
+    courseId: number;
+    capability: string;
+    token: string;
+  }) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getEnrolledUsersWithCapability(
+      dto.courseId,
+      dto.capability,
+    );
+  }
+
   async GetCourseUserProfiles(dto: GetCourseUserProfilesRequest) {
     const client = this.BuildMoodleClient();
     client.setToken(dto.token);

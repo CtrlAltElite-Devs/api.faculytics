@@ -1,17 +1,30 @@
-import { Collection, Entity, OneToMany, Property } from '@mikro-orm/core';
+import {
+  Collection,
+  Entity,
+  ManyToOne,
+  OneToMany,
+  Property,
+} from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { MoodleToken } from './moodle-token.entity';
 import { Enrollment } from './enrollment.entity';
 import { UserRepository } from '../repositories/user.repository';
 import { MoodleSiteInfoResponse } from '../modules/moodle/lib/moodle.types';
+import { Campus } from './campus.entity';
+import { Department } from './department.entity';
+import { Program } from './program.entity';
+import { UserInstitutionalRole } from './user-institutional-role.entity';
 
 @Entity({ repository: () => UserRepository })
 export class User extends CustomBaseEntity {
   @Property({ unique: true })
   userName: string;
 
-  @Property({ unique: true })
-  moodleUserId: number;
+  @Property({ unique: true, nullable: true })
+  moodleUserId?: number;
+
+  @Property({ hidden: true, nullable: true })
+  password?: string;
 
   @Property()
   firstName: string;
@@ -25,11 +38,23 @@ export class User extends CustomBaseEntity {
   @Property({ nullable: true })
   fullName?: string;
 
+  @ManyToOne(() => Campus, { nullable: true })
+  campus?: Campus;
+
+  @ManyToOne(() => Department, { nullable: true })
+  department?: Department;
+
+  @ManyToOne(() => Program, { nullable: true })
+  program?: Program;
+
   @OneToMany(() => MoodleToken, (token) => token.user)
   moodleTokens = new Collection<MoodleToken>(this);
 
   @OneToMany(() => Enrollment, (enrollment) => enrollment.user)
   enrollments = new Collection<Enrollment>(this);
+
+  @OneToMany(() => UserInstitutionalRole, (uir) => uir.user)
+  institutionalRoles = new Collection<UserInstitutionalRole>(this);
 
   @Property()
   lastLoginAt: Date;
@@ -63,9 +88,15 @@ export class User extends CustomBaseEntity {
     this.lastLoginAt = new Date();
   }
 
-  updateRolesFromEnrollments(enrollments: Enrollment[]) {
-    this.roles = [
-      ...new Set(enrollments.filter((e) => e.isActive).map((e) => e.role)),
-    ];
+  updateRolesFromEnrollments(
+    enrollments: Enrollment[],
+    institutionalRoles: UserInstitutionalRole[] = [],
+  ) {
+    const enrollmentRoles = enrollments
+      .filter((e) => e.isActive)
+      .map((e) => e.role);
+    const instRoles = institutionalRoles.map((ir) => ir.role);
+
+    this.roles = [...new Set([...enrollmentRoles, ...instRoles])];
   }
 }

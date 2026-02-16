@@ -3,7 +3,7 @@ import { User } from 'src/entities/user.entity';
 export class MeResponse {
   id: string;
   userName: string;
-  moodleUserId: number;
+  moodleUserId?: number;
   firstName: string;
   lastName: string;
   userProfilePicture: string;

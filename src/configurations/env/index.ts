@@ -7,6 +7,7 @@ import { DEFAULT_PORT } from '../common/constants';
 import { databaseEnvSchema } from './database.env';
 import { jwtEnvSchema } from './jwt.env';
 import { openaiEnvSchema } from './openai.env';
+import { adminEnvSchema } from './admin.env';
 
 export const envSchema = z.object({
   ...databaseEnvSchema.shape,
@@ -15,6 +16,7 @@ export const envSchema = z.object({
   ...corsEnvSchema.shape,
   ...moodleEnvSchema.shape,
   ...openaiEnvSchema.shape,
+  ...adminEnvSchema.shape,
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -16,6 +16,21 @@ jobs:
         name: Run Tests
         runs-on: ubuntu-latest
 
+        services:
+            postgres:
+                image: postgres:15
+                env:
+                    POSTGRES_DB: faculytics_db
+                    POSTGRES_USER: postgres
+                    POSTGRES_PASSWORD: password
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd pg_isready
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 5
+
         steps:
             # Checkout
             - name: Checkout code
@@ -42,6 +57,14 @@ jobs:
             # Run tests and output JSON results
             - name: Run tests
               id: run-tests
+              env:
+                  DATABASE_URL: postgres://postgres:password@localhost:5432/faculytics_db
+                  JWT_SECRET: ${{ secrets.JWT_SECRET || 'dummy_jwt_secret_for_tests' }}
+                  REFRESH_SECRET: ${{ secrets.REFRESH_SECRET || 'dummy_refresh_secret_for_tests' }}
+                  MOODLE_BASE_URL: https://moodle.com
+                  MOODLE_MASTER_KEY: dummy_moodle_key
+                  OPENAI_API_KEY: dummy_openai_key
+                  CORS_ORIGINS: '["*"]'
               run: |
                   npm run test -- --json --outputFile=jest-results.json || true
                   # Always continue even if tests fail, so we can still send the report
@@ -63,22 +86,31 @@ jobs:
                   PASSED=$(jq '.numPassedTests' jest-results.json)
                   FAILED=$(jq '.numFailedTests' jest-results.json)
                   TOTAL=$(jq '.numTotalTests' jest-results.json)
+                  
+                  # Also check for suite failures which might not count individual tests as failed
+                  FAILED_SUITES=$(jq '.numFailedTestSuites' jest-results.json)
+                  SUCCESS=$(jq '.success' jest-results.json)
 
                   echo "PASSED=$PASSED" >> $GITHUB_ENV
                   echo "FAILED=$FAILED" >> $GITHUB_ENV
                   echo "TOTAL=$TOTAL" >> $GITHUB_ENV
 
-                  if [ "$FAILED" -eq 0 ]; then
+                  if [ "$SUCCESS" = "true" ] && [ "$FAILED" -eq 0 ] && [ "$FAILED_SUITES" -eq 0 ]; then
                     echo "TEST_STATUS=✅ All tests passed, nice ka pre👌" >> $GITHUB_ENV
                     echo "EMBED_COLOR=3066993" >> $GITHUB_ENV
                     echo "FAILED_LIST=" >> $GITHUB_ENV
                   else
-                    echo "TEST_STATUS=❌ Some tests failed" >> $GITHUB_ENV
+                    if [ "$FAILED" -eq 0 ] && [ "$FAILED_SUITES" -gt 0 ]; then
+                       echo "TEST_STATUS=❌ Suite initialization failed" >> $GITHUB_ENV
+                    else
+                       echo "TEST_STATUS=❌ Some tests failed" >> $GITHUB_ENV
+                    fi
                     echo "EMBED_COLOR=15158332" >> $GITHUB_ENV
 
-                    # Extract up to 5 failed test names
-                    FAILED_LIST=$(jq -r '[.testResults[].assertionResults[]? | select(.status=="failed") | .fullName][0:5] | join("\n• ")' jest-results.json)
-                    if [ -z "$FAILED_LIST" ]; then
+                    # Extract up to 5 failed test names or suite names
+                    FAILED_LIST=$(jq -r 'if .numFailedTests > 0 then [.testResults[].assertionResults[]? | select(.status=="failed") | .fullName][0:5] | join("\n• ") else [.testResults[] | select(.status=="failed") | .name][0:5] | join("\n• ") end' jest-results.json)
+                    
+                    if [ -z "$FAILED_LIST" ] || [ "$FAILED_LIST" = "null" ]; then
                       FAILED_LIST="(Failed test names not found)"
                     else
                       FAILED_LIST="• $FAILED_LIST"

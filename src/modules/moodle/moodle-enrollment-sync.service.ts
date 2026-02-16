@@ -110,7 +110,10 @@ export class EnrollmentSyncService {
 
       // 4. Soft deactivate users missing from remote
       for (const enrollment of existing) {
-        if (!remoteIds.has(enrollment.user.moodleUserId)) {
+        if (
+          enrollment.user.moodleUserId &&
+          !remoteIds.has(enrollment.user.moodleUserId)
+        ) {
           enrollment.isActive = false;
           tx.persist(enrollment);
         }

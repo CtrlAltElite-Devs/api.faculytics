@@ -98,7 +98,7 @@ export class MoodleCategorySyncService {
         {
           moodleCategoryId: cat.moodleCategoryId,
           code: cat.name,
-          name: cat.description ?? cat.name,
+          name: this.stripHtml(cat.description ?? cat.name),
         },
         { managed: false },
       );
@@ -129,7 +129,7 @@ export class MoodleCategorySyncService {
         {
           moodleCategoryId: cat.moodleCategoryId,
           code: cat.name,
-          description: cat.description,
+          description: this.stripHtml(cat.description),
           campus,
         },
         { managed: false },
@@ -162,7 +162,7 @@ export class MoodleCategorySyncService {
         {
           moodleCategoryId: cat.moodleCategoryId,
           code: cat.name,
-          name: cat.description ?? cat.name,
+          name: this.stripHtml(cat.description ?? cat.name),
           semester,
         },
         { managed: false },
@@ -195,7 +195,7 @@ export class MoodleCategorySyncService {
         {
           moodleCategoryId: cat.moodleCategoryId,
           code: cat.name,
-          name: cat.description ?? cat.name,
+          name: this.stripHtml(cat.description ?? cat.name),
           department,
         },
         { managed: false },
@@ -206,5 +206,10 @@ export class MoodleCategorySyncService {
         onConflictMergeFields: ['code', 'name', 'department', 'updatedAt'],
       });
     }
+  }
+
+  private stripHtml(text?: string): string | undefined {
+    if (!text) return text;
+    return text.replace(/<[^>]*>/g, '').trim();
   }
 }

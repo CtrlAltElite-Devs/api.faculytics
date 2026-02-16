@@ -10,6 +10,7 @@ import { PassportModule } from '@nestjs/passport';
 import { ChatKitModule } from './chat-kit/chat-kit.module';
 import { EnrollmentsModule } from './enrollments/enrollments.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { QuestionnaireModule } from './questionnaires/questionnaires.module';
 
 export const ApplicationModules = [
   HealthModule,
@@ -17,7 +18,7 @@ export const ApplicationModules = [
   AuthModule,
   ChatKitModule,
   EnrollmentsModule,
-  MoodleModule,
+  QuestionnaireModule,
 ];
 
 export const InfrastructureModules = [

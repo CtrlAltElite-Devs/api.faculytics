@@ -79,4 +79,4 @@ jobs:
                       ]
               uses: Ilshidur/action-discord@0.4.0
               with:
-                  args: ${{ env.LINT_STATUS == '✅ Lint passed! pwede na mag NU ✨' && 'PR Lint Result 🚀' || 'Naa kay sayup, wala kay respeto! 😡' }}
+                  args: ${{ env.LINT_STATUS == '✅ Lint passed, clean code! ✨' && '✅ Lint passed! pwede na mag NU' || 'Naa kay sayup, wala kay respeto! 😡' }}

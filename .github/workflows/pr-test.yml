@@ -132,8 +132,8 @@ jobs:
               if: ${{ github.event_name == 'pull_request' }}
               env:
                   DISCORD_WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK }}
-                  DISCORD_USERNAME: "PR Tanod"
-                  DISCORD_AVATAR: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQDmXOAZ7hdOFtFyY-WGiqeFL97-uIprWQFKg&s"
+                  DISCORD_USERNAME: "Jennifer Garrido-Amores"
+                  DISCORD_AVATAR: "https://scontent.fceb3-1.fna.fbcdn.net/v/t39.30808-6/514540962_10160649231351511_950312810298440161_n.jpg?_nc_cat=103&ccb=1-7&_nc_sid=a5f93a&_nc_eui2=AeGpc8rTATZsev-Dy0E5z8uelfuKqNVN8kWV-4qo1U3yRdpWLzBHEYSa-s6aLkPrgn_lU8lV_DW173NKpaXuHX4K&_nc_ohc=ZDIG8G2tMPAQ7kNvwFNIbaX&_nc_oc=AdmruU8Rapzs1tE5_krNl4SPmPTb8sAPkW9FYeUfHbl-qHbQhBL4jjK85UUT-hc_5MA&_nc_zt=23&_nc_ht=scontent.fceb3-1.fna&_nc_gid=fHbJhQ_d7un0r_Joi-5S2Q&oh=00_AftemQBF3Tqwb6jc9LRx6F_v-Pt4_JB-N4STXa9gaaxbwQ&oe=69992F55"
                   DISCORD_EMBEDS: >
                       [
                          {
@@ -161,4 +161,4 @@ jobs:
                       ]
               uses: Ilshidur/action-discord@0.4.0
               with:
-                  args: ${{ env.TEST_STATUS == '✅ All tests passed, nice ka pre👌' && 'PR Test Result ni dawg 🚀' || 'Uy dawg naay bagsak sa tests 😭‼️' }}
+                  args: ${{ env.TEST_STATUS == '✅ All tests passed, nice ka pre👌' && 'Ikaw na jud dong. 🚀' || 'Please ko fix today. Salamat' }}

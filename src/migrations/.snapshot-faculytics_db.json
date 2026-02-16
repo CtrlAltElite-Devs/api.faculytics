@@ -1122,6 +1122,16 @@
           "length": 255,
           "mappedType": "string"
         },
+        "campus_id": {
+          "name": "campus_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "length": 255,
+          "mappedType": "string"
+        },
         "last_login_at": {
           "name": "last_login_at",
           "type": "timestamptz",
@@ -1187,7 +1197,21 @@
         }
       ],
       "checks": [],
-      "foreignKeys": {},
+      "foreignKeys": {
+        "user_campus_id_foreign": {
+          "constraintName": "user_campus_id_foreign",
+          "columnNames": [
+            "campus_id"
+          ],
+          "localTableName": "public.user",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.campus",
+          "deleteRule": "set null",
+          "updateRule": "cascade"
+        }
+      },
       "nativeEnums": {}
     },
     {

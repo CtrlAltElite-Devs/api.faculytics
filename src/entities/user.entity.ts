@@ -1,9 +1,16 @@
-import { Collection, Entity, OneToMany, Property } from '@mikro-orm/core';
+import {
+  Collection,
+  Entity,
+  ManyToOne,
+  OneToMany,
+  Property,
+} from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { MoodleToken } from './moodle-token.entity';
 import { Enrollment } from './enrollment.entity';
 import { UserRepository } from '../repositories/user.repository';
 import { MoodleSiteInfoResponse } from '../modules/moodle/lib/moodle.types';
+import { Campus } from './campus.entity';
 
 @Entity({ repository: () => UserRepository })
 export class User extends CustomBaseEntity {
@@ -24,6 +31,9 @@ export class User extends CustomBaseEntity {
 
   @Property({ nullable: true })
   fullName?: string;
+
+  @ManyToOne(() => Campus, { nullable: true })
+  campus?: Campus;
 
   @OneToMany(() => MoodleToken, (token) => token.user)
   moodleTokens = new Collection<MoodleToken>(this);

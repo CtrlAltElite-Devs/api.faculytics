@@ -13,6 +13,7 @@ import { MoodleSiteInfoResponse } from '../modules/moodle/lib/moodle.types';
 import { Campus } from './campus.entity';
 import { Department } from './department.entity';
 import { Program } from './program.entity';
+import { UserInstitutionalRole } from './user-institutional-role.entity';
 
 @Entity({ repository: () => UserRepository })
 export class User extends CustomBaseEntity {
@@ -49,6 +50,9 @@ export class User extends CustomBaseEntity {
   @OneToMany(() => Enrollment, (enrollment) => enrollment.user)
   enrollments = new Collection<Enrollment>(this);
 
+  @OneToMany(() => UserInstitutionalRole, (uir) => uir.user)
+  institutionalRoles = new Collection<UserInstitutionalRole>(this);
+
   @Property()
   lastLoginAt: Date;
 
@@ -81,9 +85,15 @@ export class User extends CustomBaseEntity {
     this.lastLoginAt = new Date();
   }
 
-  updateRolesFromEnrollments(enrollments: Enrollment[]) {
-    this.roles = [
-      ...new Set(enrollments.filter((e) => e.isActive).map((e) => e.role)),
-    ];
+  updateRolesFromEnrollments(
+    enrollments: Enrollment[],
+    institutionalRoles: UserInstitutionalRole[] = [],
+  ) {
+    const enrollmentRoles = enrollments
+      .filter((e) => e.isActive)
+      .map((e) => e.role);
+    const instRoles = institutionalRoles.map((ir) => ir.role);
+
+    this.roles = [...new Set([...enrollmentRoles, ...instRoles])];
   }
 }

@@ -174,19 +174,40 @@ export class MoodleUserHydrationService {
       `Resolving institutional roles for user ${user.userName}...`,
     );
 
-    // Group courses by category
-    const categoryCourseMap = new Map<number, number>();
+    // Map target categories (e.g. Departments at Depth 3) to representative courses
+    const targetCategoryMap = new Map<number, number>();
+
     for (const course of remoteCourses) {
-      if (!categoryCourseMap.has(course.category)) {
-        categoryCourseMap.set(course.category, course.id);
+      const directCategory = await tx.findOne(MoodleCategory, {
+        moodleCategoryId: course.category,
+      });
+
+      if (!directCategory) continue;
+
+      let targetCategory: MoodleCategory | null = null;
+
+      if (directCategory.depth === 4) {
+        // Program level -> go up to Department
+        targetCategory = await tx.findOne(MoodleCategory, {
+          moodleCategoryId: directCategory.parentMoodleCategoryId,
+        });
+      } else if (directCategory.depth === 3) {
+        // Already at Department level
+        targetCategory = directCategory;
+      }
+
+      if (targetCategory && targetCategory.depth === 3) {
+        if (!targetCategoryMap.has(targetCategory.moodleCategoryId)) {
+          targetCategoryMap.set(targetCategory.moodleCategoryId, course.id);
+        }
       }
     }
 
-    const processedCategoryIds = Array.from(categoryCourseMap.keys());
+    const processedCategoryIds = Array.from(targetCategoryMap.keys());
     const deanCategoryIds: number[] = [];
 
-    // Check capability for each representative course
-    for (const [categoryId, courseId] of categoryCourseMap) {
+    // Check capability for each representative course of the target categories
+    for (const [categoryId, courseId] of targetCategoryMap) {
       try {
         const usersWithCapability =
           await this.moodleService.GetUsersWithCapability({
@@ -212,16 +233,9 @@ export class MoodleUserHydrationService {
 
     // Sync roles
     for (const categoryId of processedCategoryIds) {
-      const moodleCategory = await tx.findOne(MoodleCategory, {
+      const moodleCategory = await tx.findOneOrFail(MoodleCategory, {
         moodleCategoryId: categoryId,
       });
-
-      if (!moodleCategory) {
-        this.logger.warn(
-          `MoodleCategory ${categoryId} not found in database. Skipping role sync.`,
-        );
-        continue;
-      }
 
       const isDean = deanCategoryIds.includes(categoryId);
 

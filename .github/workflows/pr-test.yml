@@ -1,0 +1,164 @@
+name: PR Tests
+
+on:
+    push:
+        branches:
+            - main
+            - staging
+            - develop
+    pull_request:
+        branches:
+            - "**"
+    workflow_dispatch:
+
+jobs:
+    test:
+        name: Run Tests
+        runs-on: ubuntu-latest
+
+        services:
+            postgres:
+                image: postgres:15
+                env:
+                    POSTGRES_DB: faculytics_db
+                    POSTGRES_USER: postgres
+                    POSTGRES_PASSWORD: password
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd pg_isready
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 5
+
+        steps:
+            # Checkout
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            # Setup Node.js with npm cache
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+                  cache: "npm"
+
+            # Restore dist cache (optional)
+            - name: Restore dist cache
+              uses: actions/cache@v4
+              with:
+                  path: dist
+                  key: dist-${{ github.sha }}
+
+            # Install dependencies
+            - name: Install dependencies
+              run: npm ci
+
+            # Run tests and output JSON results
+            - name: Run tests
+              id: run-tests
+              env:
+                  DATABASE_URL: postgres://postgres:password@localhost:5432/faculytics_db
+                  JWT_SECRET: ${{ secrets.JWT_SECRET || 'dummy_jwt_secret_for_tests' }}
+                  REFRESH_SECRET: ${{ secrets.REFRESH_SECRET || 'dummy_refresh_secret_for_tests' }}
+                  MOODLE_BASE_URL: https://moodle.com
+                  MOODLE_MASTER_KEY: dummy_moodle_key
+                  OPENAI_API_KEY: dummy_openai_key
+                  CORS_ORIGINS: '["*"]'
+              run: |
+                  npm run test -- --json --outputFile=jest-results.json || true
+                  # Always continue even if tests fail, so we can still send the report
+
+            # Extract test summary
+            - name: Extract test summary
+              id: test-summary
+              run: |
+                  # Ensure the results file exists
+                  if [ ! -f jest-results.json ]; then
+                    echo "TEST_STATUS=❌ Jest results not found" >> $GITHUB_ENV
+                    echo "EMBED_COLOR=15158332" >> $GITHUB_ENV
+                    echo "PASSED=0" >> $GITHUB_ENV
+                    echo "FAILED=0" >> $GITHUB_ENV
+                    echo "TOTAL=0" >> $GITHUB_ENV
+                    exit 0
+                  fi
+
+                  PASSED=$(jq '.numPassedTests' jest-results.json)
+                  FAILED=$(jq '.numFailedTests' jest-results.json)
+                  TOTAL=$(jq '.numTotalTests' jest-results.json)
+                  
+                  # Also check for suite failures which might not count individual tests as failed
+                  FAILED_SUITES=$(jq '.numFailedTestSuites' jest-results.json)
+                  SUCCESS=$(jq '.success' jest-results.json)
+
+                  echo "PASSED=$PASSED" >> $GITHUB_ENV
+                  echo "FAILED=$FAILED" >> $GITHUB_ENV
+                  echo "TOTAL=$TOTAL" >> $GITHUB_ENV
+
+                  if [ "$SUCCESS" = "true" ] && [ "$FAILED" -eq 0 ] && [ "$FAILED_SUITES" -eq 0 ]; then
+                    echo "TEST_STATUS=✅ All tests passed, nice ka pre👌" >> $GITHUB_ENV
+                    echo "EMBED_COLOR=3066993" >> $GITHUB_ENV
+                    echo "FAILED_LIST=" >> $GITHUB_ENV
+                  else
+                    if [ "$FAILED" -eq 0 ] && [ "$FAILED_SUITES" -gt 0 ]; then
+                       echo "TEST_STATUS=❌ Suite initialization failed" >> $GITHUB_ENV
+                    else
+                       echo "TEST_STATUS=❌ Some tests failed" >> $GITHUB_ENV
+                    fi
+                    echo "EMBED_COLOR=15158332" >> $GITHUB_ENV
+
+                    # Extract up to 5 failed test names or suite names
+                    FAILED_LIST=$(jq -r 'if .numFailedTests > 0 then [.testResults[].assertionResults[]? | select(.status=="failed") | .fullName][0:5] | join("\n• ") else [.testResults[] | select(.status=="failed") | .name][0:5] | join("\n• ") end' jest-results.json)
+                    
+                    if [ -z "$FAILED_LIST" ] || [ "$FAILED_LIST" = "null" ]; then
+                      FAILED_LIST="(Failed test names not found)"
+                    else
+                      FAILED_LIST="• $FAILED_LIST"
+                    fi
+
+                    # Escape quotes/newlines for Discord JSON
+                    FAILED_LIST_ESCAPED=$(echo "$FAILED_LIST" | jq -Rs .)
+                    echo "FAILED_LIST=$FAILED_LIST_ESCAPED" >> $GITHUB_ENV
+                  fi
+
+            # Save dist cache after build
+            - name: Save dist cache
+              uses: actions/cache@v4
+              with:
+                  path: dist
+                  key: dist-${{ github.sha }}
+
+            - name: Discord notification
+              if: ${{ github.event_name == 'pull_request' }}
+              env:
+                  DISCORD_WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK }}
+                  DISCORD_USERNAME: "Jennifer Garrido-Amores"
+                  DISCORD_AVATAR: "https://scontent.fceb3-1.fna.fbcdn.net/v/t39.30808-6/514540962_10160649231351511_950312810298440161_n.jpg?_nc_cat=103&ccb=1-7&_nc_sid=a5f93a&_nc_eui2=AeGpc8rTATZsev-Dy0E5z8uelfuKqNVN8kWV-4qo1U3yRdpWLzBHEYSa-s6aLkPrgn_lU8lV_DW173NKpaXuHX4K&_nc_ohc=ZDIG8G2tMPAQ7kNvwFNIbaX&_nc_oc=AdmruU8Rapzs1tE5_krNl4SPmPTb8sAPkW9FYeUfHbl-qHbQhBL4jjK85UUT-hc_5MA&_nc_zt=23&_nc_ht=scontent.fceb3-1.fna&_nc_gid=fHbJhQ_d7un0r_Joi-5S2Q&oh=00_AftemQBF3Tqwb6jc9LRx6F_v-Pt4_JB-N4STXa9gaaxbwQ&oe=69992F55"
+                  DISCORD_EMBEDS: >
+                      [
+                         {
+                         "author": {
+                             "name": "${{ github.event.pull_request.user.login }}",
+                             "icon_url": "${{ github.event.pull_request.user.avatar_url }}"
+                         },
+                         "title": "${{ github.event.pull_request.title }}",
+                         "url": "${{ github.event.pull_request.html_url }}",
+                         "description": "${{ env.TEST_STATUS }}",
+                         "color": ${{ env.EMBED_COLOR }},
+                         "fields": [
+                             {
+                                "name": "Results",
+                                "value": "Passed: ${{ env.PASSED }} / ${{ env.TOTAL }}, Failed: ${{ env.FAILED }}",
+                                "inline": true
+                             },
+                             {
+                                "name": "Commit",
+                                "value": "${{ github.sha }}"
+                             }
+                         ],
+                         "timestamp": "${{ github.event.pull_request.updated_at }}"
+                         }
+                      ]
+              uses: Ilshidur/action-discord@0.4.0
+              with:
+                  args: ${{ env.TEST_STATUS == '✅ All tests passed, nice ka pre👌' && 'Ikaw na jud dong. 🚀' || 'Please ko fix today. Salamat' }}

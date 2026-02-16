@@ -92,4 +92,4 @@ npm run test:cov
 
 ## License
 
-This project is [UNLICENSED](LICENSE).
+This project is [UNLICENSED](LICENSE)..

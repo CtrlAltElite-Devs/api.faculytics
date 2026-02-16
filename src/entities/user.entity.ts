@@ -20,8 +20,11 @@ export class User extends CustomBaseEntity {
   @Property({ unique: true })
   userName: string;
 
-  @Property({ unique: true })
-  moodleUserId: number;
+  @Property({ unique: true, nullable: true })
+  moodleUserId?: number;
+
+  @Property({ hidden: true, nullable: true })
+  password?: string;
 
   @Property()
   firstName: string;

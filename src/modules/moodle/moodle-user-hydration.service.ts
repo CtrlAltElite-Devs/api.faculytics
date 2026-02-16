@@ -107,6 +107,14 @@ export class MoodleUserHydrationService {
           ],
         });
       }
+
+      // Derive user roles from active enrollments
+      const activeEnrollments = await tx.find(Enrollment, {
+        user,
+        isActive: true,
+      });
+      user.updateRolesFromEnrollments(activeEnrollments);
+      tx.persist(user);
     });
 
     const duration = Date.now() - startTime;

@@ -61,6 +61,7 @@ export class EnrollmentSyncService {
             userProfilePicture: remote.profileimageurl ?? '',
             lastLoginAt: new Date(),
             isActive: true,
+            roles: [],
           },
           { managed: false },
         );

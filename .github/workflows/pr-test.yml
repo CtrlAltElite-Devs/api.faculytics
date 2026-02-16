@@ -1,0 +1,124 @@
+name: PR Tests
+
+on:
+    push:
+        branches:
+            - main
+            - staging
+            - develop
+    pull_request:
+        branches:
+            - main
+            - staging
+            - "**"
+
+jobs:
+    test:
+        name: Run Tests
+        runs-on: ubuntu-latest
+
+        steps:
+            # Checkout
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            # Setup Node.js with npm cache
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+                  cache: "npm"
+
+            # Restore dist cache (optional)
+            - name: Restore dist cache
+              uses: actions/cache@v4
+              with:
+                  path: dist
+                  key: dist-${{ github.sha }}
+
+            # Install dependencies
+            - name: Install dependencies
+              run: npm ci
+
+            # Run tests and output JSON results
+            - name: Run tests
+              id: run-tests
+              run: |
+                  npm run test -- --json --outputFile=jest-results.json || true
+                  # Always continue even if tests fail, so we can still send the report
+
+            # Extract test summary
+            - name: Extract test summary
+              id: test-summary
+              run: |
+                  PASSED=$(jq '.numPassedTests' jest-results.json)
+                  FAILED=$(jq '.numFailedTests' jest-results.json)
+                  TOTAL=$(jq '.numTotalTests' jest-results.json)
+
+                  echo "PASSED=$PASSED" >> $GITHUB_ENV
+                  echo "FAILED=$FAILED" >> $GITHUB_ENV
+                  echo "TOTAL=$TOTAL" >> $GITHUB_ENV
+
+                  if [ "$FAILED" -eq 0 ]; then
+                    echo "TEST_STATUS=✅ All tests passed, nice ka pre👌" >> $GITHUB_ENV
+                    echo "EMBED_COLOR=3066993" >> $GITHUB_ENV
+                    echo "FAILED_LIST=" >> $GITHUB_ENV
+                  else
+                    echo "TEST_STATUS=❌ Some tests failed" >> $GITHUB_ENV
+                    echo "EMBED_COLOR=15158332" >> $GITHUB_ENV
+
+                    # Extract up to 5 failed test names
+                    FAILED_LIST=$(jq -r '[.testResults[].assertionResults[]? | select(.status=="failed") | .fullName][0:5] | join("
+• ")' jest-results.json)
+                    if [ -z "$FAILED_LIST" ]; then
+                      FAILED_LIST="(Failed test names not found)"
+                    else
+                      FAILED_LIST="• $FAILED_LIST"
+                    fi
+
+                    # Escape quotes/newlines for Discord JSON
+                    FAILED_LIST_ESCAPED=$(echo "$FAILED_LIST" | jq -Rs .)
+                    echo "FAILED_LIST=$FAILED_LIST_ESCAPED" >> $GITHUB_ENV
+                  fi
+
+            # Save dist cache after build
+            - name: Save dist cache
+              uses: actions/cache@v4
+              with:
+                  path: dist
+                  key: dist-${{ github.sha }}
+
+            - name: Discord notification
+              if: ${{ github.event_name == 'pull_request' }}
+              env:
+                  DISCORD_WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK }}
+                  DISCORD_USERNAME: "PR Tanod"
+                  DISCORD_AVATAR: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQDmXOAZ7hdOFtFyY-WGiqeFL97-uIprWQFKg&s"
+                  DISCORD_EMBEDS: >
+                      [
+                         {
+                         "author": {
+                             "name": "${{ github.event.pull_request.user.login }}",
+                             "icon_url": "${{ github.event.pull_request.user.avatar_url }}"
+                         },
+                         "title": "${{ github.event.pull_request.title }}",
+                         "url": "${{ github.event.pull_request.html_url }}",
+                         "description": "${{ env.TEST_STATUS }}",
+                         "color": ${{ env.EMBED_COLOR }},
+                         "fields": [
+                             {
+                                "name": "Results",
+                                "value": "Passed: ${{ env.PASSED }} / ${{ env.TOTAL }}, Failed: ${{ env.FAILED }}",
+                                "inline": true
+                             },
+                             {
+                                "name": "Commit",
+                                "value": "${{ github.sha }}"
+                             }
+                         ],
+                         "timestamp": "${{ github.event.pull_request.updated_at }}"
+                         }
+                      ]
+              uses: Ilshidur/action-discord@0.4.0
+              with:
+                  args: ${{ env.TEST_STATUS == '✅ All tests passed, nice ka pre👌' && 'PR Test Result ni dawg 🚀' || 'Uy dawg naay bagsak sa tests 😭‼️' }}

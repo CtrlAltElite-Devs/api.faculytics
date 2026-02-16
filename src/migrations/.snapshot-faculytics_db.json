@@ -1140,6 +1140,16 @@
           "primary": false,
           "nullable": false,
           "mappedType": "boolean"
+        },
+        "roles": {
+          "name": "roles",
+          "type": "text[]",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "default": "'{}'",
+          "mappedType": "array"
         }
       },
       "name": "user",

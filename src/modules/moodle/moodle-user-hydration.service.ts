@@ -5,6 +5,7 @@ import { Program } from 'src/entities/program.entity';
 import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import UnitOfWork from '../common/unit-of-work';
+import { env } from 'src/configurations/env';
 
 @Injectable()
 export class MoodleUserHydrationService {
@@ -27,6 +28,31 @@ export class MoodleUserHydrationService {
       token: moodleToken,
       userId: moodleUserId,
     });
+
+    // Fetch roles in parallel using the master key to ensure we get the full profile
+    const rolesPerCourse = await Promise.all(
+      remoteCourses.map(async (rc) => {
+        try {
+          const profiles = await this.moodleService.GetCourseUserProfiles({
+            token: env.MOODLE_MASTER_KEY,
+            userId: moodleUserId,
+            courseId: rc.id,
+          });
+          return {
+            courseId: rc.id,
+            role: this.moodleService.ExtractRole(profiles[0]),
+          };
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.error(
+            `Failed to fetch role for course ${rc.id}: ${message}`,
+          );
+          return { courseId: rc.id, role: 'student' };
+        }
+      }),
+    );
+    const roleMap = new Map(rolesPerCourse.map((r) => [r.courseId, r.role]));
 
     await this.unitOfWork.runInTransaction(async (tx) => {
       const user = await tx.findOneOrFail(User, { moodleUserId });
@@ -85,12 +111,13 @@ export class MoodleUserHydrationService {
         });
 
         // 2. Upsert Enrollment
+        const role = roleMap.get(remoteCourse.id) ?? 'student';
         const enrollmentData = tx.create(
           Enrollment,
           {
             user,
             course,
-            role: 'student', // default for this endpoint
+            role,
             isActive: true,
             timeModified: new Date(),
           },
@@ -107,6 +134,14 @@ export class MoodleUserHydrationService {
           ],
         });
       }
+
+      // Derive user roles from active enrollments
+      const activeEnrollments = await tx.find(Enrollment, {
+        user,
+        isActive: true,
+      });
+      user.updateRolesFromEnrollments(activeEnrollments);
+      tx.persist(user);
     });
 
     const duration = Date.now() - startTime;

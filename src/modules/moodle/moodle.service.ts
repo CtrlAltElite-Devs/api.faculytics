@@ -9,6 +9,7 @@ import { GetCourseUserProfilesRequest } from './dto/requests/get-course-user-pro
 import { GetMoodleCoursesRequest } from './dto/requests/get-courses-request.dto';
 import { GetCourseCategoriesRequest } from './dto/requests/get-course-categories.request.dto';
 import { GetCoursesByFieldRequest } from './dto/requests/get-courses-by-field-request.dto';
+import { MoodleEnrolledUser } from './lib/moodle.types';
 
 @Injectable()
 export class MoodleService {
@@ -69,5 +70,10 @@ export class MoodleService {
     const client = this.BuildMoodleClient();
     client.setToken(token);
     return await client.getCoursesByField('category', categoryId.toString());
+  }
+
+  ExtractRole(user?: MoodleEnrolledUser): string {
+    if (!user || !user.roles?.length) return 'student';
+    return user.roles[0].shortname;
   }
 }

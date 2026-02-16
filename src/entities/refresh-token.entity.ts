@@ -1,7 +1,7 @@
 import { Entity, Property } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { RequestMetadata } from 'src/modules/common/interceptors/http/enriched-request';
-import { RefreshTokenRepository } from 'src/repositories/refresh-token.repository';
+import { RefreshTokenRepository } from '../repositories/refresh-token.repository';
 
 @Entity({ repository: () => RefreshTokenRepository })
 export class RefreshToken extends CustomBaseEntity {

@@ -32,6 +32,8 @@ The application follows the standard NestJS modular architecture, split into **I
 
 - **User:** Represents a local user account, mapped 1:1 to a Moodle user via `moodleUserId`. Stores basic profile info (first name, last name, picture).
 - **MoodleToken:** Stores Moodle access tokens associated with a user.
+- **MoodleCategory:** Cache for Moodle's category hierarchy, used to map courses and organizational structures.
+- **Campus, Semester, Department, Program:** Local representations of the institutional hierarchy derived from Moodle categories.
 - **MikroORM:** configured in `mikro-orm.config.ts`. Supports migrations and seeding (`src/migrations/`, `src/seeders/`).
 
 ## Building and Running
@@ -68,6 +70,21 @@ The application follows the standard NestJS modular architecture, split into **I
   - Use `MikroORM` for all database interactions.
   - Run migrations via MikroORM CLI (commands not explicitly in package.json scripts, likely accessed via `npx mikro-orm`).
 - **Code Style:** strict ESLint and Prettier rules are enforced via `husky` pre-commit hooks.
+
+## Architectural Decisions
+
+### Idempotent Upserts & ID Stability
+
+To ensure data integrity during synchronization from external sources (like Moodle):
+
+- **Business Keys:** Use external IDs (e.g., `moodleCategoryId`) as the conflict target for `em.upsert`.
+- **Primary Key Stability:** Always exclude `id` and `created_at` from the update set using `onConflictMergeFields` to prevent overwriting local UUIDs or record creation timestamps.
+- **Entity Initialization:** Use `tx.create(Entity, data, { managed: false })` before upserting. This ensures entity property initializers (like UUID generation) are executed, allowing the database to decide whether to use the new ID (on insert) or ignore it (on conflict).
+
+### Cron Job Management
+
+- **Base Class:** All cron jobs must extend `BaseJob` to ensure consistent startup logging and standardized error handling.
+- **Shutdown Handling:** Do not manually attempt to stop cron jobs in `onApplicationShutdown`. NestJS's `ScheduleModule` handles the cleanup of the `SchedulerRegistry` automatically. Manual cleanup often leads to "Job not found" warnings during the shutdown sequence.
 
 ## Available Agents
 

@@ -48,6 +48,7 @@ jobs:
           MOODLE_BASE_URL: https://moodle.com
           MOODLE_MASTER_KEY: dummy_moodle_key
           OPENAI_API_KEY: dummy_openai_key
+          CORS_ORIGINS: '["*"]'
         run: npm run generate:openapi
 
       - name: Determine branch folder

@@ -8,9 +8,8 @@ on:
             - develop
     pull_request:
         branches:
-            - main
-            - staging
             - "**"
+    workflow_dispatch:
 
 jobs:
     test:
@@ -51,6 +50,16 @@ jobs:
             - name: Extract test summary
               id: test-summary
               run: |
+                  # Ensure the results file exists
+                  if [ ! -f jest-results.json ]; then
+                    echo "TEST_STATUS=❌ Jest results not found" >> $GITHUB_ENV
+                    echo "EMBED_COLOR=15158332" >> $GITHUB_ENV
+                    echo "PASSED=0" >> $GITHUB_ENV
+                    echo "FAILED=0" >> $GITHUB_ENV
+                    echo "TOTAL=0" >> $GITHUB_ENV
+                    exit 0
+                  fi
+
                   PASSED=$(jq '.numPassedTests' jest-results.json)
                   FAILED=$(jq '.numFailedTests' jest-results.json)
                   TOTAL=$(jq '.numTotalTests' jest-results.json)
@@ -68,8 +77,7 @@ jobs:
                     echo "EMBED_COLOR=15158332" >> $GITHUB_ENV
 
                     # Extract up to 5 failed test names
-                    FAILED_LIST=$(jq -r '[.testResults[].assertionResults[]? | select(.status=="failed") | .fullName][0:5] | join("
-• ")' jest-results.json)
+                    FAILED_LIST=$(jq -r '[.testResults[].assertionResults[]? | select(.status=="failed") | .fullName][0:5] | join("\n• ")' jest-results.json)
                     if [ -z "$FAILED_LIST" ]; then
                       FAILED_LIST="(Failed test names not found)"
                     else

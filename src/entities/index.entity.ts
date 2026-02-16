@@ -15,6 +15,7 @@ import { Questionnaire } from './questionnaire.entity';
 import { QuestionnaireVersion } from './questionnaire-version.entity';
 import { QuestionnaireSubmission } from './questionnaire-submission.entity';
 import { QuestionnaireAnswer } from './questionnaire-answer.entity';
+import { UserInstitutionalRole } from './user-institutional-role.entity';
 
 export {
   ChatKitThread,
@@ -34,6 +35,7 @@ export {
   Semester,
   Enrollment,
   RefreshToken,
+  UserInstitutionalRole,
 };
 
 export const entities = [
@@ -54,4 +56,5 @@ export const entities = [
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireAnswer,
+  UserInstitutionalRole,
 ];

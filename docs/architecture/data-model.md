@@ -7,8 +7,15 @@ erDiagram
     USER ||--o{ MOODLE_TOKEN : "owns"
     USER ||--o{ REFRESH_TOKEN : "has"
     USER ||--o{ ENROLLMENT : "enrolled"
+    USER ||--o{ USER_INSTITUTIONAL_ROLE : "holds authority"
     USER ||--o{ QUESTIONNAIRE_SUBMISSION : "submits (respondent)"
     USER ||--o{ QUESTIONNAIRE_SUBMISSION : "evaluated (faculty)"
+
+    MOODLE_CATEGORY ||--o{ USER_INSTITUTIONAL_ROLE : "context for"
+    CAMPUS }|--|| MOODLE_CATEGORY : "mapped to"
+    SEMESTER }|--|| MOODLE_CATEGORY : "mapped to"
+    DEPARTMENT }|--|| MOODLE_CATEGORY : "mapped to"
+    PROGRAM }|--|| MOODLE_CATEGORY : "mapped to"
 
     CAMPUS ||--o{ SEMESTER : "contains"
     SEMESTER ||--o{ DEPARTMENT : "contains"
@@ -29,6 +36,21 @@ erDiagram
         int moodleUserId
         string firstName
         string lastName
+        string[] roles
+    }
+
+    USER_INSTITUTIONAL_ROLE {
+        uuid id
+        uuid userId
+        uuid moodleCategoryId
+        string role
+    }
+
+    MOODLE_CATEGORY {
+        uuid id
+        int moodleCategoryId
+        string name
+        int parentMoodleCategoryId
     }
 
     CAMPUS {

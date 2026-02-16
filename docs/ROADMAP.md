@@ -15,9 +15,11 @@ Establishing the bedrock of the system: identity, hierarchy, and reliable data f
 - [x] **Identity Management:** Moodle-integrated JWT authentication and automatic user profile hydration.
 - [x] **Institutional Hierarchy:** Rebuilding Campus/Semester/Department/Program structures from Moodle categories.
 - [x] **Idempotent Infrastructure:** Automated migrations and self-healing infrastructure seeders (e.g., Dimension registry).
+- [ ] **Hybrid Authentication Strategy:** implementing local credential support alongside Moodle SSO for administrative users (Deans/Admins).
 - [x] **Robust Startup:** Fail-fast initialization sequence ensuring migration execution, seed idempotency, and schema integrity enforcement.
 - [~] **Data Sync Engine:** Background jobs for Moodle category and course mirroring (Refinement in progress).
-- [ ] **Enrollment Mirroring:** Efficient synchronization of user-course relationships with role mapping.
+- [~] **Enrollment Mirroring:** Efficient synchronization of user-course relationships with role mapping.
+- [x] **Institutional Authority Mapping:** Automated detection and mapping of Deans/Managers based on Moodle category-level capabilities.
 
 ## Phase 2: Questionnaire & Ingestion Engine
 

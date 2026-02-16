@@ -104,6 +104,20 @@ export class MoodleClient {
     );
   }
 
+  async getEnrolledUsersWithCapability(
+    courseId: number,
+    capability: string,
+  ): Promise<MoodleEnrolledUser[]> {
+    return await this.call<MoodleEnrolledUser[]>(
+      MoodleWebServiceFunction.GET_ENROLLED_USERS,
+      {
+        courseid: courseId.toString(),
+        'options[0][name]': 'withcapability',
+        'options[0][value]': capability,
+      },
+    );
+  }
+
   async getCourseUserProfiles(
     userList: { userId: number; courseId: number }[],
   ): Promise<MoodleUserProfile[]> {

@@ -14,7 +14,6 @@ import { Enrollment } from 'src/entities/enrollment.entity';
 import { Course } from 'src/entities/course.entity';
 import { MoodleCourseSyncService } from './moodle-course-sync.service';
 import { MoodleUserHydrationService } from './moodle-user-hydration.service';
-import { MoodleController } from './moodle.controller';
 
 @Module({
   imports: [
@@ -29,7 +28,7 @@ import { MoodleController } from './moodle.controller';
     ]),
     CommonModule,
   ],
-  controllers: [MoodleController],
+  controllers: [],
   providers: [
     MoodleService,
     MoodleSyncService,

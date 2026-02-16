@@ -6,6 +6,10 @@ import { GetSiteInfoRequest } from './dto/requests/get-site-info.request.dto';
 import { GetEnrolledCoursesRequest } from './dto/requests/get-enrolled-courses.request.dto';
 import { GetEnrolledUsersByCourseRequest } from './dto/requests/get-enrolled-users-by-course.request.dto';
 import { GetCourseUserProfilesRequest } from './dto/requests/get-course-user-profiles.request.dto';
+import { GetMoodleCoursesRequest } from './dto/requests/get-courses-request.dto';
+import { GetCourseCategoriesRequest } from './dto/requests/get-course-categories.request.dto';
+import { GetCoursesByFieldRequest } from './dto/requests/get-courses-by-field-request.dto';
+import { MoodleEnrolledUser } from './lib/moodle.types';
 
 @Injectable()
 export class MoodleService {
@@ -42,5 +46,34 @@ export class MoodleService {
     return await client.getCourseUserProfiles([
       { userId: dto.userId, courseId: dto.courseId },
     ]);
+  }
+
+  async GetCourses(dto: GetMoodleCoursesRequest) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getCourses();
+  }
+
+  async GetCategories(dto: GetCourseCategoriesRequest) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getCategories();
+  }
+
+  async GetCoursesByField(dto: GetCoursesByFieldRequest) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getCoursesByField(dto.field, dto.value);
+  }
+
+  async GetCoursesByCategory(token: string, categoryId: number) {
+    const client = this.BuildMoodleClient();
+    client.setToken(token);
+    return await client.getCoursesByField('category', categoryId.toString());
+  }
+
+  ExtractRole(user?: MoodleEnrolledUser): string {
+    if (!user || !user.roles?.length) return 'student';
+    return user.roles[0].shortname;
   }
 }

@@ -14,8 +14,8 @@ import { JwtRefreshStrategy } from 'src/security/passport-strategys/refresh-jwt.
   imports: [
     MikroOrmModule.forFeature([User, MoodleToken]),
     CommonModule,
-    MoodleModule,
     DataLoaderModule,
+    MoodleModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, JwtRefreshStrategy],

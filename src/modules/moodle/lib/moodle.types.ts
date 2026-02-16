@@ -9,3 +9,4 @@ export {
 } from '../dto/responses/course.response.dto';
 export { MoodleEnrolledUser } from '../dto/responses/enrolled-users-by-course.response.dto';
 export { MoodleUserProfile } from '../dto/responses/user-profile.response.dto';
+export { MoodleCategoryResponse } from '../dto/responses/moodle-category.response.dto';

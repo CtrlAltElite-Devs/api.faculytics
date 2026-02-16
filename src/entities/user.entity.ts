@@ -15,6 +15,8 @@ import { Department } from './department.entity';
 import { Program } from './program.entity';
 import { UserInstitutionalRole } from './user-institutional-role.entity';
 
+import { UserRole, MoodleRoleMapping } from '../modules/auth/roles.enum';
+
 @Entity({ repository: () => UserRepository })
 export class User extends CustomBaseEntity {
   @Property({ unique: true })
@@ -63,7 +65,7 @@ export class User extends CustomBaseEntity {
   isActive: boolean;
 
   @Property({ type: 'array', default: [] })
-  roles: string[] = [];
+  roles: UserRole[] = [];
 
   static CreateFromSiteInfoData(siteInfoData: MoodleSiteInfoResponse) {
     const user = new User();
@@ -94,9 +96,14 @@ export class User extends CustomBaseEntity {
   ) {
     const enrollmentRoles = enrollments
       .filter((e) => e.isActive)
-      .map((e) => e.role);
-    const instRoles = institutionalRoles.map((ir) => ir.role);
+      .map((e) => MoodleRoleMapping[e.role] || (e.role as unknown as UserRole));
 
-    this.roles = [...new Set([...enrollmentRoles, ...instRoles])];
+    const instRoles = institutionalRoles.map(
+      (ir) => MoodleRoleMapping[ir.role] || (ir.role as unknown as UserRole),
+    );
+
+    this.roles = [...new Set([...enrollmentRoles, ...instRoles])].filter(
+      Boolean,
+    );
   }
 }

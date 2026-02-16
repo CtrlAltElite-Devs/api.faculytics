@@ -13,6 +13,22 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faculytics_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,6 +45,14 @@ jobs:
         run: npm ci
 
       - name: Run tests
+        env:
+          DATABASE_URL: postgres://postgres:password@localhost:5432/faculytics_db
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'dummy_jwt_secret_for_tests' }}
+          REFRESH_SECRET: ${{ secrets.REFRESH_SECRET || 'dummy_refresh_secret_for_tests' }}
+          MOODLE_BASE_URL: https://moodle.com
+          MOODLE_MASTER_KEY: dummy_moodle_key
+          OPENAI_API_KEY: dummy_openai_key
+          CORS_ORIGINS: '["*"]'
         run: npm run test
 
       - name: Release

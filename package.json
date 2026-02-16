@@ -18,6 +18,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "generate:openapi": "ts-node -r tsconfig-paths/register scripts/generate-openapi.ts",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -74,6 +75,7 @@
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
     "globals": "^16.0.0",
+    "hono": "^4.11.9",
     "husky": "^9.1.7",
     "jest": "^30.0.0",
     "lint-staged": "^16.2.7",

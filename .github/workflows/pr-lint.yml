@@ -55,8 +55,8 @@ jobs:
               if: ${{ github.event_name == 'pull_request' }}
               env:
                   DISCORD_WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK }}
-                  DISCORD_USERNAME: "Lint Kagawad"
-                  DISCORD_AVATAR: "https://i.pinimg.com/236x/e0/3a/82/e03a82c5fa01dc8a3825688810292eae.jpg"
+                  DISCORD_USERNAME: "Leo Bermudez"
+                  DISCORD_AVATAR: "https://scontent.fceb3-1.fna.fbcdn.net/v/t39.30808-6/468222997_122103231422632296_9144898883232265379_n.jpg?_nc_cat=106&ccb=1-7&_nc_sid=a5f93a&_nc_eui2=AeHoNtBKxsVZXTupsNj-esNhRNVDDdYZjQBE1UMN1hmNAGnoZ2ya3PR09OY6n2E2b1Z5gIekCRzbHws1UeaCGBwB&_nc_ohc=9Qh9lj71VS8Q7kNvwGrE1Rp&_nc_oc=AdlJpFX5AmwR43Q-eeyLtsxGFhnT98NV2BXBwTMhBSAANlchvtOKTlfjy__8J69YvPo&_nc_zt=23&_nc_ht=scontent.fceb3-1.fna&_nc_gid=wKqKrjoD3a6tAx7ylO3cOw&oh=00_AftMnDuaL-np4DOMaOTcZZNSOEpt0SPrCOpd40fCR57xSw&oe=69994063"
                   DISCORD_EMBEDS: >
                       [
                          {
@@ -79,4 +79,4 @@ jobs:
                       ]
               uses: Ilshidur/action-discord@0.4.0
               with:
-                  args: ${{ env.LINT_STATUS == '✅ Lint passed, clean code! ✨' && 'PR Lint Result ni dawg 🚀' || 'Uy dawg naay hugaw sa code 😭‼️' }}
+                  args: ${{ env.LINT_STATUS == '✅ Lint passed! pwede na mag NU ✨' && 'PR Lint Result 🚀' || 'Naa kay sayup, wala kay respeto! 😡' }}

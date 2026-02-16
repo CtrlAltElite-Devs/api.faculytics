@@ -11,6 +11,8 @@ import { Enrollment } from './enrollment.entity';
 import { UserRepository } from '../repositories/user.repository';
 import { MoodleSiteInfoResponse } from '../modules/moodle/lib/moodle.types';
 import { Campus } from './campus.entity';
+import { Department } from './department.entity';
+import { Program } from './program.entity';
 
 @Entity({ repository: () => UserRepository })
 export class User extends CustomBaseEntity {
@@ -34,6 +36,12 @@ export class User extends CustomBaseEntity {
 
   @ManyToOne(() => Campus, { nullable: true })
   campus?: Campus;
+
+  @ManyToOne(() => Department, { nullable: true })
+  department?: Department;
+
+  @ManyToOne(() => Program, { nullable: true })
+  program?: Program;
 
   @OneToMany(() => MoodleToken, (token) => token.user)
   moodleTokens = new Collection<MoodleToken>(this);

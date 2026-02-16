@@ -6,6 +6,10 @@ import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import UnitOfWork from '../common/unit-of-work';
 import { env } from 'src/configurations/env';
+import { EntityManager } from '@mikro-orm/core';
+import { MoodleCourse } from './lib/moodle.types';
+import { MoodleCategory } from 'src/entities/moodle-category.entity';
+import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
 
 @Injectable()
 export class MoodleUserHydrationService {
@@ -135,12 +139,22 @@ export class MoodleUserHydrationService {
         });
       }
 
-      // Derive user roles from active enrollments
+      // 3. Resolve Institutional Roles (e.g. Dean)
+      await this.resolveInstitutionalRoles(
+        user,
+        remoteCourses,
+        tx,
+        moodleToken,
+      );
+
+      // Derive user roles from active enrollments and institutional roles
       const activeEnrollments = await tx.find(Enrollment, {
         user,
         isActive: true,
       });
-      user.updateRolesFromEnrollments(activeEnrollments);
+      const institutionalRoles = await tx.find(UserInstitutionalRole, { user });
+
+      user.updateRolesFromEnrollments(activeEnrollments, institutionalRoles);
       tx.persist(user);
     });
 
@@ -148,5 +162,109 @@ export class MoodleUserHydrationService {
     this.logger.log(
       `Finished hydrating courses for Moodle user ${moodleUserId} in ${duration}ms`,
     );
+  }
+
+  private async resolveInstitutionalRoles(
+    user: User,
+    remoteCourses: MoodleCourse[],
+    tx: EntityManager,
+    moodleToken: string,
+  ) {
+    this.logger.log(
+      `Resolving institutional roles for user ${user.userName}...`,
+    );
+
+    // Map target categories (e.g. Departments at Depth 3) to representative courses
+    const targetCategoryMap = new Map<number, number>();
+
+    for (const course of remoteCourses) {
+      const directCategory = await tx.findOne(MoodleCategory, {
+        moodleCategoryId: course.category,
+      });
+
+      if (!directCategory) continue;
+
+      let targetCategory: MoodleCategory | null = null;
+
+      if (directCategory.depth === 4) {
+        // Program level -> go up to Department
+        targetCategory = await tx.findOne(MoodleCategory, {
+          moodleCategoryId: directCategory.parentMoodleCategoryId,
+        });
+      } else if (directCategory.depth === 3) {
+        // Already at Department level
+        targetCategory = directCategory;
+      }
+
+      if (targetCategory && targetCategory.depth === 3) {
+        if (!targetCategoryMap.has(targetCategory.moodleCategoryId)) {
+          targetCategoryMap.set(targetCategory.moodleCategoryId, course.id);
+        }
+      }
+    }
+
+    const processedCategoryIds = Array.from(targetCategoryMap.keys());
+    const deanCategoryIds: number[] = [];
+
+    // Check capability for each representative course of the target categories
+    for (const [categoryId, courseId] of targetCategoryMap) {
+      try {
+        const usersWithCapability =
+          await this.moodleService.GetUsersWithCapability({
+            token: moodleToken,
+            courseId,
+            capability: 'moodle/category:manage',
+          });
+
+        const isDean = usersWithCapability.some(
+          (u) => u.id === user.moodleUserId,
+        );
+
+        if (isDean) {
+          deanCategoryIds.push(categoryId);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Failed to check capability for category ${categoryId} via course ${courseId}: ${message}`,
+        );
+      }
+    }
+
+    // Sync roles
+    for (const categoryId of processedCategoryIds) {
+      const moodleCategory = await tx.findOneOrFail(MoodleCategory, {
+        moodleCategoryId: categoryId,
+      });
+
+      const isDean = deanCategoryIds.includes(categoryId);
+
+      if (isDean) {
+        const roleData = tx.create(
+          UserInstitutionalRole,
+          {
+            user,
+            role: 'dean',
+            moodleCategory,
+          },
+          { managed: false },
+        );
+
+        await tx.upsert(UserInstitutionalRole, roleData, {
+          onConflictFields: ['user', 'moodleCategory', 'role'],
+          onConflictMergeFields: ['updatedAt'],
+        });
+      } else {
+        // Remove 'dean' role if it exists for this category
+        const existingRole = await tx.findOne(UserInstitutionalRole, {
+          user,
+          moodleCategory,
+          role: 'dean',
+        });
+        if (existingRole) {
+          tx.remove(existingRole);
+        }
+      }
+    }
   }
 }

@@ -19,6 +19,12 @@ export class Semester extends CustomBaseEntity {
   @Property()
   code!: string; // S22526
 
+  @Property({ nullable: true })
+  label?: string;
+
+  @Property({ nullable: true })
+  academicYear?: string;
+
   @ManyToOne(() => Campus)
   campus!: Campus;
 

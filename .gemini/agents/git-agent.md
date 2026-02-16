@@ -8,6 +8,7 @@ tools:
   - read_file
   - grep_search
   - list_directory
+max_turns: 20
 ---
 
 # Git Agent Persona & Instructions

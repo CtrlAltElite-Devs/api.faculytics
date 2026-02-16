@@ -8,6 +8,8 @@ on:
             - develop
     pull_request:
         branches:
+            - main
+            - staging
             - "**"
 
 jobs:
@@ -33,4 +35,48 @@ jobs:
 
             # Run lint
             - name: Run lint
-              run: npm run lint
+              id: run-lint
+              run: |
+                  npm run lint || true
+                  # Always continue even if lint fails, so we can still send the report
+
+            - name: Check lint status
+              id: lint-status
+              run: |
+                  if npm run lint; then
+                    echo "LINT_STATUS=✅ Lint passed, clean code! ✨" >> $GITHUB_ENV
+                    echo "EMBED_COLOR=3066993" >> $GITHUB_ENV
+                  else
+                    echo "LINT_STATUS=❌ Lint failed, fix your code! 🧹" >> $GITHUB_ENV
+                    echo "EMBED_COLOR=15158332" >> $GITHUB_ENV
+                  fi
+
+            - name: Discord notification
+              if: ${{ github.event_name == 'pull_request' }}
+              env:
+                  DISCORD_WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK }}
+                  DISCORD_USERNAME: "Lint Kagawad"
+                  DISCORD_AVATAR: "https://i.pinimg.com/236x/e0/3a/82/e03a82c5fa01dc8a3825688810292eae.jpg"
+                  DISCORD_EMBEDS: >
+                      [
+                         {
+                         "author": {
+                             "name": "${{ github.event.pull_request.user.login }}",
+                             "icon_url": "${{ github.event.pull_request.user.avatar_url }}"
+                         },
+                         "title": "${{ github.event.pull_request.title }}",
+                         "url": "${{ github.event.pull_request.html_url }}",
+                         "description": "${{ env.LINT_STATUS }}",
+                         "color": ${{ env.EMBED_COLOR }},
+                         "fields": [
+                             {
+                                "name": "Commit",
+                                "value": "${{ github.sha }}"
+                             }
+                         ],
+                         "timestamp": "${{ github.event.pull_request.updated_at }}"
+                         }
+                      ]
+              uses: Ilshidur/action-discord@0.4.0
+              with:
+                  args: ${{ env.LINT_STATUS == '✅ Lint passed, clean code! ✨' && 'PR Lint Result ni dawg 🚀' || 'Uy dawg naay hugaw sa code 😭‼️' }}

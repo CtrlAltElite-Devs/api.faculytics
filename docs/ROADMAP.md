@@ -28,7 +28,7 @@ Enabling structured feedback through a flexible domain engine and universal inge
 - [x] **Recursive Schema Validation:** Ensuring mathematical integrity (leaf-weight rules) in complex questionnaires.
 - [x] **Dimension Registry:** A categorized framework for grouping assessment criteria across different questionnaire types.
 - [x] **Institutional Snapshotting:** Decoupling historical submissions from future hierarchy changes.
-- [~] **Submission & Scoring:** API for processing student/faculty feedback with normalized scoring (In development).
+- [x] **Submission & Scoring:** API for processing student/faculty feedback with normalized scoring.
 - [ ] **Universal Ingestion Adapters:** Implementing the Adapter pattern to unify inputs from Moodle, Web forms, and external Files.
 - [ ] **File-to-Questionnaire Mapping:** Mechanism (DSL or UI) to map CSV/Excel/JSON columns to internal Questionnaire Dimensions.
 - [ ] **Submission Lifecycle:** Support for states (Draft, Submitted, Locked, Archived).
@@ -68,9 +68,7 @@ Enforcing institutional boundaries and extending the system reach.
 
 ## Immediate Next Steps (To-Do)
 
-1. **[Safety]** Add integration tests for `DatabaseSeeder` to verify idempotency and error handling. (Completed)
-2. **[Infrastructure]** Expand `InfrastructureSeeder` to include default `Roles` and `SystemConfig`. (Completed)
-3. **[Feature]** Finalize the `QuestionnaireSubmission` API, ensuring all institutional snapshots are correctly captured.
-4. **[Ingestion]** Design the `SourceAdapter` interface to support upcoming file-based ingestion.
-5. **[Architecture]** Define AI inference event contract to prevent future model refactoring.
-6. **[DX]** Continue refining documentation and agent skills to maintain high development velocity.
+1. **[Ingestion]** Design the `SourceAdapter` interface to support upcoming file-based ingestion.
+2. **[Ingestion]** Implement the `IngestionEngine` (Orchestrator) to consume adapters, handle concurrency, and process dry-run transactions.
+3. **[Architecture]** Define AI inference event contract to prevent future model refactoring.
+4. **[DX]** Continue refining documentation and agent skills to maintain high development velocity.

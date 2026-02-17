@@ -12,6 +12,10 @@ import { QuestionnaireService } from './services/questionnaire.service';
 import { QuestionnaireController } from './questionnaire.controller';
 import { QuestionnaireSchemaValidator } from './services/questionnaire-schema.validator';
 import { ScoringService } from './services/scoring.service';
+import { SourceAdapterFactory } from './ingestion/factories/source-adapter.factory';
+import { SOURCE_ADAPTER_PREFIX } from './ingestion/constants/ingestion.constants';
+import { SourceType } from './ingestion/types/source-type.enum';
+import { ErrorFormatter } from './ingestion/utils/error-formatter.util';
 
 @Module({
   imports: [
@@ -29,6 +33,16 @@ import { ScoringService } from './services/scoring.service';
     QuestionnaireService,
     QuestionnaireSchemaValidator,
     ScoringService,
+    SourceAdapterFactory,
+    ErrorFormatter,
+    {
+      provide: `${SOURCE_ADAPTER_PREFIX}${SourceType.CSV}`,
+      useValue: {}, // Placeholder
+    },
+    {
+      provide: `${SOURCE_ADAPTER_PREFIX}${SourceType.EXCEL}`,
+      useValue: {}, // Placeholder
+    },
   ],
   exports: [QuestionnaireService],
 })

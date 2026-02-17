@@ -1,0 +1,1 @@
+export const SOURCE_ADAPTER_PREFIX = 'SOURCE_ADAPTER_';

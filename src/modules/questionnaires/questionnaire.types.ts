@@ -22,6 +22,11 @@ export enum RespondentRole {
   DEAN = 'DEAN',
 }
 
+export enum EnrollmentRole {
+  STUDENT = 'student',
+  EDITING_TEACHER = 'editingteacher',
+}
+
 export interface QuestionNode {
   id: string; // unique within version
   text: string;
@@ -45,6 +50,7 @@ export interface QuestionnaireSchemaSnapshot {
     questionnaireType: QuestionnaireType;
     scoringModel: 'SECTION_WEIGHTED';
     version: number;
+    maxScore: number;
   };
   sections: SectionNode[];
   qualitativeFeedback?: {

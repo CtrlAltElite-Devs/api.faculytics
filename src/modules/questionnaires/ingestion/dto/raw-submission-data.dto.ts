@@ -29,6 +29,13 @@ export class RawSubmissionData {
   @IsNumber()
   moodleUserId: number;
 
+  @ApiProperty({
+    description:
+      'The Moodle user ID of the faculty. Future: make optional if derivable from course.',
+  })
+  @IsNumber()
+  moodleFacultyId: number;
+
   @ApiProperty({ description: 'The Moodle course ID' })
   @IsNumber()
   courseId: number;

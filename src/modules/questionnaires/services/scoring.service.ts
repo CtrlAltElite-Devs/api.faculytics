@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import {
   QuestionnaireSchemaSnapshot,
   SectionNode,
@@ -10,6 +10,13 @@ export class ScoringService {
     schema: QuestionnaireSchemaSnapshot,
     answers: Record<string, number>, // questionId -> numericValue
   ) {
+    const maxScore = schema.meta.maxScore;
+    if (!maxScore || maxScore <= 0) {
+      throw new BadRequestException(
+        'Invalid maxScore in questionnaire schema.',
+      );
+    }
+
     const leafSections: SectionNode[] = [];
     this.findLeafSections(schema.sections, leafSections);
 
@@ -40,11 +47,7 @@ export class ScoringService {
       };
     });
 
-    // Normalized score: Assuming LIKERT 1-5, normalize to 100
-    // If the max score is 5, normalized = (totalScore / 5) * 100
-    // However, the scoring model might vary. For now, let's assume totalScore is the weighted average.
-    // If all questions are 5, totalScore will be 5.
-    const normalizedScore = (totalScore / 5) * 100;
+    const normalizedScore = (totalScore / maxScore) * 100;
 
     return {
       totalScore,

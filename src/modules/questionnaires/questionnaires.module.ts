@@ -6,6 +6,7 @@ import {
   QuestionnaireSubmission,
   QuestionnaireAnswer,
   Dimension,
+  Enrollment,
 } from '../../entities/index.entity';
 import { QuestionnaireService } from './services/questionnaire.service';
 import { QuestionnaireController } from './questionnaire.controller';
@@ -20,6 +21,7 @@ import { ScoringService } from './services/scoring.service';
       QuestionnaireSubmission,
       QuestionnaireAnswer,
       Dimension,
+      Enrollment,
     ]),
   ],
   controllers: [QuestionnaireController],

@@ -15,10 +15,10 @@ Establishing the bedrock of the system: identity, hierarchy, and reliable data f
 - [x] **Identity Management:** Moodle-integrated JWT authentication and automatic user profile hydration.
 - [x] **Institutional Hierarchy:** Rebuilding Campus/Semester/Department/Program structures from Moodle categories.
 - [x] **Idempotent Infrastructure:** Automated migrations and self-healing infrastructure seeders (e.g., Dimension registry).
-- [ ] **Hybrid Authentication Strategy:** implementing local credential support alongside Moodle SSO for administrative users (Admins/SuperAdmins/Higher-ups).
+- [x] **Hybrid Authentication Strategy:** implementing local credential support alongside Moodle SSO for administrative users (Admins/SuperAdmins/Higher-ups).
 - [x] **Robust Startup:** Fail-fast initialization sequence ensuring migration execution, seed idempotency, and schema integrity enforcement.
-- [~] **Data Sync Engine:** Background jobs for Moodle category and course mirroring (Refinement in progress).
-- [~] **Enrollment Mirroring:** Efficient synchronization of user-course relationships with role mapping.
+- [x] **Data Sync Engine:** Background jobs for Moodle category and course mirroring (Refinement in progress).
+- [x] **Enrollment Mirroring:** Efficient synchronization of user-course relationships with role mapping.
 - [x] **Institutional Authority Mapping:** Automated detection and mapping of Deans/Managers based on Moodle category-level capabilities.
 
 ## Phase 2: Questionnaire & Ingestion Engine
@@ -28,8 +28,9 @@ Enabling structured feedback through a flexible domain engine and universal inge
 - [x] **Recursive Schema Validation:** Ensuring mathematical integrity (leaf-weight rules) in complex questionnaires.
 - [x] **Dimension Registry:** A categorized framework for grouping assessment criteria across different questionnaire types.
 - [x] **Institutional Snapshotting:** Decoupling historical submissions from future hierarchy changes.
-- [~] **Submission & Scoring:** API for processing student/faculty feedback with normalized scoring (In development).
-- [ ] **Universal Ingestion Adapters:** Implementing the Adapter pattern to unify inputs from Moodle, Web forms, and external Files.
+- [x] **Submission & Scoring:** API for processing student/faculty feedback with normalized scoring.
+- [x] **Ingestion Engine (Orchestrator):** Concurrent stream processor with transactional isolation and dry-run support.
+- [~] **Universal Ingestion Adapters:** Base architecture implemented (Factory, Interfaces, DTOs). Concrete adapters (CSV/Excel) pending.
 - [ ] **File-to-Questionnaire Mapping:** Mechanism (DSL or UI) to map CSV/Excel/JSON columns to internal Questionnaire Dimensions.
 - [ ] **Submission Lifecycle:** Support for states (Draft, Submitted, Locked, Archived).
 - [ ] **Questionnaire Versioning:** Full lifecycle management of assessment versions.
@@ -68,9 +69,6 @@ Enforcing institutional boundaries and extending the system reach.
 
 ## Immediate Next Steps (To-Do)
 
-1. **[Safety]** Add integration tests for `DatabaseSeeder` to verify idempotency and error handling.
-2. **[Infrastructure]** Expand `InfrastructureSeeder` to include default `Roles` and `SystemConfig`.
-3. **[Feature]** Finalize the `QuestionnaireSubmission` API, ensuring all institutional snapshots are correctly captured.
-4. **[Ingestion]** Design the `SourceAdapter` interface to support upcoming file-based ingestion.
-5. **[Architecture]** Define AI inference event contract to prevent future model refactoring.
-6. **[DX]** Continue refining documentation and agent skills to maintain high development velocity.
+1. **[Ingestion]** Implement concrete `CSVAdapter` and `ExcelAdapter` using the universal interface.
+2. **[Architecture]** Define AI inference event contract to prevent future model refactoring.
+3. **[DX]** Continue refining documentation and agent skills to maintain high development velocity.

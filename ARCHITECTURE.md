@@ -9,6 +9,7 @@ This directory contains the architectural documentation for the `api.faculytics`
 - System Overview
 - Technology Stack
 - Module Architecture (NestJS)
+- [Universal Ingestion Architecture](./docs/architecture/universal-ingestion.md)
 
 ### [2. Data Model (ERD)](./docs/architecture/data-model.md)
 

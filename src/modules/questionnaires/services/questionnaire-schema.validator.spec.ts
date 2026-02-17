@@ -39,6 +39,7 @@ describe('QuestionnaireSchemaValidator', () => {
       questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
       scoringModel: 'SECTION_WEIGHTED',
       version: 1,
+      maxScore: 5,
     },
     sections: [
       {
@@ -93,6 +94,7 @@ describe('QuestionnaireSchemaValidator', () => {
         questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
         scoringModel: 'SECTION_WEIGHTED',
         version: 1,
+        maxScore: 5,
       },
       sections: [
         {

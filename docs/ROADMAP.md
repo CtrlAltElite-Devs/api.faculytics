@@ -30,7 +30,7 @@ Enabling structured feedback through a flexible domain engine and universal inge
 - [x] **Institutional Snapshotting:** Decoupling historical submissions from future hierarchy changes.
 - [x] **Submission & Scoring:** API for processing student/faculty feedback with normalized scoring.
 - [x] **Ingestion Engine (Orchestrator):** Concurrent stream processor with transactional isolation and dry-run support.
-- [~] **Universal Ingestion Adapters:** Base architecture implemented (Factory, Interfaces, DTOs). Concrete adapters (CSV/Excel) pending.
+- [x] **Universal Ingestion Adapters:** Base architecture and concrete CSV/Excel adapters implemented.
 - [ ] **File-to-Questionnaire Mapping:** Mechanism (DSL or UI) to map CSV/Excel/JSON columns to internal Questionnaire Dimensions.
 - [ ] **Submission Lifecycle:** Support for states (Draft, Submitted, Locked, Archived).
 - [ ] **Questionnaire Versioning:** Full lifecycle management of assessment versions.
@@ -69,6 +69,6 @@ Enforcing institutional boundaries and extending the system reach.
 
 ## Immediate Next Steps (To-Do)
 
-1. **[Ingestion]** Implement concrete `CSVAdapter` and `ExcelAdapter` using the universal interface.
+1. **[Ingestion]** Define file-to-questionnaire mapping (DSL or UI) for CSV/Excel/JSON columns.
 2. **[Architecture]** Define AI inference event contract to prevent future model refactoring.
 3. **[DX]** Continue refining documentation and agent skills to maintain high development velocity.

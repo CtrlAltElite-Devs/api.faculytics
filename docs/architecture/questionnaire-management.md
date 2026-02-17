@@ -119,3 +119,11 @@ The `IngestionEngine` processes asynchronous streams of submission data using a 
 - **Speculative Dry-Runs:** Executes the complete business logic, including database constraints and triggers, but uses a custom `DryRunRollbackError` to ensure the transaction is always rolled back.
 - **Deduplicated Mapping:** Uses `IngestionMapperService` with a request-scoped `DataLoader` to cache institutional entity lookups (Users, Courses, Semesters) across concurrent workers.
 - **Resource Safety:** Implements hard memory limits (5,000 records) and automatic backpressure if the processing queue grows too large.
+
+### Concrete Adapters (CSV & Excel)
+
+- **Streaming-first**: Both adapters return `AsyncIterable<IngestionRecord>` and never buffer the entire file.
+- **Header normalization**: Keys are trimmed, lowercased, stripped of non-alphanumerics (keeping `_` and `-`), and de-duplicated with suffixes (`_1`, `_2`).
+- **CSV configuration**: Supports `delimiter`, `quote`, `escape`, and `separator` options.
+- **Excel configuration**: Supports `sheetName` or 1-based `sheetIndex` selection.
+- **Row identification**: `sourceIdentifier` is 1-based for data rows (header row excluded).

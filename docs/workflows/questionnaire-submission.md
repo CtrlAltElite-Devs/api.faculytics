@@ -50,3 +50,9 @@ sequenceDiagram
 ```
 
 For more details on the adapter design, see the [Universal Ingestion Architecture](../architecture/universal-ingestion.md).
+
+### Adapter Notes
+
+- CSV/Excel adapters stream records and emit `IngestionRecord.error` for malformed rows without stopping the stream.
+- Header normalization trims, lowercases, and removes non-alphanumerics (keeping `_` and `-`) to align with DTO keys.
+- `sourceIdentifier` is 1-based for data rows (header row excluded).

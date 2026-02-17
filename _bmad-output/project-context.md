@@ -2,8 +2,25 @@
 project_name: 'api.faculytics'
 user_name: 'yander'
 date: '2026-02-17'
-sections_completed: ['technology_stack', 'critical_rules', 'code_patterns']
-existing_patterns_found: 8
+---
+
+project_name: 'api.faculytics'
+user_name: 'yander'
+date: '2026-02-17'
+sections_completed:
+[
+'technology_stack',
+'language_rules',
+'framework_rules',
+'testing_rules',
+'quality_rules',
+'workflow_rules',
+'anti_patterns',
+]
+status: 'complete'
+rule_count: 18
+optimized_for_llm: true
+
 ---
 
 # Project Context for AI Agents
@@ -24,36 +41,73 @@ _This file contains critical rules and patterns that AI agents must follow when 
 
 ## Critical Implementation Rules
 
-### 1. Database Interactions (MikroORM)
+### Language-Specific Rules
 
-- **Idempotent Upserts:** Use external IDs (e.g., `moodleCategoryId`) as the conflict target for `em.upsert`.
-- **Primary Key Stability:** Always exclude `id` and `created_at` from the update set using `onConflictMergeFields` to prevent overwriting local UUIDs or record creation timestamps.
-- **Entity Initialization:** Use `tx.create(Entity, data, { managed: false })` before upserting. This ensures entity property initializers (like UUID generation) are executed.
-- **Repository Pattern:** Use dedicated repositories for entity-specific logic.
+- **Strict TypeScript:** Strict null checks are enforced.
+- **Absolute Imports:** Prefer absolute imports starting from `src/`.
+- **Explicit DTOs:** Request and response DTOs must be explicitly defined in their respective module's `dto/` folder.
+- **Entity Repositories:** Use dedicated repository classes (e.g., `UserRepository`) for business logic.
+- **Standard Exceptions:** Use NestJS built-in exceptions (`NotFoundException`, `UnauthorizedException`, etc.).
+- **Transactional Integrity:** Wrap multi-step database operations in `unitOfWork.runInTransaction(async (em) => { ... })`.
 
-### 2. Cron Job Management
+### Framework-Specific Rules (NestJS & MikroORM)
 
-- **Base Class:** All cron jobs must extend `BaseJob` (from `src/crons/base.job.ts`) for standardized logging and error handling.
-- **Shutdown:** Do not manually stop cron jobs in `onApplicationShutdown`; NestJS's `ScheduleModule` handles this.
+- **Method Naming:** Public Service methods MUST use `PascalCase` (e.g., `Login`, `SyncUserContext`).
+- **Transactions:** Always use `UnitOfWork` (from `src/modules/common/unit-of-work`) for database transactions.
+- **Idempotent Upserts:** Use external IDs (e.g., `moodleUserId`) as conflict targets for `em.upsert`.
+- **MikroORM Stability:** Exclude `id` and `created_at` from `onConflictMergeFields`.
+- **Entity Initialization:** Use `tx.create(Entity, data, { managed: false })` before upserts to trigger property initializers.
+- **Questionnaire Leaf-Weight Rule:** Weights can ONLY be assigned to "Leaf" sections. The sum of weights in a version MUST equal exactly 100.
+- **Section Mutual Exclusivity:** Sections can contain sub-sections OR questions, never both.
 
-### 3. Configuration & Environment
+### Testing Rules
 
-- **Validation:** All environment variables are validated using Zod in `src/configurations/env/`.
-- **Access:** Always use `src/configurations/index.config.ts` (the `env` object) to access configuration values.
+- **Unit Tests:** Located alongside the source file with `.spec.ts` suffix.
+- **E2E Tests:** Located in `test/` root directory.
+- **Mocks:** Services must be tested with mocked repositories and `UnitOfWork`.
+- **Seeder Idempotency:** Any seeder additions must be verified for idempotency in tests.
 
-### 4. Code Standards
+### Code Quality & Style Rules
 
-- **TypeScript:** Strict null checks enabled.
-- **DTOs:** Located within their respective modules (e.g., `src/modules/auth/dto/`).
-- **Imports:** Prefer absolute imports starting from `src/`.
+- **Husky Enforcement:** Linting and formatting rules are strictly enforced via pre-commit hooks.
+- **DTO Placement:** Requests and Responses must be separated within `dto/` folders (e.g., `dto/requests/`).
+- **File Naming:** Entities, Services, and Controllers use `kebab-case`.
+- **Method Naming:** Public methods use `PascalCase`.
+- **Swagger Documentation:** All endpoints and DTO properties must use `@nestjs/swagger` decorators.
 
-## Existing Patterns Found
+### Development Workflow Rules
 
-- **Modular Architecture:** Standard NestJS modular structure split into Infrastructure and Application layers.
-- **Hierarchy Mapping:** Local institutional hierarchy (Campus, Semester, Department, Program) derived from Moodle categories.
-- **External Sync:** Pattern of periodic synchronization from Moodle with idempotency.
-- **Unit of Work Pattern:** Leveraging MikroORM's `EntityManager` for transactional integrity.
-- **Swagger Documentation:** Standard use of `@nestjs/swagger` decorators on DTOs and Controllers.
-- **Linting & Formatting:** Strict ESLint and Prettier rules enforced via Husky.
-- **Semantic Versioning:** Automated releases via `semantic-release`.
-- **Zod Validation:** Unified validation for both configuration and potentially other data structures.
+- **Commit Messages:** Follow **Conventional Commits** (e.g., `feat:`, `fix:`) for automated releases.
+- **Automated Releases:** Uses `semantic-release` for versioning and changelogs.
+- **Startup Integrity:** Strict sequence: Migrations -> Seeders -> Bootstrap.
+- **PR Checks:** All PRs must pass automated linting and tests via GitHub Actions.
+
+### Critical Don't-Miss Rules (Anti-Patterns & Edge Cases)
+
+- **Anti-Pattern (Upsert):** Never use `em.upsert` without `onConflictMergeFields` if local metadata (IDs, timestamps) must be preserved.
+- **Anti-Pattern (EM):** Avoid using the global `EntityManager`. Always inject it or use `UnitOfWork`.
+- **Anti-Pattern (Cron):** NEVER stop cron jobs manually in `onApplicationShutdown`.
+- **Edge Case (Dean):** Users with the `DEAN` role bypass course enrollment checks in questionnaire submissions.
+- **Edge Case (Moodle Roles):** Always use `MoodleRoleMapping` enum for converting Moodle roles to internal roles.
+- **Immutability:** `QuestionnaireVersion` is immutable once submissions exist.
+- **Security:** Ensure sensitive fields (like `password`) are marked `@Property({ hidden: true })` and never returned in DTOs.
+
+---
+
+## Usage Guidelines
+
+**For AI Agents:**
+
+- Read this file before implementing any code
+- Follow ALL rules exactly as documented
+- When in doubt, prefer the more restrictive option
+- Update this file if new patterns emerge
+
+**For Humans:**
+
+- Keep this file lean and focused on agent needs
+- Update when technology stack changes
+- Review quarterly for outdated rules
+- Remove rules that become obvious over time
+
+Last Updated: 2026-02-17

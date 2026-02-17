@@ -68,7 +68,3 @@ Enforcing institutional boundaries and extending the system reach.
 ---
 
 ## Immediate Next Steps (To-Do)
-
-1. **[Ingestion]** Define file-to-questionnaire mapping (DSL or UI) for CSV/Excel/JSON columns.
-2. **[Architecture]** Define AI inference event contract to prevent future model refactoring.
-3. **[DX]** Continue refining documentation and agent skills to maintain high development velocity.

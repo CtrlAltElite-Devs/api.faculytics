@@ -20,9 +20,10 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { UserRole } from '../../auth/roles.enum';
-import { EnrollmentRole } from '../questionnaire.types';
+import { EnrollmentRole, QuestionnaireStatus } from '../questionnaire.types';
 
 describe('QuestionnaireService', () => {
   let service: QuestionnaireService;
@@ -30,6 +31,7 @@ describe('QuestionnaireService', () => {
   let submissionRepo: jest.Mocked<EntityRepository<QuestionnaireSubmission>>;
   let enrollmentRepo: jest.Mocked<EntityRepository<Enrollment>>;
   let versionRepo: jest.Mocked<EntityRepository<QuestionnaireVersion>>;
+  let questionnaireRepo: jest.Mocked<EntityRepository<Questionnaire>>;
 
   const RESPONDENT_ID = 'r1';
   const FACULTY_ID = 'f1';
@@ -46,7 +48,7 @@ describe('QuestionnaireService', () => {
       findOneOrFail: jest.fn(),
     });
 
-    const questionnaireRepo = createMockRepo();
+    const questionnaireRepoMock = createMockRepo();
     const versionRepoMock = createMockRepo();
     const submissionRepoMock = createMockRepo();
     const enrollmentRepoMock = createMockRepo();
@@ -56,7 +58,7 @@ describe('QuestionnaireService', () => {
         QuestionnaireService,
         {
           provide: getRepositoryToken(Questionnaire),
-          useValue: questionnaireRepo,
+          useValue: questionnaireRepoMock,
         },
         {
           provide: getRepositoryToken(QuestionnaireVersion),
@@ -106,6 +108,7 @@ describe('QuestionnaireService', () => {
     submissionRepo = module.get(getRepositoryToken(QuestionnaireSubmission));
     enrollmentRepo = module.get(getRepositoryToken(Enrollment));
     versionRepo = module.get(getRepositoryToken(QuestionnaireVersion));
+    questionnaireRepo = module.get(getRepositoryToken(Questionnaire));
   });
 
   it('should be defined', () => {
@@ -167,8 +170,8 @@ describe('QuestionnaireService', () => {
     };
 
     beforeEach(() => {
-      versionRepo.findOneOrFail.mockResolvedValue(mockVersion as any);
-      (em.findOneOrFail as jest.Mock).mockImplementation((entity, id) => {
+      versionRepo.findOne.mockResolvedValue(mockVersion as any);
+      (em.findOne as jest.Mock).mockImplementation((entity, id) => {
         if (entity === User && id === RESPONDENT_ID) return mockRespondent;
         if (entity === User && id === FACULTY_ID) return mockFaculty;
         if (entity === Semester && id === SEMESTER_ID) return mockSemester;
@@ -177,8 +180,67 @@ describe('QuestionnaireService', () => {
       });
     });
 
+    it('should throw NotFoundException if version is not found', async () => {
+      versionRepo.findOne.mockResolvedValue(null);
+      await expect(service.submitQuestionnaire(mockData)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw NotFoundException if respondent is not found', async () => {
+      (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+        if (entity === User && id === RESPONDENT_ID) return null;
+        if (entity === User && id === FACULTY_ID) return mockFaculty;
+        if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+        if (entity === Course && id === COURSE_ID) return mockCourse;
+        return null;
+      });
+      await expect(service.submitQuestionnaire(mockData)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw NotFoundException if faculty is not found', async () => {
+      (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+        if (entity === User && id === RESPONDENT_ID) return mockRespondent;
+        if (entity === User && id === FACULTY_ID) return null;
+        if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+        if (entity === Course && id === COURSE_ID) return mockCourse;
+        return null;
+      });
+      await expect(service.submitQuestionnaire(mockData)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw NotFoundException if semester is not found', async () => {
+      (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+        if (entity === User && id === RESPONDENT_ID) return mockRespondent;
+        if (entity === User && id === FACULTY_ID) return mockFaculty;
+        if (entity === Semester && id === SEMESTER_ID) return null;
+        if (entity === Course && id === COURSE_ID) return mockCourse;
+        return null;
+      });
+      await expect(service.submitQuestionnaire(mockData)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw NotFoundException if course is not found', async () => {
+      (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+        if (entity === User && id === RESPONDENT_ID) return mockRespondent;
+        if (entity === User && id === FACULTY_ID) return mockFaculty;
+        if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+        if (entity === Course && id === COURSE_ID) return null;
+        return null;
+      });
+      await expect(service.submitQuestionnaire(mockData)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
     it('should throw BadRequestException if version is inactive', async () => {
-      versionRepo.findOneOrFail.mockResolvedValue({
+      versionRepo.findOne.mockResolvedValue({
         ...mockVersion,
         isActive: false,
       } as any);
@@ -188,7 +250,15 @@ describe('QuestionnaireService', () => {
     });
 
     it('should throw BadRequestException if course does not belong to semester', async () => {
-      const mismatchedData = { ...mockData, semesterId: 's2' }; // Semester S2
+      const mismatchedSemester = { ...mockSemester, id: 's2' };
+      (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+        if (entity === User && id === RESPONDENT_ID) return mockRespondent;
+        if (entity === User && id === FACULTY_ID) return mockFaculty;
+        if (entity === Semester && id === 's2') return mismatchedSemester;
+        if (entity === Course && id === COURSE_ID) return mockCourse; // Course belongs to s1
+        return null;
+      });
+      const mismatchedData = { ...mockData, semesterId: 's2' };
       await expect(service.submitQuestionnaire(mismatchedData)).rejects.toThrow(
         BadRequestException,
       );
@@ -225,9 +295,7 @@ describe('QuestionnaireService', () => {
           },
         },
       };
-      versionRepo.findOneOrFail.mockResolvedValue(
-        requiredCommentVersion as any,
-      );
+      versionRepo.findOne.mockResolvedValue(requiredCommentVersion as any);
       enrollmentRepo.findOne.mockResolvedValue({ isActive: true } as any);
       await expect(service.submitQuestionnaire(mockData)).rejects.toThrow(
         BadRequestException,
@@ -256,7 +324,7 @@ describe('QuestionnaireService', () => {
 
     it('should allow Dean to submit without enrollment', async () => {
       const deanRespondent = { ...mockRespondent, roles: [UserRole.DEAN] };
-      (em.findOneOrFail as jest.Mock).mockImplementation((entity, id) => {
+      (em.findOne as jest.Mock).mockImplementation((entity, id) => {
         if (entity === User && id === RESPONDENT_ID) return deanRespondent;
         if (entity === User && id === FACULTY_ID) return mockFaculty;
         if (entity === Semester && id === SEMESTER_ID) return mockSemester;
@@ -276,6 +344,174 @@ describe('QuestionnaireService', () => {
 
       const result = await service.submitQuestionnaire(mockData);
       expect(result).toBeDefined();
+    });
+  });
+
+  describe('DeprecateVersion', () => {
+    it('should throw NotFoundException if version is not found', async () => {
+      versionRepo.findOne.mockResolvedValue(null);
+      await expect(service.DeprecateVersion('v1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw BadRequestException if version is already deprecated', async () => {
+      versionRepo.findOne.mockResolvedValue({
+        id: 'v1',
+        status: QuestionnaireStatus.DEPRECATED,
+        questionnaire: { id: 'q1' },
+      } as any);
+      await expect(service.DeprecateVersion('v1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should successfully deprecate a version', async () => {
+      const mockVersion = {
+        id: 'v1',
+        status: QuestionnaireStatus.ACTIVE,
+        isActive: true,
+        questionnaire: { id: 'q1' },
+      };
+      versionRepo.findOne.mockResolvedValue(mockVersion as any);
+
+      const result = await service.DeprecateVersion('v1');
+
+      expect(result.status).toBe(QuestionnaireStatus.DEPRECATED);
+      expect(result.isActive).toBe(false);
+      expect(em.persist).toHaveBeenCalled();
+      expect(em.flush).toHaveBeenCalled();
+    });
+  });
+
+  describe('CreateVersion', () => {
+    const mockSchema = {
+      meta: {
+        questionnaireType: 'FACULTY_IN_CLASSROOM',
+        scoringModel: 'SECTION_WEIGHTED',
+        version: 1,
+        maxScore: 5,
+      },
+      sections: [],
+    };
+
+    it('should throw NotFoundException if questionnaire is not found', async () => {
+      questionnaireRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.CreateVersion('q1', mockSchema as any),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw ConflictException if draft version already exists', async () => {
+      questionnaireRepo.findOne.mockResolvedValue({ id: 'q1' } as any);
+      versionRepo.findOne.mockResolvedValue({
+        id: 'v1',
+        status: QuestionnaireStatus.DRAFT,
+      } as any);
+
+      await expect(
+        service.CreateVersion('q1', mockSchema as any),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should create version with sequential version number', async () => {
+      questionnaireRepo.findOne.mockResolvedValue({ id: 'q1' } as any);
+      versionRepo.findOne
+        .mockResolvedValueOnce(null) // No existing draft
+        .mockResolvedValueOnce({ versionNumber: 2 } as any); // Latest version is v2
+
+      const result = await service.CreateVersion('q1', mockSchema as any);
+
+      expect(result.versionNumber).toBe(3);
+      expect(result.status).toBe(QuestionnaireStatus.DRAFT);
+      expect(em.persist).toHaveBeenCalled();
+      expect(em.flush).toHaveBeenCalled();
+    });
+
+    it('should create first version with versionNumber 1', async () => {
+      questionnaireRepo.findOne.mockResolvedValue({ id: 'q1' } as any);
+      versionRepo.findOne.mockResolvedValue(null); // No existing versions
+
+      const result = await service.CreateVersion('q1', mockSchema as any);
+
+      expect(result.versionNumber).toBe(1);
+      expect(result.status).toBe(QuestionnaireStatus.DRAFT);
+    });
+  });
+
+  describe('GetLatestActiveVersion', () => {
+    it('should throw NotFoundException if questionnaire is not found', async () => {
+      questionnaireRepo.findOne.mockResolvedValue(null);
+      await expect(service.GetLatestActiveVersion('q1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should return the active version', async () => {
+      questionnaireRepo.findOne.mockResolvedValue({ id: 'q1' } as any);
+      const activeVersion = { id: 'v1', isActive: true };
+      versionRepo.findOne.mockResolvedValue(activeVersion as any);
+
+      const result = await service.GetLatestActiveVersion('q1');
+
+      expect(result).toEqual(activeVersion);
+    });
+
+    it('should return null if no active version exists', async () => {
+      questionnaireRepo.findOne.mockResolvedValue({ id: 'q1' } as any);
+      versionRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.GetLatestActiveVersion('q1');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('PublishVersion', () => {
+    it('should throw NotFoundException if version is not found', async () => {
+      versionRepo.findOne.mockResolvedValue(null);
+      await expect(service.PublishVersion('v1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw BadRequestException if version is already published', async () => {
+      versionRepo.findOne.mockResolvedValue({
+        id: 'v1',
+        publishedAt: new Date(),
+        questionnaire: { id: 'q1' },
+      } as any);
+      await expect(service.PublishVersion('v1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should deprecate current active version when publishing new one', async () => {
+      const currentActive = {
+        id: 'v1',
+        isActive: true,
+        status: QuestionnaireStatus.ACTIVE,
+      };
+      const newVersion = {
+        id: 'v2',
+        publishedAt: null,
+        isActive: false,
+        status: QuestionnaireStatus.DRAFT,
+        schemaSnapshot: { sections: [] },
+        questionnaire: { id: 'q1', status: QuestionnaireStatus.DRAFT },
+      };
+
+      versionRepo.findOne
+        .mockResolvedValueOnce(newVersion as any) // Find version to publish
+        .mockResolvedValueOnce(currentActive as any); // Find current active
+
+      await service.PublishVersion('v2');
+
+      expect(currentActive.isActive).toBe(false);
+      expect(currentActive.status).toBe(QuestionnaireStatus.DEPRECATED);
+      expect(newVersion.isActive).toBe(true);
+      expect(newVersion.status).toBe(QuestionnaireStatus.ACTIVE);
+      expect(newVersion.questionnaire.status).toBe(QuestionnaireStatus.ACTIVE);
     });
   });
 });

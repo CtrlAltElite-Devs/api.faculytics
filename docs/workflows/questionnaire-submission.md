@@ -22,3 +22,31 @@ sequenceDiagram
     QuestionnaireService-->>QuestionnaireController: SubmissionResult
     QuestionnaireController-->>User: 201 Created
 ```
+
+## Batch Ingestion Flow
+
+In addition to direct API submissions, the system supports bulk ingestion via the Universal Ingestion Adapter. This is primarily used for importing historical data or synchronizing with external files (CSV/Excel).
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant IngestionController
+    participant IngestionEngine
+    participant SourceAdapter
+    participant QuestionnaireService
+    participant Database
+
+    Admin->>IngestionController: POST /ingest (File/Config)
+    IngestionController->>IngestionEngine: Execute(SourceType, Payload)
+    IngestionEngine->>SourceAdapter: Extract(Payload)
+    loop For each Record in Stream
+        SourceAdapter-->>IngestionEngine: IngestionRecord (Raw Data)
+        IngestionEngine->>IngestionEngine: Map to Dimensions
+        IngestionEngine->>QuestionnaireService: Submit(Mapped Data)
+        QuestionnaireService->>Database: Persist
+    end
+    IngestionEngine-->>IngestionController: IngestionSummary (Success/Failures)
+    IngestionController-->>Admin: 200 OK (Summary)
+```
+
+For more details on the adapter design, see the [Universal Ingestion Architecture](../architecture/universal-ingestion.md).

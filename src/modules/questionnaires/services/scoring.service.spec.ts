@@ -26,6 +26,7 @@ describe('ScoringService', () => {
       questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
       scoringModel: 'SECTION_WEIGHTED',
       version: 1,
+      maxScore: 5,
     },
     sections: [
       {
@@ -104,5 +105,25 @@ describe('ScoringService', () => {
 
     expect(result.totalScore).toBe(3.4);
     expect(result.normalizedScore).toBe(68);
+  });
+
+  it('should calculate scores correctly with a different maxScore', () => {
+    const schema4: QuestionnaireSchemaSnapshot = {
+      ...schema,
+      meta: { ...schema.meta, maxScore: 4 },
+    };
+    const answers = {
+      q1: 4,
+      q2: 4, // Avg S1 = 4
+      q3: 4, // Avg S2 = 4
+    };
+
+    // totalScore = 4
+    // normalizedScore = (4 / 4) * 100 = 100
+
+    const result = service.calculateScores(schema4, answers);
+
+    expect(result.totalScore).toBe(4);
+    expect(result.normalizedScore).toBe(100);
   });
 });

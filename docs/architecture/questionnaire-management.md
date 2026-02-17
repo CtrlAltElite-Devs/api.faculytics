@@ -105,3 +105,17 @@ Dimensions (e.g., "Clarity", "Organization") are stored in a global registry. Qu
 When a questionnaire is submitted, we don't just store IDs. We snapshot the current `Campus`, `Department`, and `Course` names.
 
 - **Justification**: If a Department is renamed next year, historical feedback for "Dept A" should not retroactively move to "Dept B" in reports. It preserves the institutional state at the moment of feedback.
+
+## 5. Bulk Ingestion & Orchestration
+
+The system provides a robust orchestration layer for ingesting bulk questionnaire data from external sources (e.g., historical CSVs, external APIs).
+
+### The Ingestion Engine
+
+The `IngestionEngine` processes asynchronous streams of submission data using a high-performance orchestration model:
+
+- **Bounded Concurrency:** Processes multiple records simultaneously using `p-limit` (default 6) to maximize throughput without overwhelming the database connection pool.
+- **Per-Record Isolation:** Each record is processed in a forked `EntityManager` and its own transaction. A failure in one record does not affect others.
+- **Speculative Dry-Runs:** Executes the complete business logic, including database constraints and triggers, but uses a custom `DryRunRollbackError` to ensure the transaction is always rolled back.
+- **Deduplicated Mapping:** Uses `IngestionMapperService` with a request-scoped `DataLoader` to cache institutional entity lookups (Users, Courses, Semesters) across concurrent workers.
+- **Resource Safety:** Implements hard memory limits (5,000 records) and automatic backpressure if the processing queue grows too large.

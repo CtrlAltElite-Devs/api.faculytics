@@ -74,6 +74,8 @@ classDiagram
         +QuestionnaireService
         +ScoringService
         +QuestionnaireSchemaValidator
+        +IngestionEngine
+        +IngestionMapperService
     }
 ```
 

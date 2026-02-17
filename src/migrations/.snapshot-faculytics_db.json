@@ -468,8 +468,8 @@
           "default": "'DRAFT'",
           "enumItems": [
             "DRAFT",
-            "PUBLISHED",
-            "ARCHIVED"
+            "ACTIVE",
+            "DEPRECATED"
           ],
           "mappedType": "enum"
         },
@@ -595,6 +595,21 @@
           "nullable": false,
           "default": "false",
           "mappedType": "boolean"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "default": "'DRAFT'",
+          "enumItems": [
+            "DRAFT",
+            "ACTIVE",
+            "DEPRECATED"
+          ],
+          "mappedType": "enum"
         }
       },
       "name": "questionnaire_version",

@@ -16,6 +16,9 @@ import { SourceAdapterFactory } from './ingestion/factories/source-adapter.facto
 import { SOURCE_ADAPTER_PREFIX } from './ingestion/constants/ingestion.constants';
 import { SourceType } from './ingestion/types/source-type.enum';
 import { ErrorFormatter } from './ingestion/utils/error-formatter.util';
+import { IngestionEngine } from './ingestion/services/ingestion-engine.service';
+import { IngestionMapperService } from './ingestion/services/ingestion-mapper.service';
+import DataLoaderModule from '../common/data-loaders/index.module';
 
 @Module({
   imports: [
@@ -27,6 +30,7 @@ import { ErrorFormatter } from './ingestion/utils/error-formatter.util';
       Dimension,
       Enrollment,
     ]),
+    DataLoaderModule,
   ],
   controllers: [QuestionnaireController],
   providers: [
@@ -35,6 +39,8 @@ import { ErrorFormatter } from './ingestion/utils/error-formatter.util';
     ScoringService,
     SourceAdapterFactory,
     ErrorFormatter,
+    IngestionEngine,
+    IngestionMapperService,
     {
       provide: `${SOURCE_ADAPTER_PREFIX}${SourceType.CSV}`,
       useValue: {}, // Placeholder

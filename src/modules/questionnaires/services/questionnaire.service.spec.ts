@@ -77,13 +77,11 @@ describe('QuestionnaireService', () => {
         {
           provide: ScoringService,
           useValue: {
-            calculateScores: jest
-              .fn()
-              .mockReturnValue({
-                totalScore: 4,
-                normalizedScore: 80,
-                sectionBreakdown: [],
-              }),
+            calculateScores: jest.fn().mockReturnValue({
+              totalScore: 4,
+              normalizedScore: 80,
+              sectionBreakdown: [],
+            }),
           },
         },
         {

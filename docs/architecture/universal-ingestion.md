@@ -48,7 +48,13 @@ Resolves the correct adapter implementation based on the `SourceType`.
 
 ## 3. Ingestion Flow
 
-The orchestration of the ingestion process is handled by the `IngestionEngine` (Upcoming).
+The orchestration of the ingestion process is handled by the `IngestionEngine`. It consumes an `AsyncIterable` stream from an adapter and manages the following:
+
+- **Bounded Concurrency:** Uses `p-limit` to process multiple records simultaneously (default: 6).
+- **Transactional Isolation:** Each record is processed in a forked `EntityManager` and a dedicated transaction.
+- **Speculative Dry-Run:** Executes full database logic but rolls back the transaction using a custom `DryRunRollbackError`.
+- **Resource Management:** Ensures adapters are closed and memory is cleared (`em.clear()`) after each record.
+- **Mapping:** Leverages `IngestionMapperService` for institutional context resolution.
 
 ```mermaid
 graph TD

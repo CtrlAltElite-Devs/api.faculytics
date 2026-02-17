@@ -51,6 +51,7 @@
     "class-validator": "^0.14.3",
     "dataloader": "^2.2.3",
     "dotenv": "^17.2.4",
+    "p-limit": "^7.3.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
@@ -116,7 +117,7 @@
       "^src/(.*)$": "<rootDir>/$1"
     },
     "transformIgnorePatterns": [
-      "/node_modules/(?!(uuid)/)"
+      "/node_modules/(?!(uuid|p-limit|yocto-queue)/)"
     ]
   }
 }

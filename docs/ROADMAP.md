@@ -29,7 +29,7 @@ Enabling structured feedback through a flexible domain engine and universal inge
 - [x] **Dimension Registry:** A categorized framework for grouping assessment criteria across different questionnaire types.
 - [x] **Institutional Snapshotting:** Decoupling historical submissions from future hierarchy changes.
 - [x] **Submission & Scoring:** API for processing student/faculty feedback with normalized scoring.
-- [ ] **Universal Ingestion Adapters:** Implementing the Adapter pattern to unify inputs from Moodle, Web forms, and external Files.
+- [~] **Universal Ingestion Adapters:** Base architecture implemented (Factory, Interfaces, DTOs). Concrete adapters (CSV/Excel) pending.
 - [ ] **File-to-Questionnaire Mapping:** Mechanism (DSL or UI) to map CSV/Excel/JSON columns to internal Questionnaire Dimensions.
 - [ ] **Submission Lifecycle:** Support for states (Draft, Submitted, Locked, Archived).
 - [ ] **Questionnaire Versioning:** Full lifecycle management of assessment versions.
@@ -68,7 +68,7 @@ Enforcing institutional boundaries and extending the system reach.
 
 ## Immediate Next Steps (To-Do)
 
-1. **[Ingestion]** Design the `SourceAdapter` interface to support upcoming file-based ingestion.
-2. **[Ingestion]** Implement the `IngestionEngine` (Orchestrator) to consume adapters, handle concurrency, and process dry-run transactions.
+1. **[Ingestion]** Implement the `IngestionEngine` (Orchestrator) to consume adapters, handle concurrency, and process dry-run transactions.
+2. **[Ingestion]** Implement concrete `CSVAdapter` and `ExcelAdapter` using the universal interface.
 3. **[Architecture]** Define AI inference event contract to prevent future model refactoring.
 4. **[DX]** Continue refining documentation and agent skills to maintain high development velocity.

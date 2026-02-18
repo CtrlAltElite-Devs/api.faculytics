@@ -1,14 +1,19 @@
-import { Test } from '@nestjs/testing';
+process.env.OPENAPI_MODE = 'true';
+
 import { SwaggerModule } from '@nestjs/swagger';
 import { writeFileSync } from 'fs';
 import AppModule from '../src/app.module';
-import { ApplyConfigurations } from '../src/configurations/index.config';
+import {
+  ApplyConfigurations,
+  useNestFactoryCustomOptions,
+} from '../src/configurations/index.config';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { swaggerConfig } from '../src/configurations/app/open-api';
+import { NestFactory } from '@nestjs/core';
 
 async function generate() {
   console.log('Generating OpenAPI contract...');
+  console.log('test: ', process.env.OPENAPI_MODE);
 
   // Use a dummy port and env vars if needed
   process.env.PORT = '3000';
@@ -19,18 +24,17 @@ async function generate() {
   process.env.MOODLE_BASE_URL = 'https://moodle.com';
   process.env.MOODLE_MASTER_KEY = 'key';
   process.env.OPENAI_API_KEY = 'key';
+  process.env.OPENAPI_MODE = 'true';
 
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  })
-    .overrideModule(MikroOrmModule)
-    .useModule(class MockMikroOrmModule {})
-    .compile();
-
-  const app = moduleRef.createNestApplication<NestExpressApplication>();
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule,
+    useNestFactoryCustomOptions(),
+  );
 
   // Apply configurations like versioning and prefix
   ApplyConfigurations(app);
+
+  await app.init();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   writeFileSync('openapi.json', JSON.stringify(document, null, 2));

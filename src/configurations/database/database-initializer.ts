@@ -1,9 +1,11 @@
 import { MikroORM } from '@mikro-orm/core';
 import { INestApplication } from '@nestjs/common';
 import DatabaseSeeder from '../../seeders/index.seeder';
+import { env } from '../env';
 
 export default async function InitializeDatabase(app: INestApplication<any>) {
   try {
+    if (env.OPENAPI_MODE) return;
     await migrate(app);
     await seed(app);
   } catch (error) {

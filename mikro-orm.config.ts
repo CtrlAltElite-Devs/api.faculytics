@@ -27,7 +27,7 @@ export default defineConfig({
   driverOptions: {
     connection: getConnectionStrategy(),
   },
-  debug: true, //todo change this based on environment
+  debug: env.NODE_ENV === 'development',
   migrations: {
     path: 'dist/src/migrations',
     pathTs: 'src/migrations',

@@ -5,6 +5,7 @@ import {
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireAnswer,
+  QuestionnaireDraft,
   Dimension,
   Enrollment,
 } from '../../entities/index.entity';
@@ -29,6 +30,7 @@ import DataLoaderModule from '../common/data-loaders/index.module';
       QuestionnaireVersion,
       QuestionnaireSubmission,
       QuestionnaireAnswer,
+      QuestionnaireDraft,
       Dimension,
       Enrollment,
     ]),

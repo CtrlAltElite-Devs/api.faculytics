@@ -15,6 +15,7 @@ import {
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireAnswer,
+  QuestionnaireDraft,
   User,
   Semester,
   Course,
@@ -46,6 +47,8 @@ export class QuestionnaireService {
     private readonly versionRepo: EntityRepository<QuestionnaireVersion>,
     @InjectRepository(QuestionnaireSubmission)
     private readonly submissionRepo: EntityRepository<QuestionnaireSubmission>,
+    @InjectRepository(QuestionnaireDraft)
+    private readonly draftRepo: EntityRepository<QuestionnaireDraft>,
     @InjectRepository(Enrollment)
     private readonly enrollmentRepo: EntityRepository<Enrollment>,
     private readonly validator: QuestionnaireSchemaValidator,
@@ -492,5 +495,141 @@ export class QuestionnaireService {
       }
     }
     return null;
+  }
+
+  async SaveOrUpdateDraft(
+    respondentId: string,
+    data: {
+      versionId: string;
+      facultyId: string;
+      semesterId: string;
+      courseId?: string;
+      answers: Record<string, number>;
+      qualitativeComment?: string;
+    },
+  ): Promise<QuestionnaireDraft> {
+    // Validate version exists and is active
+    const version = await this.versionRepo.findOne(data.versionId);
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${data.versionId} not found.`,
+      );
+    }
+    if (!version.isActive) {
+      throw new BadRequestException(
+        'Cannot save draft for an inactive questionnaire version.',
+      );
+    }
+
+    // Validate respondent exists
+    const respondent = await this.em.findOne(User, respondentId);
+    if (!respondent) {
+      throw new NotFoundException(`User with ID ${respondentId} not found.`);
+    }
+
+    // Validate faculty exists
+    const faculty = await this.em.findOne(User, data.facultyId);
+    if (!faculty) {
+      throw new NotFoundException(
+        `Faculty with ID ${data.facultyId} not found.`,
+      );
+    }
+
+    // Validate semester exists
+    const semester = await this.em.findOne(Semester, data.semesterId);
+    if (!semester) {
+      throw new NotFoundException(
+        `Semester with ID ${data.semesterId} not found.`,
+      );
+    }
+
+    // Validate course if provided
+    let course: Course | null = null;
+    if (data.courseId) {
+      course = await this.em.findOne(Course, data.courseId, {
+        populate: ['program.department.semester'],
+      });
+      if (!course) {
+        throw new NotFoundException(
+          `Course with ID ${data.courseId} not found.`,
+        );
+      }
+
+      // Validate course belongs to semester
+      const courseSemesterId = course.program?.department?.semester?.id;
+      if (!courseSemesterId || courseSemesterId !== data.semesterId) {
+        throw new BadRequestException(
+          `Course does not belong to the provided semester context.`,
+        );
+      }
+    }
+
+    // Upsert draft using unique constraint
+    try {
+      const draft = await this.em.upsert(QuestionnaireDraft, {
+        respondent,
+        questionnaireVersion: version,
+        faculty,
+        semester,
+        course,
+        answers: data.answers,
+        qualitativeComment: data.qualitativeComment,
+      });
+
+      return draft;
+    } catch (error) {
+      // Handle unique constraint violations gracefully
+      if (error instanceof UniqueConstraintViolationException) {
+        throw new ConflictException(
+          'A draft already exists for this context. Please try again.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  async GetDraft(
+    respondentId: string,
+    query: {
+      versionId: string;
+      facultyId: string;
+      semesterId: string;
+      courseId?: string;
+    },
+  ): Promise<QuestionnaireDraft | null> {
+    const draft = await this.draftRepo.findOne({
+      respondent: respondentId,
+      questionnaireVersion: query.versionId,
+      faculty: query.facultyId,
+      semester: query.semesterId,
+      course: query.courseId || null,
+    });
+
+    return draft;
+  }
+
+  async ListMyDrafts(respondentId: string): Promise<QuestionnaireDraft[]> {
+    const drafts = await this.draftRepo.find(
+      { respondent: respondentId },
+      { orderBy: { updatedAt: 'DESC' } },
+    );
+
+    return drafts;
+  }
+
+  async DeleteDraft(respondentId: string, draftId: string): Promise<void> {
+    const draft = await this.draftRepo.findOne({
+      id: draftId,
+      respondent: respondentId,
+    });
+
+    if (!draft) {
+      throw new NotFoundException(
+        'Draft not found or you do not have permission to delete it.',
+      );
+    }
+
+    draft.SoftDelete();
+    await this.em.flush();
   }
 }

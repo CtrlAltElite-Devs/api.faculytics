@@ -1,12 +1,12 @@
 ---
 project_name: 'api.faculytics'
 user_name: 'yander'
-date: '2026-02-17'
+date: '2026-02-18'
 ---
 
 project_name: 'api.faculytics'
 user_name: 'yander'
-date: '2026-02-17'
+date: '2026-02-18'
 sections_completed:
 [
 'technology_stack',
@@ -15,10 +15,11 @@ sections_completed:
 'testing_rules',
 'quality_rules',
 'workflow_rules',
+'security_rules',
 'anti_patterns',
 ]
 status: 'complete'
-rule_count: 18
+rule_count: 25
 optimized_for_llm: true
 
 ---
@@ -59,6 +60,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **Entity Initialization:** Use `tx.create(Entity, data, { managed: false })` before upserts to trigger property initializers.
 - **Questionnaire Leaf-Weight Rule:** Weights can ONLY be assigned to "Leaf" sections. The sum of weights in a version MUST equal exactly 100.
 - **Section Mutual Exclusivity:** Sections can contain sub-sections OR questions, never both.
+- **Partial Unique Indexes:** For entities with soft deletes and nullable unique columns, use partial database indexes in migrations instead of `@Unique()` decorator. Use `WHERE deleted_at IS NULL` for soft delete awareness and separate indexes for NULL vs non-NULL columns.
 
 ### Testing Rules
 
@@ -82,11 +84,20 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **Startup Integrity:** Strict sequence: Migrations -> Seeders -> Bootstrap.
 - **PR Checks:** All PRs must pass automated linting and tests via GitHub Actions.
 
+### Security Rules
+
+- **JSONB Validation:** Always validate JSONB object structures with custom class-validator decorators. Reject dangerous keys (`__proto__`, `constructor`, `prototype`) to prevent prototype pollution attacks.
+- **DoS Prevention:** Add size limits to user-controlled JSONB fields (max entries, max byte size) to prevent resource exhaustion.
+- **Relationship Validation:** When accepting related entity IDs (e.g., courseId + semesterId), validate the relationship exists via populated queries.
+- **Information Disclosure:** Always filter queries by authenticated user ID; return `null` instead of 404 when a resource doesn't exist to avoid revealing existence to unauthorized users.
+- **Error Handling for Concurrency:** Wrap upsert operations in try-catch to gracefully handle `UniqueConstraintViolationException` race conditions.
+
 ### Critical Don't-Miss Rules (Anti-Patterns & Edge Cases)
 
 - **Anti-Pattern (Upsert):** Never use `em.upsert` without `onConflictMergeFields` if local metadata (IDs, timestamps) must be preserved.
 - **Anti-Pattern (EM):** Avoid using the global `EntityManager`. Always inject it or use `UnitOfWork`.
 - **Anti-Pattern (Cron):** NEVER stop cron jobs manually in `onApplicationShutdown`.
+- **Anti-Pattern (Unique Constraint):** Never use `@Unique()` decorator for constraints involving nullable columns or soft deletes; use partial database indexes in migrations instead.
 - **Edge Case (Dean):** Users with the `DEAN` role bypass course enrollment checks in questionnaire submissions.
 - **Edge Case (Moodle Roles):** Always use `MoodleRoleMapping` enum for converting Moodle roles to internal roles.
 - **Immutability:** `QuestionnaireVersion` is immutable once submissions exist.
@@ -110,4 +121,4 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Review quarterly for outdated rules
 - Remove rules that become obvious over time
 
-Last Updated: 2026-02-17
+Last Updated: 2026-02-18

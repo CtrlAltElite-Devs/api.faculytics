@@ -15,6 +15,7 @@ import { Questionnaire } from './questionnaire.entity';
 import { QuestionnaireVersion } from './questionnaire-version.entity';
 import { QuestionnaireSubmission } from './questionnaire-submission.entity';
 import { QuestionnaireAnswer } from './questionnaire-answer.entity';
+import { QuestionnaireDraft } from './questionnaire-draft.entity';
 import { UserInstitutionalRole } from './user-institutional-role.entity';
 import { SystemConfig } from './system-config.entity';
 
@@ -28,6 +29,7 @@ export {
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireAnswer,
+  QuestionnaireDraft,
   Campus,
   Course,
   Department,
@@ -58,6 +60,7 @@ export const entities = [
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireAnswer,
+  QuestionnaireDraft,
   UserInstitutionalRole,
   SystemConfig,
 ];

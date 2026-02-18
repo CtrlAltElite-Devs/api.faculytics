@@ -4,6 +4,7 @@ import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CreateQuestionnaireRequest } from './dto/requests/create-questionnaire-request.dto';
 import { CreateVersionRequest } from './dto/requests/create-version-request.dto';
 import { SubmitQuestionnaireRequest } from './dto/requests/submit-questionnaire-request.dto';
+import { UseJwtGuard } from 'src/security/decorators';
 
 @ApiTags('Questionnaires')
 @Controller('questionnaires')
@@ -63,6 +64,7 @@ export class QuestionnaireController {
   }
 
   @Post('submissions')
+  @UseJwtGuard()
   @ApiOperation({ summary: 'Submit a completed questionnaire' })
   async submitQuestionnaire(@Body() data: SubmitQuestionnaireRequest) {
     return this.questionnaireService.submitQuestionnaire(data);

@@ -42,6 +42,7 @@ jobs:
 
       - name: Generate OpenAPI contract
         env:
+          OPENAPI_MODE: 'true'
           DATABASE_URL: postgres://postgres:password@localhost:5432/faculytics_db
           JWT_SECRET: ${{ secrets.JWT_SECRET || 'dummy_jwt_secret_for_contract_generation' }}
           REFRESH_SECRET: ${{ secrets.REFRESH_SECRET || 'dummy_refresh_secret_for_contract_generation' }}
@@ -49,7 +50,7 @@ jobs:
           MOODLE_MASTER_KEY: dummy_moodle_key
           OPENAI_API_KEY: dummy_openai_key
           CORS_ORIGINS: '["*"]'
-        run: npm run generate:openapi
+        run: node dist/scripts/generate-openapi.js
 
       - name: Determine branch folder
         id: branch

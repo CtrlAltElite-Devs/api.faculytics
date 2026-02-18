@@ -33,7 +33,7 @@ Enabling structured feedback through a flexible domain engine and universal inge
 - [x] **Universal Ingestion Adapters:** Base architecture and concrete CSV/Excel adapters implemented.
 - [ ] **File-to-Questionnaire Mapping:** Mechanism (DSL or UI) to map CSV/Excel/JSON columns to internal Questionnaire Dimensions.
 - [ ] **Submission Lifecycle:** Support for states (Draft, Submitted, Locked, Archived).
-- [ ] **Questionnaire Versioning:** Full lifecycle management of assessment versions.
+- [x] **Questionnaire Versioning:** Full lifecycle management of assessment versions.
 
 ## Phase 3: AI & Inference Pipeline
 

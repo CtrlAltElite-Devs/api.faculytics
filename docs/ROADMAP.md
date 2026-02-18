@@ -32,7 +32,7 @@ Enabling structured feedback through a flexible domain engine and universal inge
 - [x] **Ingestion Engine (Orchestrator):** Concurrent stream processor with transactional isolation and dry-run support.
 - [x] **Universal Ingestion Adapters:** Base architecture and concrete CSV/Excel adapters implemented.
 - [ ] **File-to-Questionnaire Mapping:** Mechanism (DSL or UI) to map CSV/Excel/JSON columns to internal Questionnaire Dimensions.
-- [ ] **Submission Lifecycle:** Support for states (Draft, Submitted, Locked, Archived).
+- [x] **Submission Lifecycle (Phase 1):** Draft and Submitted states implemented with full CRUD operations, security hardening, and adversarial review completed (2026-02-18). Locked and Archived states deferred to Phase 2.
 - [x] **Questionnaire Versioning:** Full lifecycle management of assessment versions.
 
 ## Phase 3: AI & Inference Pipeline

@@ -3,7 +3,6 @@ import { env } from '../env';
 
 export default function UseCorsConfigurations(app: INestApplication<any>) {
   const corsOrigins = env.CORS_ORIGINS;
-  console.log('cors: ', corsOrigins);
   app.enableCors({
     credentials: true,
     origin: (

@@ -20,6 +20,28 @@ import { Course } from './course.entity';
  */
 @Entity({ repository: () => QuestionnaireDraftRepository })
 @Index({ properties: ['respondent', 'updatedAt'] })
+// ✅ Unique index when course IS NOT NULL
+@Index({
+  name: 'questionnaire_draft_unique_active_with_course',
+  properties: [
+    'respondent',
+    'questionnaireVersion',
+    'faculty',
+    'semester',
+    'course',
+  ],
+  options: {
+    where: 'deleted_at IS NULL AND course_id IS NOT NULL',
+  },
+})
+// ✅ Unique index when course IS NULL
+@Index({
+  name: 'questionnaire_draft_unique_active_without_course',
+  properties: ['respondent', 'questionnaireVersion', 'faculty', 'semester'],
+  options: {
+    where: 'deleted_at IS NULL AND course_id IS NULL',
+  },
+})
 export class QuestionnaireDraft extends CustomBaseEntity {
   @ManyToOne(() => User)
   respondent!: User;

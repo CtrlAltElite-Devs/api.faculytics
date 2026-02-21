@@ -1,14 +1,14 @@
 import { EntityManager } from '@mikro-orm/core';
 import { Injectable } from '@nestjs/common';
-import { MoodleService } from './moodle.service';
 import { env } from 'src/configurations/env';
-import UnitOfWork from '../common/unit-of-work';
-import { MoodleCategoryResponse } from './lib/moodle.types';
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
 import { Campus } from 'src/entities/campus.entity';
 import { Semester } from 'src/entities/semester.entity';
 import { Department } from 'src/entities/department.entity';
 import { Program } from 'src/entities/program.entity';
+import { MoodleCategoryResponse } from '../lib/moodle.types';
+import { MoodleService } from '../moodle.service';
+import UnitOfWork from 'src/modules/common/unit-of-work';
 
 @Injectable()
 export class MoodleCategorySyncService {

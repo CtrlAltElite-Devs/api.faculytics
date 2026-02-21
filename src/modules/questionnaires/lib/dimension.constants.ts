@@ -1,4 +1,4 @@
-import { QuestionnaireType } from './questionnaire.types';
+import { QuestionnaireType } from '../questionnaire.types';
 
 export const DEFAULT_DIMENSIONS = [
   // FACULTY_IN_CLASSROOM

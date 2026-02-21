@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression, SchedulerRegistry } from '@nestjs/schedule';
 import { BaseJob } from 'src/crons/base.job';
 import { JobRecordType } from 'src/crons/startup-job-registry';
-import { EnrollmentSyncService } from 'src/modules/moodle/moodle-enrollment-sync.service';
+import { EnrollmentSyncService } from 'src/modules/moodle/services/moodle-enrollment-sync.service';
 
 @Injectable()
 export class EnrollmentSyncJob extends BaseJob {

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { MoodleService } from './moodle.service';
-import { UserRepository } from '../../repositories/user.repository';
+import { MoodleService } from '../moodle.service';
+import { UserRepository } from '../../../repositories/user.repository';
 
 @Injectable()
 export class MoodleSyncService {

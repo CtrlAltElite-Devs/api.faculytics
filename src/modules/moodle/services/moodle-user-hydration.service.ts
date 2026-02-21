@@ -1,15 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { MoodleService } from './moodle.service';
 import { User } from 'src/entities/user.entity';
 import { Program } from 'src/entities/program.entity';
 import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
-import UnitOfWork from '../common/unit-of-work';
 import { env } from 'src/configurations/env';
 import { EntityManager } from '@mikro-orm/core';
-import { MoodleCourse } from './lib/moodle.types';
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
 import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
+import { MoodleService } from '../moodle.service';
+import UnitOfWork from 'src/modules/common/unit-of-work';
+import { MoodleCourse } from '../lib/moodle.types';
 
 @Injectable()
 export class MoodleUserHydrationService {

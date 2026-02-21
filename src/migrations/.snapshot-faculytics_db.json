@@ -2496,6 +2496,39 @@
       "schema": "public",
       "indexes": [
         {
+          "keyName": "questionnaire_draft_unique_active_without_course",
+          "columnNames": [
+            "respondent_id",
+            "questionnaire_version_id",
+            "faculty_id",
+            "semester_id"
+          ],
+          "composite": true,
+          "constraint": false,
+          "primary": false,
+          "unique": false,
+          "options": {
+            "where": "deleted_at IS NULL AND course_id IS NULL"
+          }
+        },
+        {
+          "keyName": "questionnaire_draft_unique_active_with_course",
+          "columnNames": [
+            "respondent_id",
+            "questionnaire_version_id",
+            "faculty_id",
+            "semester_id",
+            "course_id"
+          ],
+          "composite": true,
+          "constraint": false,
+          "primary": false,
+          "unique": false,
+          "options": {
+            "where": "deleted_at IS NULL AND course_id IS NOT NULL"
+          }
+        },
+        {
           "keyName": "questionnaire_draft_respondent_id_updated_at_index",
           "columnNames": [
             "respondent_id",
@@ -2505,20 +2538,6 @@
           "constraint": false,
           "primary": false,
           "unique": false
-        },
-        {
-          "keyName": "questionnaire_draft_respondent_id_questionnaire_v_70838_unique",
-          "columnNames": [
-            "respondent_id",
-            "questionnaire_version_id",
-            "faculty_id",
-            "semester_id",
-            "course_id"
-          ],
-          "composite": true,
-          "constraint": true,
-          "primary": false,
-          "unique": true
         },
         {
           "keyName": "questionnaire_draft_pkey",

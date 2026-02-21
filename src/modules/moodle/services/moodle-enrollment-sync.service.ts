@@ -1,11 +1,11 @@
 import { EntityManager } from '@mikro-orm/core';
 import { Injectable, Logger } from '@nestjs/common';
 import { Course } from 'src/entities/course.entity';
-import { MoodleService } from './moodle.service';
 import { env } from 'src/configurations/env';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { User } from 'src/entities/user.entity';
-import UnitOfWork from '../common/unit-of-work';
+import { MoodleService } from '../moodle.service';
+import UnitOfWork from 'src/modules/common/unit-of-work';
 
 @Injectable()
 export class EnrollmentSyncService {

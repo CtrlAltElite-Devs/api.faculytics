@@ -2,7 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import {
   QuestionnaireSchemaSnapshot,
   SectionNode,
-} from '../questionnaire.types';
+} from '../lib/questionnaire.types';
 
 @Injectable()
 export class ScoringService {

@@ -32,7 +32,7 @@ import {
   QuestionnaireType,
   QuestionNode,
   EnrollmentRole,
-} from '../questionnaire.types';
+} from '../lib/questionnaire.types';
 import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';

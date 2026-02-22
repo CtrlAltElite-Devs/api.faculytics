@@ -1,7 +1,7 @@
 import { Entity, Property, Index, Enum, Unique } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { DimensionRepository } from '../repositories/dimension.repository';
-import { QuestionnaireType } from '../modules/questionnaires/questionnaire.types';
+import { QuestionnaireType } from '../modules/questionnaires/lib/questionnaire.types';
 
 @Entity({ repository: () => DimensionRepository })
 @Unique({ properties: ['code', 'questionnaireType'] })

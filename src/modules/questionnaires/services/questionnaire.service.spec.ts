@@ -24,7 +24,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { UserRole } from '../../auth/roles.enum';
-import { EnrollmentRole, QuestionnaireStatus } from '../questionnaire.types';
+import {
+  EnrollmentRole,
+  QuestionnaireStatus,
+} from '../lib/questionnaire.types';
 
 describe('QuestionnaireService', () => {
   let service: QuestionnaireService;

@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import {
@@ -14,6 +15,7 @@ import {
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireAnswer,
+  QuestionnaireDraft,
   User,
   Semester,
   Course,
@@ -30,7 +32,7 @@ import {
   QuestionnaireType,
   QuestionNode,
   EnrollmentRole,
-} from '../questionnaire.types';
+} from '../lib/questionnaire.types';
 import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
@@ -45,6 +47,8 @@ export class QuestionnaireService {
     private readonly versionRepo: EntityRepository<QuestionnaireVersion>,
     @InjectRepository(QuestionnaireSubmission)
     private readonly submissionRepo: EntityRepository<QuestionnaireSubmission>,
+    @InjectRepository(QuestionnaireDraft)
+    private readonly draftRepo: EntityRepository<QuestionnaireDraft>,
     @InjectRepository(Enrollment)
     private readonly enrollmentRepo: EntityRepository<Enrollment>,
     private readonly validator: QuestionnaireSchemaValidator,
@@ -63,14 +67,30 @@ export class QuestionnaireService {
     return questionnaire;
   }
 
-  async createVersion(
+  async CreateVersion(
     questionnaireId: string,
     schema: QuestionnaireSchemaSnapshot,
   ) {
-    const questionnaire =
-      await this.questionnaireRepo.findOneOrFail(questionnaireId);
+    const questionnaire = await this.questionnaireRepo.findOne(questionnaireId);
 
-    // Determine next version number
+    if (!questionnaire) {
+      throw new NotFoundException(
+        `Questionnaire with ID ${questionnaireId} not found.`,
+      );
+    }
+
+    // Enforce single draft copy rule
+    const existingDraft = await this.versionRepo.findOne({
+      questionnaire,
+      status: QuestionnaireStatus.DRAFT,
+    });
+    if (existingDraft) {
+      throw new ConflictException(
+        'A draft version already exists for this questionnaire.',
+      );
+    }
+
+    // Determine next version number (strict sequential - no skipping)
     const latestVersion = await this.versionRepo.findOne(
       { questionnaire },
       { orderBy: { versionNumber: 'DESC' } },
@@ -84,6 +104,7 @@ export class QuestionnaireService {
       versionNumber: nextVersionNumber,
       schemaSnapshot: schema,
       isActive: false,
+      status: QuestionnaireStatus.DRAFT,
     });
 
     this.em.persist(version);
@@ -91,10 +112,16 @@ export class QuestionnaireService {
     return version;
   }
 
-  async publishVersion(versionId: string) {
-    const version = await this.versionRepo.findOneOrFail(versionId, {
+  async PublishVersion(versionId: string) {
+    const version = await this.versionRepo.findOne(versionId, {
       populate: ['questionnaire'],
     });
+
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${versionId} not found.`,
+      );
+    }
 
     if (version.publishedAt) {
       throw new BadRequestException('Version is already published.');
@@ -103,21 +130,75 @@ export class QuestionnaireService {
     // Validate schema before publishing
     await this.validator.validate(version.schemaSnapshot);
 
-    // Deactivate current active version
+    // Deactivate and deprecate current active version
     const currentActive = await this.versionRepo.findOne({
       questionnaire: version.questionnaire,
       isActive: true,
     });
     if (currentActive) {
       currentActive.isActive = false;
+      currentActive.status = QuestionnaireStatus.DEPRECATED;
     }
 
     version.isActive = true;
+    version.status = QuestionnaireStatus.ACTIVE;
     version.publishedAt = new Date();
-    version.questionnaire.status = QuestionnaireStatus.PUBLISHED;
+    version.questionnaire.status = QuestionnaireStatus.ACTIVE;
 
     await this.em.flush();
     return version;
+  }
+
+  async DeprecateVersion(versionId: string) {
+    const version = await this.versionRepo.findOne(versionId, {
+      populate: ['questionnaire'],
+    });
+
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${versionId} not found.`,
+      );
+    }
+
+    if (version.status === QuestionnaireStatus.DEPRECATED) {
+      throw new BadRequestException('Version is already deprecated.');
+    }
+
+    version.isActive = false;
+    version.status = QuestionnaireStatus.DEPRECATED;
+
+    // Check if any other active version exists for this questionnaire
+    const otherActiveVersion = await this.versionRepo.findOne({
+      questionnaire: version.questionnaire,
+      isActive: true,
+      id: { $ne: version.id },
+    });
+
+    // If no other active version exists, update questionnaire status to DEPRECATED
+    if (!otherActiveVersion) {
+      version.questionnaire.status = QuestionnaireStatus.DEPRECATED;
+    }
+
+    this.em.persist(version);
+    await this.em.flush();
+    return version;
+  }
+
+  async GetLatestActiveVersion(questionnaireId: string) {
+    const questionnaire = await this.questionnaireRepo.findOne(questionnaireId);
+
+    if (!questionnaire) {
+      throw new NotFoundException(
+        `Questionnaire with ID ${questionnaireId} not found.`,
+      );
+    }
+
+    const activeVersion = await this.versionRepo.findOne({
+      questionnaire,
+      isActive: true,
+    });
+
+    return activeVersion;
   }
 
   async submitQuestionnaire(data: {
@@ -129,9 +210,15 @@ export class QuestionnaireService {
     answers: Record<string, number>; // questionId -> numericValue
     qualitativeComment?: string;
   }) {
-    const version = await this.versionRepo.findOneOrFail(data.versionId, {
+    const version = await this.versionRepo.findOne(data.versionId, {
       populate: ['questionnaire'],
     });
+
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${data.versionId} not found.`,
+      );
+    }
 
     if (!version.isActive) {
       throw new BadRequestException(
@@ -139,20 +226,42 @@ export class QuestionnaireService {
       );
     }
 
-    const respondent = await this.em.findOneOrFail(User, data.respondentId);
-    const faculty = await this.em.findOneOrFail(User, data.facultyId, {
+    const respondent = await this.em.findOne(User, data.respondentId);
+    if (!respondent) {
+      throw new NotFoundException(
+        `Respondent with ID ${data.respondentId} not found.`,
+      );
+    }
+
+    const faculty = await this.em.findOne(User, data.facultyId, {
       populate: ['campus', 'department', 'program'],
     });
-    const semester = await this.em.findOneOrFail(Semester, data.semesterId, {
+    if (!faculty) {
+      throw new NotFoundException(
+        `Faculty with ID ${data.facultyId} not found.`,
+      );
+    }
+
+    const semester = await this.em.findOne(Semester, data.semesterId, {
       populate: ['campus'],
     });
+    if (!semester) {
+      throw new NotFoundException(
+        `Semester with ID ${data.semesterId} not found.`,
+      );
+    }
 
     // 1. Context and Enrollment Validation
     let course: Course | null = null;
     if (data.courseId) {
-      course = await this.em.findOneOrFail(Course, data.courseId, {
+      course = await this.em.findOne(Course, data.courseId, {
         populate: ['program.department.semester'],
       });
+      if (!course) {
+        throw new NotFoundException(
+          `Course with ID ${data.courseId} not found.`,
+        );
+      }
 
       // F1: Safe hierarchy traversal
       const courseSemesterId = course.program?.department?.semester?.id;
@@ -386,5 +495,141 @@ export class QuestionnaireService {
       }
     }
     return null;
+  }
+
+  async SaveOrUpdateDraft(
+    respondentId: string,
+    data: {
+      versionId: string;
+      facultyId: string;
+      semesterId: string;
+      courseId?: string;
+      answers: Record<string, number>;
+      qualitativeComment?: string;
+    },
+  ): Promise<QuestionnaireDraft> {
+    // Validate version exists and is active
+    const version = await this.versionRepo.findOne(data.versionId);
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${data.versionId} not found.`,
+      );
+    }
+    if (!version.isActive) {
+      throw new BadRequestException(
+        'Cannot save draft for an inactive questionnaire version.',
+      );
+    }
+
+    // Validate respondent exists
+    const respondent = await this.em.findOne(User, respondentId);
+    if (!respondent) {
+      throw new NotFoundException(`User with ID ${respondentId} not found.`);
+    }
+
+    // Validate faculty exists
+    const faculty = await this.em.findOne(User, data.facultyId);
+    if (!faculty) {
+      throw new NotFoundException(
+        `Faculty with ID ${data.facultyId} not found.`,
+      );
+    }
+
+    // Validate semester exists
+    const semester = await this.em.findOne(Semester, data.semesterId);
+    if (!semester) {
+      throw new NotFoundException(
+        `Semester with ID ${data.semesterId} not found.`,
+      );
+    }
+
+    // Validate course if provided
+    let course: Course | null = null;
+    if (data.courseId) {
+      course = await this.em.findOne(Course, data.courseId, {
+        populate: ['program.department.semester'],
+      });
+      if (!course) {
+        throw new NotFoundException(
+          `Course with ID ${data.courseId} not found.`,
+        );
+      }
+
+      // Validate course belongs to semester
+      const courseSemesterId = course.program?.department?.semester?.id;
+      if (!courseSemesterId || courseSemesterId !== data.semesterId) {
+        throw new BadRequestException(
+          `Course does not belong to the provided semester context.`,
+        );
+      }
+    }
+
+    // Upsert draft using unique constraint
+    try {
+      const draft = await this.em.upsert(QuestionnaireDraft, {
+        respondent,
+        questionnaireVersion: version,
+        faculty,
+        semester,
+        course,
+        answers: data.answers,
+        qualitativeComment: data.qualitativeComment,
+      });
+
+      return draft;
+    } catch (error) {
+      // Handle unique constraint violations gracefully
+      if (error instanceof UniqueConstraintViolationException) {
+        throw new ConflictException(
+          'A draft already exists for this context. Please try again.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  async GetDraft(
+    respondentId: string,
+    query: {
+      versionId: string;
+      facultyId: string;
+      semesterId: string;
+      courseId?: string;
+    },
+  ): Promise<QuestionnaireDraft | null> {
+    const draft = await this.draftRepo.findOne({
+      respondent: respondentId,
+      questionnaireVersion: query.versionId,
+      faculty: query.facultyId,
+      semester: query.semesterId,
+      course: query.courseId || null,
+    });
+
+    return draft;
+  }
+
+  async ListMyDrafts(respondentId: string): Promise<QuestionnaireDraft[]> {
+    const drafts = await this.draftRepo.find(
+      { respondent: respondentId },
+      { orderBy: { updatedAt: 'DESC' } },
+    );
+
+    return drafts;
+  }
+
+  async DeleteDraft(respondentId: string, draftId: string): Promise<void> {
+    const draft = await this.draftRepo.findOne({
+      id: draftId,
+      respondent: respondentId,
+    });
+
+    if (!draft) {
+      throw new NotFoundException(
+        'Draft not found or you do not have permission to delete it.',
+      );
+    }
+
+    draft.SoftDelete();
+    await this.em.flush();
   }
 }

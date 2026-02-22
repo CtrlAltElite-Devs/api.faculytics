@@ -4,7 +4,7 @@ import { QuestionnaireRepository } from '../repositories/questionnaire.repositor
 import {
   QuestionnaireStatus,
   QuestionnaireType,
-} from '../modules/questionnaires/questionnaire.types';
+} from '../modules/questionnaires/lib/questionnaire.types';
 import { QuestionnaireVersion } from './questionnaire-version.entity';
 
 @Entity({ repository: () => QuestionnaireRepository })

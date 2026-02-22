@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MoodleService } from '../moodle/moodle.service';
 import { LoginRequest } from './dto/requests/login.request.dto';
-import { MoodleSyncService } from '../moodle/moodle-sync.service';
-import { MoodleUserHydrationService } from '../moodle/moodle-user-hydration.service';
+import { MoodleSyncService } from '../moodle/services/moodle-sync.service';
+import { MoodleUserHydrationService } from '../moodle/services/moodle-user-hydration.service';
 import { MoodleTokenRepository } from '../../repositories/moodle-token.repository';
 import UnitOfWork from '../common/unit-of-work';
 import { JwtPayload } from '../common/custom-jwt-service/jwt-payload.dto';

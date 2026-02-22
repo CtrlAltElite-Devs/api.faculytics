@@ -468,8 +468,8 @@
           "default": "'DRAFT'",
           "enumItems": [
             "DRAFT",
-            "PUBLISHED",
-            "ARCHIVED"
+            "ACTIVE",
+            "DEPRECATED"
           ],
           "mappedType": "enum"
         },
@@ -595,6 +595,21 @@
           "nullable": false,
           "default": "false",
           "mappedType": "boolean"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "default": "'DRAFT'",
+          "enumItems": [
+            "DRAFT",
+            "ACTIVE",
+            "DEPRECATED"
+          ],
+          "mappedType": "enum"
         }
       },
       "name": "questionnaire_version",
@@ -2361,6 +2376,241 @@
             "id"
           ],
           "referencedTableName": "public.questionnaire_submission",
+          "updateRule": "cascade"
+        }
+      },
+      "nativeEnums": {}
+    },
+    {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 6,
+          "mappedType": "datetime"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 6,
+          "mappedType": "datetime"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "respondent_id": {
+          "name": "respondent_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "questionnaire_version_id": {
+          "name": "questionnaire_version_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "faculty_id": {
+          "name": "faculty_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "semester_id": {
+          "name": "semester_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "course_id": {
+          "name": "course_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "answers": {
+          "name": "answers",
+          "type": "jsonb",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "mappedType": "json"
+        },
+        "qualitative_comment": {
+          "name": "qualitative_comment",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "mappedType": "text"
+        }
+      },
+      "name": "questionnaire_draft",
+      "schema": "public",
+      "indexes": [
+        {
+          "keyName": "questionnaire_draft_unique_active_without_course",
+          "columnNames": [
+            "respondent_id",
+            "questionnaire_version_id",
+            "faculty_id",
+            "semester_id"
+          ],
+          "composite": true,
+          "constraint": false,
+          "primary": false,
+          "unique": false,
+          "options": {
+            "where": "deleted_at IS NULL AND course_id IS NULL"
+          }
+        },
+        {
+          "keyName": "questionnaire_draft_unique_active_with_course",
+          "columnNames": [
+            "respondent_id",
+            "questionnaire_version_id",
+            "faculty_id",
+            "semester_id",
+            "course_id"
+          ],
+          "composite": true,
+          "constraint": false,
+          "primary": false,
+          "unique": false,
+          "options": {
+            "where": "deleted_at IS NULL AND course_id IS NOT NULL"
+          }
+        },
+        {
+          "keyName": "questionnaire_draft_respondent_id_updated_at_index",
+          "columnNames": [
+            "respondent_id",
+            "updated_at"
+          ],
+          "composite": true,
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "keyName": "questionnaire_draft_pkey",
+          "columnNames": [
+            "id"
+          ],
+          "composite": false,
+          "constraint": true,
+          "primary": true,
+          "unique": true
+        }
+      ],
+      "checks": [],
+      "foreignKeys": {
+        "questionnaire_draft_respondent_id_foreign": {
+          "constraintName": "questionnaire_draft_respondent_id_foreign",
+          "columnNames": [
+            "respondent_id"
+          ],
+          "localTableName": "public.questionnaire_draft",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.user",
+          "updateRule": "cascade"
+        },
+        "questionnaire_draft_questionnaire_version_id_foreign": {
+          "constraintName": "questionnaire_draft_questionnaire_version_id_foreign",
+          "columnNames": [
+            "questionnaire_version_id"
+          ],
+          "localTableName": "public.questionnaire_draft",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.questionnaire_version",
+          "updateRule": "cascade"
+        },
+        "questionnaire_draft_faculty_id_foreign": {
+          "constraintName": "questionnaire_draft_faculty_id_foreign",
+          "columnNames": [
+            "faculty_id"
+          ],
+          "localTableName": "public.questionnaire_draft",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.user",
+          "updateRule": "cascade"
+        },
+        "questionnaire_draft_semester_id_foreign": {
+          "constraintName": "questionnaire_draft_semester_id_foreign",
+          "columnNames": [
+            "semester_id"
+          ],
+          "localTableName": "public.questionnaire_draft",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.semester",
+          "updateRule": "cascade"
+        },
+        "questionnaire_draft_course_id_foreign": {
+          "constraintName": "questionnaire_draft_course_id_foreign",
+          "columnNames": [
+            "course_id"
+          ],
+          "localTableName": "public.questionnaire_draft",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.course",
+          "deleteRule": "set null",
           "updateRule": "cascade"
         }
       },

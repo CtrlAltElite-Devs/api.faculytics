@@ -5,7 +5,7 @@ import {
   QuestionnaireSchemaSnapshot,
   QuestionnaireType,
   QuestionType,
-} from '../questionnaire.types';
+} from '../lib/questionnaire.types';
 
 describe('QuestionnaireSchemaValidator', () => {
   let validator: QuestionnaireSchemaValidator;

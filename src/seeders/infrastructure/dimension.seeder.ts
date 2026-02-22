@@ -1,7 +1,7 @@
 import { EntityManager } from '@mikro-orm/core';
 import { Seeder } from '@mikro-orm/seeder';
 import { Dimension } from '../../entities/dimension.entity';
-import { DEFAULT_DIMENSIONS } from '../../modules/questionnaires/dimension.constants';
+import { DEFAULT_DIMENSIONS } from '../../modules/questionnaires/lib/dimension.constants';
 
 export class DimensionSeeder extends Seeder {
   async run(em: EntityManager): Promise<void> {

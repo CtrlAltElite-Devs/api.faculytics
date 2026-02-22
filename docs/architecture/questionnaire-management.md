@@ -24,7 +24,9 @@ erDiagram
         uuid id
         int versionNumber
         jsonb schemaSnapshot
+        date publishedAt
         boolean isActive
+        enum status
     }
 ```
 
@@ -77,16 +79,31 @@ Questionnaires follow a strict lifecycle to ensure that historical submission da
 ```mermaid
 stateDiagram-v2
     [*] --> DRAFT
-    DRAFT --> PUBLISHED : Activate Version
-    PUBLISHED --> ARCHIVED : New Version Activated
-    PUBLISHED --> [*]
-    ARCHIVED --> [*]
+    DRAFT --> ACTIVE : Publish Version
+    ACTIVE --> DEPRECATED : Deprecate Version
+    ACTIVE --> [*]
+    DEPRECATED --> [*]
 ```
 
-- **Immutability**: Once a `QuestionnaireVersion` has a single `Submission` linked to it, it is locked. Any changes require the creation of a new `versionNumber`.
-- **Snapshots**: Every submission stores a `schemaSnapshot` reference to the version used, ensuring that even if a version is deleted (rare), the context of the answers is preserved.
+- **States and Transitions**: Questionnaires progress through `DRAFT`, `ACTIVE`, and `DEPRECATED` states.
+  - `DRAFT`: Editable, but cannot accept submissions.
+  - `ACTIVE`: Accepts submissions, read-only. Only one `ACTIVE` version per questionnaire at any time.
+  - `DEPRECATED`: Cannot accept new submissions, read-only, but historical submissions linked to it remain accessible.
+  - Transition: `DRAFT` can be `PUBLISHED` to `ACTIVE`. An `ACTIVE` version can be manually `DEPRECATED`. Publishing a new version automatically `DEPRECATES` the previously `ACTIVE` version.
+- **Single Draft Rule**: Only one `DRAFT` version can exist for a given `Questionnaire` at any time, preventing conflicting edits.
+- **Strict Incremental Versioning**: `QuestionnaireVersion` numbers are strictly sequential (v1, v2, v3...), enforced by the system to prevent skipping and maintain a clear audit trail.
+- **Submission Linking**: All submissions are permanently linked to the specific `QuestionnaireVersion` they were made against, ensuring data immutability and historical accuracy.
+- **Editing and Submissions**: Only `DRAFT` versions are editable. Only `ACTIVE` versions accept submissions.
+- **Historical Accessibility**: Submissions linked to `DEPRECATED` versions remain fully accessible for historical analysis and comparison, queryable via registered dimensions.
 
 ## 4. Design Justifications
+
+### Questionnaire Versioning Decisions
+
+- **Questionnaire Status Alignment**: The existing `QuestionnaireStatus` enum (`DRAFT`, `PUBLISHED`, `ARCHIVED`) has been aligned with the new lifecycle states: `DRAFT`, `ACTIVE`, `DEPRECATED`. `PUBLISHED` maps to `ACTIVE`.
+- **Deprecation Safeguards (UI/Global Control)**: The UI provides warnings to administrators about the consequences of deprecating an Active version (e.g., number of existing submissions). A global activation/deactivation mechanism for active forms complements individual version states.
+- **Historical Data Querying (Dimension-backed)**: Historical submissions are queryable using a dimension-backed approach, relying on a registry of standardized dimensions. This ensures data consistency and comparability across different questionnaire versions.
+- **User Experience for Deprecated Versions**: Users attempting to access a deprecated questionnaire version receive a clear message and are redirected to the latest `ACTIVE` version (if one exists).
 
 ### Why JSONB for the Schema?
 
@@ -119,3 +136,11 @@ The `IngestionEngine` processes asynchronous streams of submission data using a 
 - **Speculative Dry-Runs:** Executes the complete business logic, including database constraints and triggers, but uses a custom `DryRunRollbackError` to ensure the transaction is always rolled back.
 - **Deduplicated Mapping:** Uses `IngestionMapperService` with a request-scoped `DataLoader` to cache institutional entity lookups (Users, Courses, Semesters) across concurrent workers.
 - **Resource Safety:** Implements hard memory limits (5,000 records) and automatic backpressure if the processing queue grows too large.
+
+### Concrete Adapters (CSV & Excel)
+
+- **Streaming-first**: Both adapters return `AsyncIterable<IngestionRecord>` and never buffer the entire file.
+- **Header normalization**: Keys are trimmed, lowercased, stripped of non-alphanumerics (keeping `_` and `-`), and de-duplicated with suffixes (`_1`, `_2`).
+- **CSV configuration**: Supports `delimiter`, `quote`, `escape`, and `separator` options.
+- **Excel configuration**: Supports `sheetName` or 1-based `sheetIndex` selection.
+- **Row identification**: `sourceIdentifier` is 1-based for data rows (header row excluded).

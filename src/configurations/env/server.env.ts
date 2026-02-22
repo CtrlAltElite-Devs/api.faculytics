@@ -6,4 +6,9 @@ export const serverEnvSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'production', 'test'])
     .default('development'),
+  OPENAPI_MODE: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true')
+    .default(false),
 });

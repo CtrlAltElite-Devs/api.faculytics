@@ -2,8 +2,8 @@ import { Entity, Property, ManyToOne, Unique, Enum } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { QuestionnaireVersionRepository } from '../repositories/questionnaire-version.repository';
 import { Questionnaire } from './questionnaire.entity';
-import type { QuestionnaireSchemaSnapshot } from '../modules/questionnaires/questionnaire.types';
-import { QuestionnaireStatus } from '../modules/questionnaires/questionnaire.types';
+import type { QuestionnaireSchemaSnapshot } from '../modules/questionnaires/lib/questionnaire.types';
+import { QuestionnaireStatus } from '../modules/questionnaires/lib/questionnaire.types';
 
 @Entity({ repository: () => QuestionnaireVersionRepository })
 @Unique({ properties: ['questionnaire', 'versionNumber'] })

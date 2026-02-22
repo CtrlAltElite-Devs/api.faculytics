@@ -17,7 +17,7 @@ import { Course } from './course.entity';
 import { Department } from './department.entity';
 import { Program } from './program.entity';
 import { Campus } from './campus.entity';
-import { RespondentRole } from '../modules/questionnaires/questionnaire.types';
+import { RespondentRole } from '../modules/questionnaires/lib/questionnaire.types';
 import { QuestionnaireAnswer } from './questionnaire-answer.entity';
 
 @Entity({ repository: () => QuestionnaireSubmissionRepository })

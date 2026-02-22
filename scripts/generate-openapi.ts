@@ -10,6 +10,7 @@ import {
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { swaggerConfig } from '../src/configurations/app/open-api';
 import { NestFactory } from '@nestjs/core';
+import yaml from 'js-yaml';
 
 async function generate() {
   console.log('Generating OpenAPI contract...');
@@ -37,9 +38,20 @@ async function generate() {
   await app.init();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  writeFileSync('openapi.json', JSON.stringify(document, null, 2));
 
-  console.log('OpenAPI contract generated successfully: openapi.json');
+  // Remove functions by JSON round-trip
+  const cleanDocument: unknown = JSON.parse(JSON.stringify(document));
+
+  const yamlDocument = yaml.dump(cleanDocument, {
+    noRefs: true,
+    lineWidth: 120,
+  });
+
+  writeFileSync('openapi.json', JSON.stringify(cleanDocument, null, 2));
+  writeFileSync('openapi.yaml', yamlDocument, 'utf8');
+  console.log(
+    'OpenAPI contract generated successfully: openapi.json and openapi.yaml',
+  );
 
   await app.close();
   process.exit(0);

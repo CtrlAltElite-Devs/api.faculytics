@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsEnum, IsNotEmpty } from 'class-validator';
-import { QuestionnaireType } from '../../questionnaire.types';
+import { QuestionnaireType } from '../../lib/questionnaire.types';
 
 export class CreateQuestionnaireRequest {
   @ApiProperty()

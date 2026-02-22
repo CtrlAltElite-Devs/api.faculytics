@@ -77,6 +77,7 @@ jobs:
           fi
           mkdir -p ${{ steps.branch.outputs.BRANCH }}
           cp ../openapi.json ${{ steps.branch.outputs.BRANCH }}/openapi.json
+          cp ../openapi.yaml ${{ steps.branch.outputs.BRANCH }}/openapi.yaml
           git config user.name "contract-bot"
           git config user.email "bot@faculytics.com"
           git add .

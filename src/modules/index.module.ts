@@ -11,6 +11,8 @@ import { ChatKitModule } from './chat-kit/chat-kit.module';
 import { EnrollmentsModule } from './enrollments/enrollments.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QuestionnaireModule } from './questionnaires/questionnaires.module';
+import { LoggerModule } from 'nestjs-pino';
+import { v4 } from 'uuid';
 
 export const ApplicationModules = [
   HealthModule,
@@ -36,4 +38,24 @@ export const InfrastructureModules = [
     },
   }),
   ScheduleModule.forRoot(),
+  LoggerModule.forRoot({
+    pinoHttp: {
+      level: env.NODE_ENV !== 'production' ? 'debug' : 'info',
+      transport:
+        env.NODE_ENV !== 'production'
+          ? {
+              target: 'pino-pretty',
+            }
+          : undefined,
+
+      genReqId: (req) => {
+        return req.headers['x-request-id'] || v4();
+      },
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.cookie'],
+        censor: '[REDACTED]',
+      },
+    },
+    exclude: ['/api/v1/health'],
+  }),
 ];

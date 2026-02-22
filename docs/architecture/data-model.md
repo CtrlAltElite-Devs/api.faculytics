@@ -84,14 +84,17 @@ erDiagram
     QUESTIONNAIRE {
         uuid id
         string title
-        string type
+        enum type
+        enum status
     }
 
     QUESTIONNAIRE_VERSION {
         uuid id
         int versionNumber
-        jsonb schema
+        jsonb schemaSnapshot
         string status
+        date published_at
+        boolean is_active
     }
 
     QUESTIONNAIRE_SUBMISSION {
@@ -103,7 +106,6 @@ erDiagram
         uuid courseId
         float totalScore
         float normalizedScore
-        jsonb snapshot
     }
 
     QUESTIONNAIRE_ANSWER {

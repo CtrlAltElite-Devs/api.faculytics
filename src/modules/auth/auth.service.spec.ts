@@ -1,8 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthService } from './auth.service';
 import { MoodleService } from '../moodle/moodle.service';
-import { MoodleSyncService } from '../moodle/moodle-sync.service';
-import { MoodleUserHydrationService } from '../moodle/moodle-user-hydration.service';
+import { MoodleSyncService } from '../moodle/services/moodle-sync.service';
+import { MoodleUserHydrationService } from '../moodle/services/moodle-user-hydration.service';
 import { CustomJwtService } from '../common/custom-jwt-service';
 import UnitOfWork from '../common/unit-of-work';
 import { User } from '../../entities/user.entity';

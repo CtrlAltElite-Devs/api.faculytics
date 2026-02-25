@@ -11,7 +11,6 @@ export class IsValidAnswersConstraint implements ValidatorConstraintInterface {
   private static readonly MAX_ANSWERS_COUNT = 1000;
   private static readonly MAX_JSON_SIZE_BYTES = 100 * 1024; // 100KB
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   validate(answers: unknown, _args: ValidationArguments): boolean {
     // Must be an object
     if (
@@ -58,7 +57,6 @@ export class IsValidAnswersConstraint implements ValidatorConstraintInterface {
     return true;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   defaultMessage(_args: ValidationArguments): string {
     return 'Answers must be a non-empty object with string keys and numeric values, containing at most 1000 entries and 100KB total size';
   }

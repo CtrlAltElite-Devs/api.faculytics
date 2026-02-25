@@ -1,9 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { MoodleService } from '../moodle/moodle.service';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { LoginRequest } from './dto/requests/login.request.dto';
-import { MoodleSyncService } from '../moodle/services/moodle-sync.service';
-import { MoodleUserHydrationService } from '../moodle/services/moodle-user-hydration.service';
-import { MoodleTokenRepository } from '../../repositories/moodle-token.repository';
 import UnitOfWork from '../common/unit-of-work';
 import { JwtPayload } from '../common/custom-jwt-service/jwt-payload.dto';
 import { CustomJwtService } from '../common/custom-jwt-service';
@@ -13,92 +15,57 @@ import { MeResponse } from './dto/responses/me.response.dto';
 import { RequestMetadata } from '../common/interceptors/http/enriched-request';
 import { RefreshJwtPayload } from '../common/custom-jwt-service/refresh-jwt-payload.dto';
 import { v4 } from 'uuid';
-import { MoodleToken } from 'src/entities/moodle-token.entity';
 import { RefreshToken } from 'src/entities/refresh-token.entity';
-import { UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { RefreshTokenRepository } from 'src/repositories/refresh-token.repository';
-import { MoodleConnectivityError } from '../moodle/lib/moodle.client';
+import { LOGIN_STRATEGIES, LoginStrategy } from './strategies';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
+  private readonly sortedStrategies: LoginStrategy[];
+
   constructor(
-    private readonly moodleService: MoodleService,
-    private readonly moodleSyncService: MoodleSyncService,
-    private readonly moodleUserHydrationService: MoodleUserHydrationService,
+    @Inject(LOGIN_STRATEGIES)
+    loginStrategies: LoginStrategy[],
     private readonly jwtService: CustomJwtService,
     private readonly unitOfWork: UnitOfWork,
-  ) {}
+  ) {
+    this.sortedStrategies = [...loginStrategies].sort(
+      (a, b) => a.priority - b.priority,
+    );
+  }
 
   async Login(body: LoginRequest, metaData: RequestMetadata) {
     return await this.unitOfWork.runInTransaction(async (em) => {
-      let user: User | null = null;
-      let moodleToken: string | undefined;
-
       const localUser = await em.findOne(User, { userName: body.username });
 
-      if (localUser && localUser.password) {
-        const isPasswordValid = await bcrypt.compare(
-          body.password,
-          localUser.password,
+      const strategy = this.sortedStrategies.find((s) =>
+        s.CanHandle(localUser, body),
+      );
+
+      if (!strategy) {
+        this.logger.warn(
+          'Login attempt failed: no matching authentication strategy',
         );
-        if (!isPasswordValid) {
-          throw new UnauthorizedException('Invalid credentials');
-        }
-        user = localUser;
-      } else {
-        // login via moodle create token
-        try {
-          const moodleTokenResponse = await this.moodleService.Login({
-            username: body.username,
-            password: body.password,
-          });
-
-          moodleToken = moodleTokenResponse.token;
-
-          // handle post login
-          user = await this.moodleSyncService.SyncUserContext(
-            moodleTokenResponse.token,
-          );
-
-          const moodleTokenRepository: MoodleTokenRepository =
-            em.getRepository(MoodleToken);
-
-          await moodleTokenRepository.UpsertFromMoodle(
-            user,
-            moodleTokenResponse,
-          );
-
-          // Hydrate user courses and enrollments immediately (Moodle users only)
-          if (user.moodleUserId && moodleToken) {
-            await this.moodleUserHydrationService.hydrateUserCourses(
-              user.moodleUserId,
-              moodleToken,
-            );
-          }
-        } catch (error) {
-          if (error instanceof MoodleConnectivityError) {
-            this.logger.error(
-              `Moodle connectivity failure during login for user "${body.username}": ${error.message}`,
-              error.cause?.stack,
-            );
-            throw new UnauthorizedException(
-              'Moodle service is currently unreachable. Please try again later.',
-            );
-          }
-          throw error;
-        }
+        throw new UnauthorizedException('Invalid credentials');
       }
 
-      // create jwt tokens
-      const jwtPayload = JwtPayload.Create(user.id, user.moodleUserId);
-      const refreshTokenPayload = RefreshJwtPayload.Create(user.id, v4());
+      const result = await strategy.Execute(em, localUser, body);
+
+      const jwtPayload = JwtPayload.Create(
+        result.user.id,
+        result.user.moodleUserId,
+      );
+      const refreshTokenPayload = RefreshJwtPayload.Create(
+        result.user.id,
+        v4(),
+      );
       const signedTokens = await this.jwtService.CreateSignedTokens({
         jwt: jwtPayload,
         refreshJwt: refreshTokenPayload,
-        userId: user.id,
+        userId: result.user.id,
         metaData,
       });
 

@@ -1,48 +1,39 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthService } from './auth.service';
-import { MoodleService } from '../moodle/moodle.service';
-import { MoodleSyncService } from '../moodle/services/moodle-sync.service';
-import { MoodleUserHydrationService } from '../moodle/services/moodle-user-hydration.service';
 import { CustomJwtService } from '../common/custom-jwt-service';
 import UnitOfWork from '../common/unit-of-work';
 import { User } from '../../entities/user.entity';
 import * as bcrypt from 'bcrypt';
 import { UnauthorizedException } from '@nestjs/common';
-import { MoodleConnectivityError } from '../moodle/lib/moodle.client';
+import { LOGIN_STRATEGIES, LoginStrategy } from './strategies';
+import { EntityManager } from '@mikro-orm/postgresql';
 
 describe('AuthService', () => {
   let service: AuthService;
-
-  let moodleService: MoodleService;
-
-  let moodleSyncService: MoodleSyncService;
-  let moodleUserHydrationService: MoodleUserHydrationService;
-
   let jwtService: CustomJwtService;
-
   let unitOfWork: UnitOfWork;
+  let mockLocalStrategy: jest.Mocked<LoginStrategy>;
+  let mockMoodleStrategy: jest.Mocked<LoginStrategy>;
 
   beforeEach(async () => {
+    mockLocalStrategy = {
+      priority: 10,
+      CanHandle: jest.fn(),
+      Execute: jest.fn(),
+    };
+
+    mockMoodleStrategy = {
+      priority: 100,
+      CanHandle: jest.fn(),
+      Execute: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         {
-          provide: MoodleService,
-          useValue: {
-            Login: jest.fn(),
-          },
-        },
-        {
-          provide: MoodleSyncService,
-          useValue: {
-            SyncUserContext: jest.fn(),
-          },
-        },
-        {
-          provide: MoodleUserHydrationService,
-          useValue: {
-            hydrateUserCourses: jest.fn(),
-          },
+          provide: LOGIN_STRATEGIES,
+          useValue: [mockLocalStrategy, mockMoodleStrategy],
         },
         {
           provide: CustomJwtService,
@@ -55,8 +46,7 @@ describe('AuthService', () => {
           useValue: {
             runInTransaction: jest
               .fn()
-              .mockImplementation((cb: (em: any) => any) =>
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+              .mockImplementation((cb: (em: EntityManager) => unknown) =>
                 cb({
                   getRepository: jest.fn().mockReturnValue({
                     UpsertFromMoodle: jest.fn(),
@@ -64,7 +54,7 @@ describe('AuthService', () => {
                   }),
                   findOne: jest.fn(),
                   findOneOrFail: jest.fn(),
-                }),
+                } as unknown as EntityManager),
               ),
           },
         },
@@ -72,11 +62,6 @@ describe('AuthService', () => {
     }).compile();
 
     service = module.get<AuthService>(AuthService);
-    moodleService = module.get<MoodleService>(MoodleService);
-    moodleSyncService = module.get<MoodleSyncService>(MoodleSyncService);
-    moodleUserHydrationService = module.get<MoodleUserHydrationService>(
-      MoodleUserHydrationService,
-    );
     jwtService = module.get<CustomJwtService>(CustomJwtService);
     unitOfWork = module.get<UnitOfWork>(UnitOfWork);
   });
@@ -85,8 +70,69 @@ describe('AuthService', () => {
     expect(service).toBeDefined();
   });
 
+  it('should sort strategies by priority (lower priority first)', async () => {
+    // Create strategies with reversed priority order in the array
+    const highPriorityStrategy: jest.Mocked<LoginStrategy> = {
+      priority: 5,
+      CanHandle: jest.fn().mockReturnValue(true),
+      Execute: jest.fn().mockResolvedValue({ user: new User() }),
+    };
+
+    const lowPriorityStrategy: jest.Mocked<LoginStrategy> = {
+      priority: 200,
+      CanHandle: jest.fn().mockReturnValue(true),
+      Execute: jest.fn().mockResolvedValue({ user: new User() }),
+    };
+
+    // Inject in wrong order (low priority first)
+    const moduleWithReversedOrder: TestingModule =
+      await Test.createTestingModule({
+        providers: [
+          AuthService,
+          {
+            provide: LOGIN_STRATEGIES,
+            useValue: [lowPriorityStrategy, highPriorityStrategy],
+          },
+          {
+            provide: CustomJwtService,
+            useValue: { CreateSignedTokens: jest.fn().mockResolvedValue({}) },
+          },
+          {
+            provide: UnitOfWork,
+            useValue: {
+              runInTransaction: jest
+                .fn()
+                .mockImplementation((cb: (em: EntityManager) => unknown) =>
+                  cb({ findOne: jest.fn() } as unknown as EntityManager),
+                ),
+            },
+          },
+        ],
+      }).compile();
+
+    const serviceWithReversedOrder =
+      moduleWithReversedOrder.get<AuthService>(AuthService);
+
+    await serviceWithReversedOrder.Login(
+      { username: 'test', password: 'test' },
+      { browserName: 'test', os: 'test', ipAddress: '127.0.0.1' },
+    );
+
+    // High priority (5) should be checked first and executed
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(highPriorityStrategy.Execute).toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(lowPriorityStrategy.Execute).not.toHaveBeenCalled();
+  });
+
   describe('Login', () => {
-    it('should login locally if user has a password', async () => {
+    const mockMetadata = {
+      browserName: 'test',
+      os: 'test',
+      ipAddress: '127.0.0.1',
+    };
+
+    it('should use local strategy when user has a password', async () => {
       const password = 'password123';
       const hashedPassword = await bcrypt.hash(password, 10);
       const mockUser = new User();
@@ -100,20 +146,18 @@ describe('AuthService', () => {
       };
 
       (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-        (cb: (em: any) => any) => cb(mockEm),
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
       );
+
+      mockLocalStrategy.CanHandle.mockReturnValue(true);
+      mockMoodleStrategy.CanHandle.mockReturnValue(false);
+      mockLocalStrategy.Execute.mockResolvedValue({ user: mockUser });
 
       (jwtService.CreateSignedTokens as jest.Mock).mockResolvedValue({
         token: 'access',
         refreshToken: 'refresh',
       });
-
-      const mockMetadata = {
-        browserName: 'test',
-        os: 'test',
-        ipAddress: '127.0.0.1',
-      };
 
       const result = await service.Login(
         { username: 'admin', password: 'password123' },
@@ -121,11 +165,18 @@ describe('AuthService', () => {
       );
 
       expect(mockEm.findOne).toHaveBeenCalledWith(User, { userName: 'admin' });
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(mockLocalStrategy.CanHandle).toHaveBeenCalledWith(mockUser, {
+        username: 'admin',
+        password: 'password123',
+      });
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(mockLocalStrategy.Execute).toHaveBeenCalled();
       expect(result).toBeDefined();
       expect(result.token).toBe('access');
     });
 
-    it('should fall back to Moodle login if no local user exists', async () => {
+    it('should use moodle strategy when no local user exists', async () => {
       const mockEm = {
         findOne: jest.fn().mockResolvedValue(null),
         getRepository: jest.fn().mockReturnValue({
@@ -134,31 +185,25 @@ describe('AuthService', () => {
       };
 
       (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-        (cb: (em: any) => any) => cb(mockEm),
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
       );
-
-      (moodleService.Login as jest.Mock).mockResolvedValue({
-        token: 'moodle-token',
-      });
 
       const mockUser = new User();
       mockUser.id = 'moodle-user-id';
       mockUser.moodleUserId = 123;
-      (moodleSyncService.SyncUserContext as jest.Mock).mockResolvedValue(
-        mockUser,
-      );
+
+      mockLocalStrategy.CanHandle.mockReturnValue(false);
+      mockMoodleStrategy.CanHandle.mockReturnValue(true);
+      mockMoodleStrategy.Execute.mockResolvedValue({
+        user: mockUser,
+        moodleToken: 'moodle-token',
+      });
 
       (jwtService.CreateSignedTokens as jest.Mock).mockResolvedValue({
         token: 'access',
         refreshToken: 'refresh',
       });
-
-      const mockMetadata = {
-        browserName: 'test',
-        os: 'test',
-        ipAddress: '127.0.0.1',
-      };
 
       await service.Login(
         { username: 'moodleuser', password: 'moodlepassword' },
@@ -166,14 +211,33 @@ describe('AuthService', () => {
       );
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(moodleService.Login).toHaveBeenCalledTimes(1);
+      expect(mockMoodleStrategy.CanHandle).toHaveBeenCalled();
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(moodleSyncService.SyncUserContext).toHaveBeenCalledWith(
-        'moodle-token',
-      );
+      expect(mockMoodleStrategy.Execute).toHaveBeenCalled();
     });
 
-    it('should throw UnauthorizedException if local password is invalid', async () => {
+    it('should throw UnauthorizedException when no strategy can handle', async () => {
+      const mockEm = {
+        findOne: jest.fn().mockResolvedValue(null),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      mockLocalStrategy.CanHandle.mockReturnValue(false);
+      mockMoodleStrategy.CanHandle.mockReturnValue(false);
+
+      await expect(
+        service.Login(
+          { username: 'unknown', password: 'password' },
+          mockMetadata,
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should throw UnauthorizedException when strategy execution fails', async () => {
       const mockUser = new User();
       mockUser.userName = 'admin';
       mockUser.password = await bcrypt.hash('correct-password', 10);
@@ -183,15 +247,14 @@ describe('AuthService', () => {
       };
 
       (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-        (cb: (em: any) => any) => cb(mockEm),
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
       );
 
-      const mockMetadata = {
-        browserName: 'test',
-        os: 'test',
-        ipAddress: '127.0.0.1',
-      };
+      mockLocalStrategy.CanHandle.mockReturnValue(true);
+      mockLocalStrategy.Execute.mockRejectedValue(
+        new UnauthorizedException('Invalid credentials'),
+      );
 
       await expect(
         service.Login(
@@ -199,159 +262,6 @@ describe('AuthService', () => {
           mockMetadata,
         ),
       ).rejects.toThrow(UnauthorizedException);
-    });
-
-    it('should throw UnauthorizedException with descriptive message when Moodle service is unreachable', async () => {
-      const mockEm = {
-        findOne: jest.fn().mockResolvedValue(null),
-        getRepository: jest.fn().mockReturnValue({
-          UpsertFromMoodle: jest.fn(),
-        }),
-      };
-
-      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-        (cb: (em: any) => any) => cb(mockEm),
-      );
-
-      (moodleService.Login as jest.Mock).mockRejectedValue(
-        new MoodleConnectivityError('Failed to connect to Moodle service'),
-      );
-
-      const mockMetadata = {
-        browserName: 'test',
-        os: 'test',
-        ipAddress: '127.0.0.1',
-      };
-
-      await expect(
-        service.Login(
-          { username: 'moodleuser', password: 'moodlepassword' },
-          mockMetadata,
-        ),
-      ).rejects.toThrow(
-        new UnauthorizedException(
-          'Moodle service is currently unreachable. Please try again later.',
-        ),
-      );
-    });
-
-    it('should throw UnauthorizedException when Moodle request times out', async () => {
-      const mockEm = {
-        findOne: jest.fn().mockResolvedValue(null),
-        getRepository: jest.fn().mockReturnValue({
-          UpsertFromMoodle: jest.fn(),
-        }),
-      };
-
-      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-        (cb: (em: any) => any) => cb(mockEm),
-      );
-
-      const timeoutError = new Error('Timeout');
-      timeoutError.name = 'TimeoutError';
-      (moodleService.Login as jest.Mock).mockRejectedValue(
-        new MoodleConnectivityError('Moodle request timed out', timeoutError),
-      );
-
-      const mockMetadata = {
-        browserName: 'test',
-        os: 'test',
-        ipAddress: '127.0.0.1',
-      };
-
-      await expect(
-        service.Login(
-          { username: 'moodleuser', password: 'moodlepassword' },
-          mockMetadata,
-        ),
-      ).rejects.toThrow(
-        new UnauthorizedException(
-          'Moodle service is currently unreachable. Please try again later.',
-        ),
-      );
-    });
-
-    it('should throw UnauthorizedException when Moodle connectivity fails during hydration', async () => {
-      const mockEm = {
-        findOne: jest.fn().mockResolvedValue(null),
-        getRepository: jest.fn().mockReturnValue({
-          UpsertFromMoodle: jest.fn(),
-        }),
-      };
-
-      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-        (cb: (em: any) => any) => cb(mockEm),
-      );
-
-      (moodleService.Login as jest.Mock).mockResolvedValue({
-        token: 'moodle-token',
-      });
-
-      const mockUser = new User();
-      mockUser.id = 'moodle-user-id';
-      mockUser.moodleUserId = 123;
-      (moodleSyncService.SyncUserContext as jest.Mock).mockResolvedValue(
-        mockUser,
-      );
-
-      (
-        moodleUserHydrationService.hydrateUserCourses as jest.Mock
-      ).mockRejectedValue(
-        new MoodleConnectivityError(
-          'Failed to connect to Moodle during hydration',
-        ),
-      );
-
-      const mockMetadata = {
-        browserName: 'test',
-        os: 'test',
-        ipAddress: '127.0.0.1',
-      };
-
-      await expect(
-        service.Login(
-          { username: 'moodleuser', password: 'moodlepassword' },
-          mockMetadata,
-        ),
-      ).rejects.toThrow(
-        new UnauthorizedException(
-          'Moodle service is currently unreachable. Please try again later.',
-        ),
-      );
-    });
-
-    it('should rethrow non-connectivity errors as-is', async () => {
-      const mockEm = {
-        findOne: jest.fn().mockResolvedValue(null),
-        getRepository: jest.fn().mockReturnValue({
-          UpsertFromMoodle: jest.fn(),
-        }),
-      };
-
-      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-        (cb: (em: any) => any) => cb(mockEm),
-      );
-
-      (moodleService.Login as jest.Mock).mockRejectedValue(
-        new UnauthorizedException('Invalid credentials'),
-      );
-
-      const mockMetadata = {
-        browserName: 'test',
-        os: 'test',
-        ipAddress: '127.0.0.1',
-      };
-
-      await expect(
-        service.Login(
-          { username: 'moodleuser', password: 'moodlepassword' },
-          mockMetadata,
-        ),
-      ).rejects.toThrow(new UnauthorizedException('Invalid credentials'));
     });
   });
 });

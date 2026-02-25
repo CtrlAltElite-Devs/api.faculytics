@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { MoodleService } from '../moodle/moodle.service';
 import { LoginRequest } from './dto/requests/login.request.dto';
 import { MoodleSyncService } from '../moodle/services/moodle-sync.service';
@@ -18,9 +18,12 @@ import { RefreshToken } from 'src/entities/refresh-token.entity';
 import { UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { RefreshTokenRepository } from 'src/repositories/refresh-token.repository';
+import { MoodleConnectivityError } from '../moodle/lib/moodle.client';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly moodleService: MoodleService,
     private readonly moodleSyncService: MoodleSyncService,
@@ -47,30 +50,46 @@ export class AuthService {
         user = localUser;
       } else {
         // login via moodle create token
-        const moodleTokenResponse = await this.moodleService.Login({
-          username: body.username,
-          password: body.password,
-        });
+        try {
+          const moodleTokenResponse = await this.moodleService.Login({
+            username: body.username,
+            password: body.password,
+          });
 
-        moodleToken = moodleTokenResponse.token;
+          moodleToken = moodleTokenResponse.token;
 
-        // handle post login
-        user = await this.moodleSyncService.SyncUserContext(
-          moodleTokenResponse.token,
-        );
+          // handle post login
+          user = await this.moodleSyncService.SyncUserContext(
+            moodleTokenResponse.token,
+          );
 
-        const moodleTokenRepository: MoodleTokenRepository =
-          em.getRepository(MoodleToken);
+          const moodleTokenRepository: MoodleTokenRepository =
+            em.getRepository(MoodleToken);
 
-        await moodleTokenRepository.UpsertFromMoodle(user, moodleTokenResponse);
-      }
+          await moodleTokenRepository.UpsertFromMoodle(
+            user,
+            moodleTokenResponse,
+          );
 
-      // Hydrate user courses and enrollments immediately (Moodle users only)
-      if (user.moodleUserId && moodleToken) {
-        await this.moodleUserHydrationService.hydrateUserCourses(
-          user.moodleUserId,
-          moodleToken,
-        );
+          // Hydrate user courses and enrollments immediately (Moodle users only)
+          if (user.moodleUserId && moodleToken) {
+            await this.moodleUserHydrationService.hydrateUserCourses(
+              user.moodleUserId,
+              moodleToken,
+            );
+          }
+        } catch (error) {
+          if (error instanceof MoodleConnectivityError) {
+            this.logger.error(
+              `Moodle connectivity failure during login for user "${body.username}": ${error.message}`,
+              error.cause?.stack,
+            );
+            throw new UnauthorizedException(
+              'Moodle service is currently unreachable. Please try again later.',
+            );
+          }
+          throw error;
+        }
       }
 
       // create jwt tokens

@@ -8,6 +8,7 @@ import UnitOfWork from '../common/unit-of-work';
 import { User } from '../../entities/user.entity';
 import * as bcrypt from 'bcrypt';
 import { UnauthorizedException } from '@nestjs/common';
+import { MoodleConnectivityError } from '../moodle/lib/moodle.client';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -15,7 +16,6 @@ describe('AuthService', () => {
   let moodleService: MoodleService;
 
   let moodleSyncService: MoodleSyncService;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let moodleUserHydrationService: MoodleUserHydrationService;
 
   let jwtService: CustomJwtService;
@@ -199,6 +199,159 @@ describe('AuthService', () => {
           mockMetadata,
         ),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should throw UnauthorizedException with descriptive message when Moodle service is unreachable', async () => {
+      const mockEm = {
+        findOne: jest.fn().mockResolvedValue(null),
+        getRepository: jest.fn().mockReturnValue({
+          UpsertFromMoodle: jest.fn(),
+        }),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        (cb: (em: any) => any) => cb(mockEm),
+      );
+
+      (moodleService.Login as jest.Mock).mockRejectedValue(
+        new MoodleConnectivityError('Failed to connect to Moodle service'),
+      );
+
+      const mockMetadata = {
+        browserName: 'test',
+        os: 'test',
+        ipAddress: '127.0.0.1',
+      };
+
+      await expect(
+        service.Login(
+          { username: 'moodleuser', password: 'moodlepassword' },
+          mockMetadata,
+        ),
+      ).rejects.toThrow(
+        new UnauthorizedException(
+          'Moodle service is currently unreachable. Please try again later.',
+        ),
+      );
+    });
+
+    it('should throw UnauthorizedException when Moodle request times out', async () => {
+      const mockEm = {
+        findOne: jest.fn().mockResolvedValue(null),
+        getRepository: jest.fn().mockReturnValue({
+          UpsertFromMoodle: jest.fn(),
+        }),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        (cb: (em: any) => any) => cb(mockEm),
+      );
+
+      const timeoutError = new Error('Timeout');
+      timeoutError.name = 'TimeoutError';
+      (moodleService.Login as jest.Mock).mockRejectedValue(
+        new MoodleConnectivityError('Moodle request timed out', timeoutError),
+      );
+
+      const mockMetadata = {
+        browserName: 'test',
+        os: 'test',
+        ipAddress: '127.0.0.1',
+      };
+
+      await expect(
+        service.Login(
+          { username: 'moodleuser', password: 'moodlepassword' },
+          mockMetadata,
+        ),
+      ).rejects.toThrow(
+        new UnauthorizedException(
+          'Moodle service is currently unreachable. Please try again later.',
+        ),
+      );
+    });
+
+    it('should throw UnauthorizedException when Moodle connectivity fails during hydration', async () => {
+      const mockEm = {
+        findOne: jest.fn().mockResolvedValue(null),
+        getRepository: jest.fn().mockReturnValue({
+          UpsertFromMoodle: jest.fn(),
+        }),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        (cb: (em: any) => any) => cb(mockEm),
+      );
+
+      (moodleService.Login as jest.Mock).mockResolvedValue({
+        token: 'moodle-token',
+      });
+
+      const mockUser = new User();
+      mockUser.id = 'moodle-user-id';
+      mockUser.moodleUserId = 123;
+      (moodleSyncService.SyncUserContext as jest.Mock).mockResolvedValue(
+        mockUser,
+      );
+
+      (
+        moodleUserHydrationService.hydrateUserCourses as jest.Mock
+      ).mockRejectedValue(
+        new MoodleConnectivityError(
+          'Failed to connect to Moodle during hydration',
+        ),
+      );
+
+      const mockMetadata = {
+        browserName: 'test',
+        os: 'test',
+        ipAddress: '127.0.0.1',
+      };
+
+      await expect(
+        service.Login(
+          { username: 'moodleuser', password: 'moodlepassword' },
+          mockMetadata,
+        ),
+      ).rejects.toThrow(
+        new UnauthorizedException(
+          'Moodle service is currently unreachable. Please try again later.',
+        ),
+      );
+    });
+
+    it('should rethrow non-connectivity errors as-is', async () => {
+      const mockEm = {
+        findOne: jest.fn().mockResolvedValue(null),
+        getRepository: jest.fn().mockReturnValue({
+          UpsertFromMoodle: jest.fn(),
+        }),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        (cb: (em: any) => any) => cb(mockEm),
+      );
+
+      (moodleService.Login as jest.Mock).mockRejectedValue(
+        new UnauthorizedException('Invalid credentials'),
+      );
+
+      const mockMetadata = {
+        browserName: 'test',
+        os: 'test',
+        ipAddress: '127.0.0.1',
+      };
+
+      await expect(
+        service.Login(
+          { username: 'moodleuser', password: 'moodlepassword' },
+          mockMetadata,
+        ),
+      ).rejects.toThrow(new UnauthorizedException('Invalid credentials'));
     });
   });
 });

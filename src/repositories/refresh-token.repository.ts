@@ -37,4 +37,10 @@ export class RefreshTokenRepository extends EntityRepository<RefreshToken> {
       },
     );
   }
+
+  async deleteExpired(cutoffDate: Date): Promise<number> {
+    return await this.em.nativeDelete(RefreshToken, {
+      expiresAt: { $lt: cutoffDate },
+    });
+  }
 }

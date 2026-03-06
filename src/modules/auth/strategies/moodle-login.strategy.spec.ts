@@ -115,13 +115,11 @@ describe('MoodleLoginStrategy', () => {
       expect(moodleSyncService.SyncUserContext).toHaveBeenCalledWith(
         'moodle-token',
       );
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(
         moodleUserHydrationService.hydrateUserCourses,
-      ).toHaveBeenCalledWith(
-        // eslint-disable-line @typescript-eslint/unbound-method
-        123,
-        'moodle-token',
-      );
+      ).toHaveBeenCalledWith(123, 'moodle-token');
     });
 
     it('should throw UnauthorizedException when Moodle connectivity fails', async () => {
@@ -190,9 +188,10 @@ describe('MoodleLoginStrategy', () => {
         password: 'moodlepassword',
       });
 
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(
         moodleUserHydrationService.hydrateUserCourses,
-      ).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/unbound-method
+      ).not.toHaveBeenCalled();
     });
   });
 });

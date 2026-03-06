@@ -68,6 +68,8 @@ classDiagram
         +AuthService
         +JwtStrategy
         +JwtRefreshStrategy
+        +LocalLoginStrategy
+        +MoodleLoginStrategy
     }
 
     class QuestionnaireModule {
@@ -79,7 +81,43 @@ classDiagram
     }
 ```
 
-## 4. Startup & Initialization Flow
+## 4. Login Strategy Pattern
+
+Authentication uses a priority-based strategy pattern (`src/modules/auth/strategies/`). Each strategy implements the `LoginStrategy` interface:
+
+- **`CanHandle(localUser, body)`**: Determines if this strategy applies to the login request.
+- **`Execute(em, localUser, body)`**: Performs authentication and returns the user + optional Moodle token.
+- **`priority`**: Numeric ordering (lower = higher precedence).
+
+| Strategy              | Priority | When it handles                                 |
+| --------------------- | -------- | ----------------------------------------------- |
+| `LocalLoginStrategy`  | 10       | User exists and has a local password            |
+| `MoodleLoginStrategy` | 100      | User has no local password or doesn't exist yet |
+
+Priority ranges: `0-99` core auth, `100-199` external providers, `200+` fallbacks. To add a new provider, implement `LoginStrategy` and register it under the `LOGIN_STRATEGIES` injection token.
+
+## 5. Cron Jobs
+
+Background jobs extend `BaseJob` and register in `StartupJobRegistry`. All jobs are in `src/crons/jobs/`.
+
+| Job                      | Schedule       | Purpose                                    |
+| ------------------------ | -------------- | ------------------------------------------ |
+| `CategorySyncJob`        | Startup + cron | Syncs Moodle categories to local hierarchy |
+| `CourseSyncJob`          | Startup + cron | Syncs Moodle courses                       |
+| `EnrollmentSyncJob`      | Startup + cron | Syncs user-course enrollments and roles    |
+| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days    |
+
+## 6. Moodle Connectivity & Error Handling
+
+The `MoodleClient` enforces a 10-second timeout (`MOODLE_REQUEST_TIMEOUT_MS`) on all Moodle API calls via `AbortSignal.timeout()`. Network failures are wrapped in `MoodleConnectivityError`:
+
+- **Timeout**: `"Moodle request timed out during {operation}"`
+- **Connection failure**: `"Failed to connect to Moodle service during {operation}"`
+- **General network error**: `"Network error during Moodle {operation}"`
+
+The `MoodleLoginStrategy` catches `MoodleConnectivityError` and translates it to a `401 Unauthorized` with a user-friendly message.
+
+## 7. Startup & Initialization Flow
 
 The application enforces a strict initialization sequence in `InitializeDatabase` before it begins accepting traffic. This ensures that the database schema and required infrastructure state are always synchronized with the code.
 

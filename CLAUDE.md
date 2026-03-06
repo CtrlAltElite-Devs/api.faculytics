@@ -55,12 +55,26 @@ The app uses a split between **Infrastructure** and **Application** modules (`sr
 **JWT Authentication**:
 
 - Use `@UseJwtGuard()` decorator from `src/security/decorators/` to protect endpoints
-- Two strategies: `jwt` (access token) and `refresh-jwt` (refresh token)
+- Two Passport strategies: `jwt` (access token) and `refresh-jwt` (refresh token)
+
+**Login Strategy Pattern** (`src/modules/auth/strategies/`):
+
+- Authentication uses the Strategy pattern via the `LoginStrategy` interface
+- Each strategy defines a `priority` (lower = higher precedence), `CanHandle()`, and `Execute()`
+- Priority ranges: `0-99` core auth (local passwords), `100-199` external providers (Moodle), `200+` fallbacks
+- **LocalLoginStrategy** (priority 10): bcrypt password comparison for users with local credentials
+- **MoodleLoginStrategy** (priority 100): Moodle token-based auth with user hydration
+- New strategies are registered via the `LOGIN_STRATEGIES` injection token
 
 **Cron Jobs** (`src/crons/`):
 
 - Extend `BaseJob` class which provides startup execution and graceful shutdown
 - Jobs register results in `StartupJobRegistry` for boot summary
+- **Active jobs:**
+  - `CategorySyncJob`: Syncs Moodle categories to local hierarchy
+  - `CourseSyncJob`: Syncs Moodle courses
+  - `EnrollmentSyncJob`: Syncs user-course enrollments
+  - `RefreshTokenCleanupJob`: Purges expired refresh tokens every 12 hours (7-day retention)
 
 ### Ingestion Engine
 
@@ -76,6 +90,8 @@ The questionnaire module includes a data ingestion system (`src/modules/question
 - `MoodleModule` handles communication with Moodle LMS
 - Users are synced from Moodle site info
 - Enrollments, categories, and courses are synced via cron jobs
+- `MoodleClient` enforces a 10-second request timeout on all Moodle API calls
+- Network/timeout errors are wrapped in `MoodleConnectivityError` and surfaced as 401 responses
 
 ## Testing
 
@@ -94,7 +110,17 @@ const module: TestingModule = await Test.createTestingModule({
 
 Required environment variables (see `.env.sample`):
 
+- `PORT`: Server port (default: `5200`)
+- `NODE_ENV`: `development` | `production` | `test` (default: `development`)
 - `DATABASE_URL`: PostgreSQL connection string (supports Neon.tech SSL)
 - `MOODLE_BASE_URL`: Moodle instance URL
+- `MOODLE_MASTER_KEY`: Moodle web services master key
 - `JWT_SECRET`, `REFRESH_SECRET`: Token signing secrets
 - `CORS_ORIGINS`: JSON array of allowed origins
+- `OPENAI_API_KEY`: OpenAI API key (for ChatKit module)
+
+Optional:
+
+- `OPENAPI_MODE`: Set to `"true"` to enable Swagger docs (default: disabled)
+- `SUPER_ADMIN_USERNAME`: Default super admin username (default: `superadmin`)
+- `SUPER_ADMIN_PASSWORD`: Default super admin password (default: `password123`)

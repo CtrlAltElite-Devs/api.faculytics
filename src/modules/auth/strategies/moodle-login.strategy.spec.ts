@@ -115,8 +115,9 @@ describe('MoodleLoginStrategy', () => {
       expect(moodleSyncService.SyncUserContext).toHaveBeenCalledWith(
         'moodle-token',
       );
-      // eslint-disable-next-line @typescript-eslint/unbound-method
+
       expect(
+        // eslint-disable-next-line @typescript-eslint/unbound-method
         moodleUserHydrationService.hydrateUserCourses,
       ).toHaveBeenCalledWith(123, 'moodle-token');
     });
@@ -187,8 +188,8 @@ describe('MoodleLoginStrategy', () => {
         password: 'moodlepassword',
       });
 
-      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(
+        // eslint-disable-next-line @typescript-eslint/unbound-method
         moodleUserHydrationService.hydrateUserCourses,
       ).not.toHaveBeenCalled();
     });

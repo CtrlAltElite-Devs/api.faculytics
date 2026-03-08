@@ -15,11 +15,8 @@ export class CourseSyncJob extends BaseJob {
     super(schedulerRegistry, CourseSyncJob.name);
   }
 
-  protected runStartupTask(): Promise<JobRecordType> {
-    return Promise.resolve({
-      status: 'skipped',
-      details: 'Full course sync skipped at startup for performance.',
-    });
+  protected async runStartupTask(): Promise<JobRecordType> {
+    return await this.safeRun();
   }
 
   @Cron(CronExpression.EVERY_HOUR, { name: CourseSyncJob.name })

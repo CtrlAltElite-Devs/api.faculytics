@@ -10,6 +10,7 @@ import { UserInstitutionalRole } from 'src/entities/user-institutional-role.enti
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
 import { MoodleCourse } from '../lib/moodle.types';
+import { UserRole } from 'src/modules/auth/roles.enum';
 
 @Injectable()
 export class MoodleUserHydrationService {
@@ -255,7 +256,7 @@ export class MoodleUserHydrationService {
           UserInstitutionalRole,
           {
             user,
-            role: 'dean',
+            role: UserRole.DEAN,
             moodleCategory,
           },
           { managed: false },
@@ -266,11 +267,11 @@ export class MoodleUserHydrationService {
           onConflictMergeFields: ['updatedAt'],
         });
       } else {
-        // Remove 'dean' role if it exists for this category
+        // Remove dean role if it exists for this category
         const existingRole = await tx.findOne(UserInstitutionalRole, {
           user,
           moodleCategory,
-          role: 'dean',
+          role: UserRole.DEAN,
         });
         if (existingRole) {
           tx.remove(existingRole);

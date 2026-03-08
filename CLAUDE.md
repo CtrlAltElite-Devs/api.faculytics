@@ -143,5 +143,6 @@ Required environment variables (see `.env.sample`):
 Optional:
 
 - `OPENAPI_MODE`: Set to `"true"` to enable Swagger docs (default: disabled)
+- `SYNC_ON_STARTUP`: Set to `"true"` to run Course and Enrollment sync on startup (default: disabled)
 - `SUPER_ADMIN_USERNAME`: Default super admin username (default: `superadmin`)
 - `SUPER_ADMIN_PASSWORD`: Default super admin password (default: `password123`)

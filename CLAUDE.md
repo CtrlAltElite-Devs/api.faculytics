@@ -106,6 +106,27 @@ const module: TestingModule = await Test.createTestingModule({
 }).compile();
 ```
 
+## Project Board & Workflow
+
+The project is tracked on a GitHub Projects board.
+
+### Issue Lifecycle
+
+1. **Backlog** — Issues are created freely (rough ideas, bugs, feature requests). No ticket number required yet.
+2. **Ready** — During refinement, the issue is cleaned up with details and scope, then assigned a `FAC-XX` ticket number in the title. The ticket number signals the issue is well-defined and ready to be picked up.
+3. **In Progress** — A developer picks up the issue and begins work.
+4. **In Review** — A PR is opened and linked to the issue.
+5. **In Develop** — PR is merged into the `develop` branch.
+6. **In Staging** — The merge commit is cherry-picked onto the `staging` branch for pre-production validation.
+7. **Done** — Deployed to production.
+
+### Conventions
+
+- Issue titles follow the format: `FAC-XX type: description` (e.g., `FAC-33 feat: add Moodle connectivity error handling`)
+- PR titles match their issue title
+- Issue bodies include the **PR link** and **merge commit hash** for cherry-pick reference when moving to staging
+- The `FAC-XX` ticket number prefix is the quality gate — only assigned issues are ready for development
+
 ## Configuration
 
 Required environment variables (see `.env.sample`):

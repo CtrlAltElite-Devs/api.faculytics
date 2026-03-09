@@ -37,6 +37,7 @@ export class EnrollmentsService {
           moodleCourseId: e.course.moodleCourseId,
           shortname: e.course.shortname,
           fullname: e.course.fullname,
+          courseImage: e.course.courseImage ?? undefined,
         },
         faculty: facultyMap.get(e.course.id) ?? null,
       })),

@@ -9,6 +9,19 @@ import {
 } from './moodle.types';
 import { MoodleUserProfile } from '../dto/responses/user-profile.response.dto';
 
+export class MoodleConnectivityError extends Error {
+  constructor(
+    message: string,
+    public readonly cause?: Error,
+  ) {
+    super(message);
+    this.name = 'MoodleConnectivityError';
+    Object.setPrototypeOf(this, MoodleConnectivityError.prototype);
+  }
+}
+
+const MOODLE_REQUEST_TIMEOUT_MS = 10000;
+
 export class MoodleClient {
   private baseUrl: string;
   private token: string | null = null;
@@ -26,15 +39,21 @@ export class MoodleClient {
     username: string,
     password: string,
   ): Promise<MoodleTokenResponse> {
-    const res = await fetch(`${this.baseUrl}${MoodleEndpoint.LOGIN_TOKEN}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        username: username,
-        password: password,
-        service: MoodleWebServiceFunction.TOKEN_SERVICE,
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${MoodleEndpoint.LOGIN_TOKEN}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          username: username,
+          password: password,
+          service: MoodleWebServiceFunction.TOKEN_SERVICE,
+        }),
+        signal: AbortSignal.timeout(MOODLE_REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      this.handleFetchError(error, 'login');
+    }
 
     const data = (await res.json()) as MoodleTokenResponse & { error?: string };
 
@@ -61,9 +80,9 @@ export class MoodleClient {
       );
     }
 
-    const res = await fetch(
-      `${this.baseUrl}${MoodleEndpoint.WEBSERVICE_SERVER}`,
-      {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${MoodleEndpoint.WEBSERVICE_SERVER}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -72,10 +91,44 @@ export class MoodleClient {
           moodlewsrestformat: 'json',
           ...params,
         }),
-      },
-    );
+        signal: AbortSignal.timeout(MOODLE_REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      this.handleFetchError(error, functionName);
+    }
 
-    return (await res.json()) as T;
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `Moodle API returned HTTP ${res.status}: ${body.slice(0, 200)}`,
+      );
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const body = await res.text();
+      throw new Error(
+        `Moodle API returned non-JSON response (${contentType}): ${body.slice(0, 200)}`,
+      );
+    }
+
+    let data: T;
+    try {
+      data = (await res.json()) as T;
+    } catch (error) {
+      throw new Error(
+        `Failed to parse Moodle API response as JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const moodleError = data as { exception?: string; message?: string };
+    if (moodleError.exception) {
+      throw new Error(
+        `Moodle API error (${moodleError.exception}): ${moodleError.message || 'Unknown error'}`,
+      );
+    }
+
+    return data;
   }
 
   async getSiteInfo(): Promise<MoodleSiteInfoResponse> {
@@ -155,6 +208,33 @@ export class MoodleClient {
         field,
         value,
       },
+    );
+  }
+
+  private handleFetchError(error: unknown, operation: string): never {
+    const originalError =
+      error instanceof Error ? error : new Error(String(error));
+
+    if (originalError.name === 'TimeoutError') {
+      throw new MoodleConnectivityError(
+        `Moodle request timed out during ${operation}`,
+        originalError,
+      );
+    }
+
+    if (
+      originalError.name === 'TypeError' &&
+      originalError.message.includes('fetch failed')
+    ) {
+      throw new MoodleConnectivityError(
+        `Failed to connect to Moodle service during ${operation}`,
+        originalError,
+      );
+    }
+
+    throw new MoodleConnectivityError(
+      `Network error during Moodle ${operation}: ${originalError.message}`,
+      originalError,
     );
   }
 }

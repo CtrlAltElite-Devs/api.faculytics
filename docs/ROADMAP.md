@@ -20,6 +20,9 @@ Establishing the bedrock of the system: identity, hierarchy, and reliable data f
 - [x] **Data Sync Engine:** Background jobs for Moodle category and course mirroring (Refinement in progress).
 - [x] **Enrollment Mirroring:** Efficient synchronization of user-course relationships with role mapping.
 - [x] **Institutional Authority Mapping:** Automated detection and mapping of Deans/Managers based on Moodle category-level capabilities.
+- [x] **Moodle Connectivity Resilience (FAC-33):** 10-second request timeouts and `MoodleConnectivityError` handling for graceful degradation when Moodle is unreachable.
+- [x] **Login Strategy Pattern (FAC-34):** Refactored authentication into a priority-based strategy pattern supporting local credentials and Moodle SSO with extensible provider support.
+- [x] **Refresh Token Cleanup (FAC-35):** Automated cron job purging expired refresh tokens every 12 hours with 7-day retention policy.
 
 ## Phase 2: Questionnaire & Ingestion Engine
 

@@ -9,6 +9,11 @@ import MoodleModule from '../moodle/moodle.module';
 import DataLoaderModule from '../common/data-loaders/index.module';
 import { JwtStrategy } from 'src/security/passport-strategys/jwt.strategy';
 import { JwtRefreshStrategy } from 'src/security/passport-strategys/refresh-jwt.strategy';
+import {
+  LOGIN_STRATEGIES,
+  LocalLoginStrategy,
+  MoodleLoginStrategy,
+} from './strategies';
 
 @Module({
   imports: [
@@ -18,7 +23,21 @@ import { JwtRefreshStrategy } from 'src/security/passport-strategys/refresh-jwt.
     MoodleModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtRefreshStrategy],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtRefreshStrategy,
+    LocalLoginStrategy,
+    MoodleLoginStrategy,
+    {
+      provide: LOGIN_STRATEGIES,
+      useFactory: (
+        localStrategy: LocalLoginStrategy,
+        moodleStrategy: MoodleLoginStrategy,
+      ) => [localStrategy, moodleStrategy],
+      inject: [LocalLoginStrategy, MoodleLoginStrategy],
+    },
+  ],
   exports: [AuthService],
 })
 export default class AuthModule {}

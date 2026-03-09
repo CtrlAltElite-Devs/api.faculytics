@@ -96,10 +96,16 @@ export class User extends CustomBaseEntity {
   ) {
     const enrollmentRoles = enrollments
       .filter((e) => e.isActive)
-      .map((e) => MoodleRoleMapping[e.role] || (e.role as unknown as UserRole));
+      .map(
+        (e) =>
+          MoodleRoleMapping[e.role] ||
+          (e.role.toUpperCase() as unknown as UserRole),
+      );
 
     const instRoles = institutionalRoles.map(
-      (ir) => MoodleRoleMapping[ir.role] || (ir.role as unknown as UserRole),
+      (ir) =>
+        MoodleRoleMapping[ir.role] ||
+        (ir.role.toUpperCase() as unknown as UserRole),
     );
 
     this.roles = [...new Set([...enrollmentRoles, ...instRoles])].filter(

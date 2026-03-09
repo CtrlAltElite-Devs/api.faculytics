@@ -10,7 +10,7 @@ export class UserInstitutionalRole extends CustomBaseEntity {
   user!: User;
 
   @Property()
-  role!: string; // 'dean'
+  role!: string; // UserRole.DEAN
 
   @ManyToOne(() => MoodleCategory)
   moodleCategory!: MoodleCategory;

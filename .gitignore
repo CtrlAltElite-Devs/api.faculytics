@@ -38,6 +38,7 @@ lerna-debug.log*
 # dotenv environment variable files
 .env
 openapi.json
+openapi.yaml
 .env.development.local
 .env.test.local
 .env.production.local

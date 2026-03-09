@@ -93,7 +93,6 @@ Jane,456`;
     const destroySpy = jest.spyOn(stream, 'destroy');
     const config = { dryRun: false };
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for await (const _ of adapter.extract(stream, config)) {
       break; // Abort early
     }

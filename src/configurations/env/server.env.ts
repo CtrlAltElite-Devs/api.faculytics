@@ -11,4 +11,9 @@ export const serverEnvSchema = z.object({
     .optional()
     .transform((val) => val === 'true')
     .default(false),
+  SYNC_ON_STARTUP: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true')
+    .default(false),
 });

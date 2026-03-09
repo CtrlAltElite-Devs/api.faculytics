@@ -33,10 +33,25 @@ cp .env.sample .env
 
 **Required Variables:**
 
-- `DATABASE_URL`: Your PostgreSQL connection string (supports Neon.tech SSL).
-- `MOODLE_BASE_URL`: The base URL of your Moodle instance (e.g., `https://moodle.example.com`).
-- `JWT_SECRET` & `REFRESH_SECRET`: Secure strings for token signing.
-- `CORS_ORIGINS`: JSON array of allowed origins (e.g., `["http://localhost:4100"]`).
+| Variable            | Description                                                           |
+| ------------------- | --------------------------------------------------------------------- |
+| `DATABASE_URL`      | PostgreSQL connection string (supports Neon.tech SSL)                 |
+| `MOODLE_BASE_URL`   | Base URL of your Moodle instance (e.g., `https://moodle.example.com`) |
+| `MOODLE_MASTER_KEY` | Moodle web services master key                                        |
+| `JWT_SECRET`        | Secret for signing access tokens                                      |
+| `REFRESH_SECRET`    | Secret for signing refresh tokens                                     |
+| `CORS_ORIGINS`      | JSON array of allowed origins (e.g., `["http://localhost:4100"]`)     |
+| `OPENAI_API_KEY`    | OpenAI API key (for ChatKit module)                                   |
+
+**Optional Variables:**
+
+| Variable               | Default       | Description                             |
+| ---------------------- | ------------- | --------------------------------------- |
+| `PORT`                 | `5200`        | Server port                             |
+| `NODE_ENV`             | `development` | `development` \| `production` \| `test` |
+| `OPENAPI_MODE`         | `false`       | Set to `"true"` to enable Swagger docs  |
+| `SUPER_ADMIN_USERNAME` | `superadmin`  | Default super admin username            |
+| `SUPER_ADMIN_PASSWORD` | `password123` | Default super admin password            |
 
 ### 3. Database Initialization
 
@@ -92,4 +107,4 @@ npm run test:cov
 
 ## License
 
-This project is [UNLICENSED](LICENSE)..
+This project is [UNLICENSED](LICENSE).

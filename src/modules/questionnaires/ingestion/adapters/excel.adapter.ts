@@ -39,7 +39,7 @@ export class ExcelAdapter extends BaseStreamAdapter<NodeJS.ReadableStream> {
         if (!isTarget) {
           // We must consume the worksheet reader even if we don't use it
           // to move the workbook reader forward.
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
           for await (const _ of worksheetReader) {
             // Skip
           }

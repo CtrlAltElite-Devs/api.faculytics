@@ -10,6 +10,7 @@ import { UserInstitutionalRole } from 'src/entities/user-institutional-role.enti
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
 import { MoodleCourse } from '../lib/moodle.types';
+import { UserRole } from 'src/modules/auth/roles.enum';
 
 @Injectable()
 export class MoodleUserHydrationService {
@@ -28,10 +29,21 @@ export class MoodleUserHydrationService {
     const startTime = Date.now();
     this.logger.log(`Hydrating courses for Moodle user ${moodleUserId}...`);
 
-    const remoteCourses = await this.moodleService.GetEnrolledCourses({
-      token: moodleToken,
-      userId: moodleUserId,
-    });
+    let remoteCourses: MoodleCourse[];
+    try {
+      remoteCourses = await this.moodleService.GetEnrolledCourses({
+        token: moodleToken,
+        userId: moodleUserId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(
+        `Failed to fetch enrolled courses for Moodle user ${moodleUserId}: ${message}`,
+        stack,
+      );
+      throw error;
+    }
 
     // Fetch roles in parallel using the master key to ensure we get the full profile
     const rolesPerCourse = await Promise.all(
@@ -244,7 +256,7 @@ export class MoodleUserHydrationService {
           UserInstitutionalRole,
           {
             user,
-            role: 'dean',
+            role: UserRole.DEAN,
             moodleCategory,
           },
           { managed: false },
@@ -255,11 +267,11 @@ export class MoodleUserHydrationService {
           onConflictMergeFields: ['updatedAt'],
         });
       } else {
-        // Remove 'dean' role if it exists for this category
+        // Remove dean role if it exists for this category
         const existingRole = await tx.findOne(UserInstitutionalRole, {
           user,
           moodleCategory,
-          role: 'dean',
+          role: UserRole.DEAN,
         });
         if (existingRole) {
           tx.remove(existingRole);

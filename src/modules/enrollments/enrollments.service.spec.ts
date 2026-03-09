@@ -40,6 +40,7 @@ describe('EnrollmentsService', () => {
           moodleCourseId: 101,
           shortname: 'CS101',
           fullname: 'Intro to CS',
+          courseImage: 'https://example.com/course.jpg',
         },
       },
     ];
@@ -93,6 +94,7 @@ describe('EnrollmentsService', () => {
           moodleCourseId: 101,
           shortname: 'CS101',
           fullname: 'Intro to CS',
+          courseImage: null,
         },
       },
     ];

@@ -1,4 +1,4 @@
-import { IsNumber, IsString } from 'class-validator';
+import { IsNumber, IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { FacultyShortResponseDto } from './faculty-short.response.dto';
 
@@ -18,6 +18,11 @@ export class CourseShortResponseDto {
   @ApiProperty()
   @IsString()
   fullname: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  courseImage?: string;
 }
 
 export class EnrollmentResponseDto {

@@ -64,6 +64,7 @@ export class MoodleCourseSyncService {
             isVisible: remote.visible === 1,
             timeModified: new Date(remote.timemodified * 1000),
             isActive: true,
+            courseImage: remote.courseimage ?? null,
           },
           { managed: false },
         );
@@ -78,6 +79,7 @@ export class MoodleCourseSyncService {
             'isVisible',
             'timeModified',
             'isActive',
+            'courseImage',
             'updatedAt',
           ],
         });

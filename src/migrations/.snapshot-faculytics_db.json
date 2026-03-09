@@ -1352,6 +1352,16 @@
           "nullable": false,
           "default": "true",
           "mappedType": "boolean"
+        },
+        "course_image": {
+          "name": "course_image",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "length": 255,
+          "mappedType": "string"
         }
       },
       "name": "course",

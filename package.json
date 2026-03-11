@@ -31,11 +31,13 @@
     ]
   },
   "dependencies": {
+    "@keyv/redis": "^5.1.6",
     "@mikro-orm/core": "^6.6.6",
     "@mikro-orm/migrations": "^6.6.6",
     "@mikro-orm/nestjs": "^6.1.1",
     "@mikro-orm/postgresql": "^6.6.6",
     "@mikro-orm/seeder": "^6.6.6",
+    "@nestjs/cache-manager": "^3.1.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
@@ -46,6 +48,7 @@
     "@nestjs/swagger": "^11.2.6",
     "@openai/agents": "^0.4.10",
     "bcrypt": "^6.0.0",
+    "cache-manager": "^7.2.8",
     "chatkit-node-backend-sdk": "^1.1.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
@@ -118,7 +121,7 @@
       "^src/(.*)$": "<rootDir>/$1"
     },
     "transformIgnorePatterns": [
-      "/node_modules/(?!(uuid|p-limit|yocto-queue)/)"
+      "/node_modules/(?!(uuid|p-limit|yocto-queue|cache-manager|cache-manager-redis-yet)/)"
     ]
   }
 }

@@ -42,8 +42,8 @@ Enabling structured feedback through a flexible domain engine and universal inge
 
 Enriching qualitative feedback through asynchronous computational middleware.
 
-- [ ] **Message Queue Integration:** Asynchronous pipeline using BullMQ or RabbitMQ for inference and large-scale file ingestion.
-- [ ] **Async Inference Workers:** Dedicated consumers for computational tasks.
+- [ ] **Message Queue Integration:** Asynchronous pipeline using RabbitMQ for cross-language job dispatch. See [Implementation Spec](./architecture/ai-inference-pipeline.md).
+- [ ] **Async Inference Workers:** Dedicated Python consumers for computational tasks.
 - [ ] **Sentiment Analysis:** Processing qualitative responses for emotional tone.
 - [ ] **Topic Modeling & Clustering:** Grouping feedback into institutional themes.
 - [ ] **Embedding Generation:** Vector storage for semantic search and similarity analysis.

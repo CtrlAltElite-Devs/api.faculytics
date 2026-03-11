@@ -8,6 +8,7 @@ import { databaseEnvSchema } from './database.env';
 import { jwtEnvSchema } from './jwt.env';
 import { openaiEnvSchema } from './openai.env';
 import { adminEnvSchema } from './admin.env';
+import { redisEnvSchema } from './redis.env';
 
 export const envSchema = z.object({
   ...databaseEnvSchema.shape,
@@ -17,6 +18,7 @@ export const envSchema = z.object({
   ...moodleEnvSchema.shape,
   ...openaiEnvSchema.shape,
   ...adminEnvSchema.shape,
+  ...redisEnvSchema.shape,
 });
 
 export type Env = z.infer<typeof envSchema>;

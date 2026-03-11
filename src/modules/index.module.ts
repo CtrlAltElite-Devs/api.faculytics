@@ -3,6 +3,9 @@ import { env, validateEnv } from '../configurations/index.config';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import config from '../../mikro-orm.config';
 import { JwtModule } from '@nestjs/jwt';
+import { Logger } from '@nestjs/common';
+import { CacheModule, CacheOptions } from '@nestjs/cache-manager';
+import KeyvRedis from '@keyv/redis';
 import AuthModule from './auth/auth.module';
 import HealthModule from './health/health.module';
 import MoodleModule from './moodle/moodle.module';
@@ -38,6 +41,28 @@ export const InfrastructureModules = [
     },
   }),
   ScheduleModule.forRoot(),
+  CacheModule.registerAsync({
+    isGlobal: true,
+    useFactory: (): CacheOptions => {
+      const logger = new Logger('CacheModule');
+
+      if (!env.REDIS_URL) {
+        logger.log('No REDIS_URL configured — using in-memory cache');
+        return { ttl: env.REDIS_CACHE_TTL * 1000 };
+      }
+
+      logger.log(
+        `Connecting to Redis at ${env.REDIS_URL.replace(/\/\/.*@/, '//***@')}`,
+      );
+      const store = new KeyvRedis(env.REDIS_URL, {
+        keyPrefixSeparator: '',
+        namespace: env.REDIS_KEY_PREFIX,
+      });
+      logger.log('Redis cache store configured');
+
+      return { stores: [store], ttl: env.REDIS_CACHE_TTL * 1000 };
+    },
+  }),
   LoggerModule.forRoot({
     pinoHttp: {
       level: env.NODE_ENV !== 'production' ? 'debug' : 'info',

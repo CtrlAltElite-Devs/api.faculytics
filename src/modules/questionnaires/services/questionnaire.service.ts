@@ -33,6 +33,8 @@ import {
   QuestionNode,
   EnrollmentRole,
 } from '../lib/questionnaire.types';
+import { QuestionnaireTypeResponse } from '../dto/responses/questionnaire-type-response.dto';
+import { QuestionnaireVersionsResponse } from '../dto/responses/questionnaire-version-response.dto';
 import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
@@ -55,6 +57,70 @@ export class QuestionnaireService {
     private readonly scoringService: ScoringService,
     private readonly em: EntityManager,
   ) {}
+
+  async getQuestionnaireTypes(): Promise<QuestionnaireTypeResponse[]> {
+    const questionnaires = await this.questionnaireRepo.findAll();
+
+    const questionnaireMap = new Map(questionnaires.map((q) => [q.type, q]));
+
+    return Object.values(QuestionnaireType).map((type) => {
+      const questionnaire = questionnaireMap.get(type);
+      return {
+        type,
+        questionnaireId: questionnaire?.id ?? null,
+        title: questionnaire?.title ?? null,
+        status: questionnaire?.status ?? null,
+      };
+    });
+  }
+
+  async getVersionsByType(
+    type: QuestionnaireType,
+  ): Promise<QuestionnaireVersionsResponse> {
+    if (!Object.values(QuestionnaireType).includes(type)) {
+      throw new NotFoundException(`Questionnaire type ${type} not found.`);
+    }
+
+    const questionnaire = await this.questionnaireRepo.findOne({ type });
+
+    if (!questionnaire) {
+      return {
+        questionnaireId: null,
+        questionnaireTitle: null,
+        type,
+        versions: [],
+      };
+    }
+
+    const versions = await this.versionRepo.find(
+      { questionnaire },
+      {
+        orderBy: { versionNumber: 'DESC' },
+        fields: [
+          'id',
+          'versionNumber',
+          'status',
+          'isActive',
+          'publishedAt',
+          'createdAt',
+        ],
+      },
+    );
+
+    return {
+      questionnaireId: questionnaire.id,
+      questionnaireTitle: questionnaire.title,
+      type: questionnaire.type,
+      versions: versions.map((v) => ({
+        id: v.id,
+        versionNumber: v.versionNumber,
+        status: v.status,
+        isActive: v.isActive,
+        publishedAt: v.publishedAt,
+        createdAt: v.createdAt,
+      })),
+    };
+  }
 
   async createQuestionnaire(data: { title: string; type: QuestionnaireType }) {
     const questionnaire = this.questionnaireRepo.create({

@@ -18,6 +18,7 @@ This document describes the high-level components, technology stack, and module 
 - **Authentication:** Passport.js (JWT and Refresh Token strategies)
 - **External API:** Moodle Web Services (REST)
 - **Task Scheduling:** NestJS Schedule (Cron)
+- **Caching:** `@nestjs/cache-manager` with Redis (`@keyv/redis`) or in-memory fallback
 - **Validation:** Zod (Environment variables), class-validator (DTOs)
 
 ## 3. Module Architecture
@@ -36,6 +37,7 @@ classDiagram
         JwtModule
         PassportModule
         ScheduleModule
+        CacheModule
     }
     class ApplicationModules {
         <<Namespace>>
@@ -100,12 +102,12 @@ Priority ranges: `0-99` core auth, `100-199` external providers, `200+` fallback
 
 Background jobs extend `BaseJob` and register in `StartupJobRegistry`. All jobs are in `src/crons/jobs/`.
 
-| Job                      | Schedule       | Purpose                                    |
-| ------------------------ | -------------- | ------------------------------------------ |
-| `CategorySyncJob`        | Startup + cron | Syncs Moodle categories to local hierarchy |
-| `CourseSyncJob`          | Startup + cron | Syncs Moodle courses                       |
-| `EnrollmentSyncJob`      | Startup + cron | Syncs user-course enrollments and roles    |
-| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days    |
+| Job                      | Schedule       | Purpose                                                               |
+| ------------------------ | -------------- | --------------------------------------------------------------------- |
+| `CategorySyncJob`        | Startup + cron | Syncs Moodle categories to local hierarchy                            |
+| `CourseSyncJob`          | Startup + cron | Syncs Moodle courses                                                  |
+| `EnrollmentSyncJob`      | Startup + cron | Syncs user-course enrollments and roles; invalidates enrollment cache |
+| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days                               |
 
 ## 6. Moodle Connectivity & Error Handling
 

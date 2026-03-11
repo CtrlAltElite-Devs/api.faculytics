@@ -39,6 +39,8 @@ import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { UserRole } from '../../auth/roles.enum';
+import { CacheService } from '../../common/cache/cache.service';
+import { CacheNamespace } from '../../common/cache/cache-namespaces';
 
 @Injectable()
 export class QuestionnaireService {
@@ -56,22 +58,32 @@ export class QuestionnaireService {
     private readonly validator: QuestionnaireSchemaValidator,
     private readonly scoringService: ScoringService,
     private readonly em: EntityManager,
+    private readonly cacheService: CacheService,
   ) {}
 
   async getQuestionnaireTypes(): Promise<QuestionnaireTypeResponse[]> {
-    const questionnaires = await this.questionnaireRepo.findAll();
+    return this.cacheService.wrap(
+      CacheNamespace.QUESTIONNAIRE_TYPES,
+      'all',
+      async () => {
+        const questionnaires = await this.questionnaireRepo.findAll();
 
-    const questionnaireMap = new Map(questionnaires.map((q) => [q.type, q]));
+        const questionnaireMap = new Map(
+          questionnaires.map((q) => [q.type, q]),
+        );
 
-    return Object.values(QuestionnaireType).map((type) => {
-      const questionnaire = questionnaireMap.get(type);
-      return {
-        type,
-        questionnaireId: questionnaire?.id ?? null,
-        title: questionnaire?.title ?? null,
-        status: questionnaire?.status ?? null,
-      };
-    });
+        return Object.values(QuestionnaireType).map((type) => {
+          const questionnaire = questionnaireMap.get(type);
+          return {
+            type,
+            questionnaireId: questionnaire?.id ?? null,
+            title: questionnaire?.title ?? null,
+            status: questionnaire?.status ?? null,
+          };
+        });
+      },
+      3600000,
+    );
   }
 
   async getVersionsByType(
@@ -81,45 +93,52 @@ export class QuestionnaireService {
       throw new NotFoundException(`Questionnaire type ${type} not found.`);
     }
 
-    const questionnaire = await this.questionnaireRepo.findOne({ type });
+    return this.cacheService.wrap(
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+      type,
+      async () => {
+        const questionnaire = await this.questionnaireRepo.findOne({ type });
 
-    if (!questionnaire) {
-      return {
-        questionnaireId: null,
-        questionnaireTitle: null,
-        type,
-        versions: [],
-      };
-    }
+        if (!questionnaire) {
+          return {
+            questionnaireId: null,
+            questionnaireTitle: null,
+            type,
+            versions: [],
+          };
+        }
 
-    const versions = await this.versionRepo.find(
-      { questionnaire },
-      {
-        orderBy: { versionNumber: 'DESC' },
-        fields: [
-          'id',
-          'versionNumber',
-          'status',
-          'isActive',
-          'publishedAt',
-          'createdAt',
-        ],
+        const versions = await this.versionRepo.find(
+          { questionnaire },
+          {
+            orderBy: { versionNumber: 'DESC' },
+            fields: [
+              'id',
+              'versionNumber',
+              'status',
+              'isActive',
+              'publishedAt',
+              'createdAt',
+            ],
+          },
+        );
+
+        return {
+          questionnaireId: questionnaire.id,
+          questionnaireTitle: questionnaire.title,
+          type: questionnaire.type,
+          versions: versions.map((v) => ({
+            id: v.id,
+            versionNumber: v.versionNumber,
+            status: v.status,
+            isActive: v.isActive,
+            publishedAt: v.publishedAt,
+            createdAt: v.createdAt,
+          })),
+        };
       },
+      3600000,
     );
-
-    return {
-      questionnaireId: questionnaire.id,
-      questionnaireTitle: questionnaire.title,
-      type: questionnaire.type,
-      versions: versions.map((v) => ({
-        id: v.id,
-        versionNumber: v.versionNumber,
-        status: v.status,
-        isActive: v.isActive,
-        publishedAt: v.publishedAt,
-        createdAt: v.createdAt,
-      })),
-    };
   }
 
   async createQuestionnaire(data: { title: string; type: QuestionnaireType }) {
@@ -130,6 +149,9 @@ export class QuestionnaireService {
     });
     this.em.persist(questionnaire);
     await this.em.flush();
+    await this.cacheService.invalidateNamespace(
+      CacheNamespace.QUESTIONNAIRE_TYPES,
+    );
     return questionnaire;
   }
 
@@ -175,6 +197,9 @@ export class QuestionnaireService {
 
     this.em.persist(version);
     await this.em.flush();
+    await this.cacheService.invalidateNamespace(
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+    );
     return version;
   }
 
@@ -212,6 +237,10 @@ export class QuestionnaireService {
     version.questionnaire.status = QuestionnaireStatus.ACTIVE;
 
     await this.em.flush();
+    await this.cacheService.invalidateNamespaces(
+      CacheNamespace.QUESTIONNAIRE_TYPES,
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+    );
     return version;
   }
 
@@ -247,6 +276,10 @@ export class QuestionnaireService {
 
     this.em.persist(version);
     await this.em.flush();
+    await this.cacheService.invalidateNamespaces(
+      CacheNamespace.QUESTIONNAIRE_TYPES,
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+    );
     return version;
   }
 

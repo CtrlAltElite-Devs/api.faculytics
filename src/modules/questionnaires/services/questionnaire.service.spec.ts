@@ -17,6 +17,7 @@ import {
 import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { CacheService } from '../../common/cache/cache.service';
 import {
   BadRequestException,
   ConflictException,
@@ -112,6 +113,18 @@ describe('QuestionnaireService', () => {
               .mockImplementation(
                 (_: unknown, data: Record<string, unknown>) => data,
               ),
+          },
+        },
+        {
+          provide: CacheService,
+          useValue: {
+            wrap: jest
+              .fn()
+              .mockImplementation(
+                (_ns: string, _key: string, fn: () => Promise<unknown>) => fn(),
+              ),
+            invalidateNamespace: jest.fn(),
+            invalidateNamespaces: jest.fn(),
           },
         },
       ],

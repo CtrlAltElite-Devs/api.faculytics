@@ -22,6 +22,7 @@ import { ErrorFormatter } from './ingestion/utils/error-formatter.util';
 import { IngestionEngine } from './ingestion/services/ingestion-engine.service';
 import { IngestionMapperService } from './ingestion/services/ingestion-mapper.service';
 import DataLoaderModule from '../common/data-loaders/index.module';
+import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import DataLoaderModule from '../common/data-loaders/index.module';
       Enrollment,
     ]),
     DataLoaderModule,
+    CommonModule,
   ],
   controllers: [QuestionnaireController],
   providers: [

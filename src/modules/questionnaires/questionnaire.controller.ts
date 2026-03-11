@@ -17,6 +17,8 @@ import { CreateVersionRequest } from './dto/requests/create-version-request.dto'
 import { SubmitQuestionnaireRequest } from './dto/requests/submit-questionnaire-request.dto';
 import { SaveDraftRequest } from './dto/requests/save-draft-request.dto';
 import { GetDraftRequest } from './dto/requests/get-draft-request.dto';
+import { GetVersionsByTypeParam } from './dto/requests/get-versions-by-type-request.dto';
+import { QuestionnaireVersionsResponse } from './dto/responses/questionnaire-version-response.dto';
 import { DraftResponse } from './dto/responses/draft-response.dto';
 import { UseJwtGuard } from 'src/security/decorators';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
@@ -26,6 +28,23 @@ import type { AuthenticatedRequest } from '../common/interceptors/http/authentic
 @Controller('questionnaires')
 export class QuestionnaireController {
   constructor(private readonly questionnaireService: QuestionnaireService) {}
+
+  @Get('types')
+  @ApiOperation({ summary: 'List all questionnaire types' })
+  async getQuestionnaireTypes() {
+    return this.questionnaireService.getQuestionnaireTypes();
+  }
+
+  @Get('types/:type/versions')
+  @ApiOperation({ summary: 'Get versions for a questionnaire type' })
+  @ApiResponse({
+    status: 200,
+    description: 'Versions found',
+    type: QuestionnaireVersionsResponse,
+  })
+  async getVersionsByType(@Param() params: GetVersionsByTypeParam) {
+    return this.questionnaireService.getVersionsByType(params.type);
+  }
 
   @Post()
   @ApiOperation({ summary: 'Create a new questionnaire' })

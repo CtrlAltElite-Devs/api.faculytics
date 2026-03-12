@@ -18,7 +18,9 @@ This document describes the high-level components, technology stack, and module 
 - **Authentication:** Passport.js (JWT and Refresh Token strategies)
 - **External API:** Moodle Web Services (REST)
 - **Task Scheduling:** NestJS Schedule (Cron)
-- **Caching:** `@nestjs/cache-manager` with Redis (`@keyv/redis`) or in-memory fallback
+- **Caching:** `@nestjs/cache-manager` with Redis (`@keyv/redis`)
+- **Job Queue:** BullMQ (`@nestjs/bullmq`) on Redis
+- **Health Checks:** `@nestjs/terminus` with custom indicators
 - **Validation:** Zod (Environment variables), class-validator (DTOs)
 
 ## 3. Module Architecture
@@ -38,6 +40,7 @@ classDiagram
         PassportModule
         ScheduleModule
         CacheModule
+        BullModule
     }
     class ApplicationModules {
         <<Namespace>>
@@ -47,6 +50,7 @@ classDiagram
         HealthModule
         ChatKitModule
         QuestionnaireModule
+        AnalysisModule
     }
 
     AppModule --> InfrastructureModules : "imports"
@@ -57,6 +61,13 @@ classDiagram
     MoodleModule --> CommonModule : "uses UnitOfWork"
     EnrollmentsModule --> MoodleModule : "uses MoodleService"
     QuestionnaireModule --> CommonModule : "uses UnitOfWork"
+    AnalysisModule --> BullModule : "uses BullMQ queues"
+
+    class AnalysisModule {
+        +AnalysisService
+        +SentimentProcessor
+        +BaseAnalysisProcessor
+    }
 
     class MoodleModule {
         +MoodleService
@@ -119,7 +130,36 @@ The `MoodleClient` enforces a 10-second timeout (`MOODLE_REQUEST_TIMEOUT_MS`) on
 
 The `MoodleLoginStrategy` catches `MoodleConnectivityError` and translates it to a `401 Unauthorized` with a user-friendly message.
 
-## 7. Startup & Initialization Flow
+## 7. Analysis Job Queue
+
+The `AnalysisModule` provides async job processing for AI analysis tasks using BullMQ on Redis. See [AI Inference Pipeline](./ai-inference-pipeline.md) for the full architecture.
+
+**Queue-per-type pattern:** Each analysis type gets its own BullMQ queue and processor with independent concurrency, retry policies, and rate limiting.
+
+| Component               | Purpose                                                               |
+| ----------------------- | --------------------------------------------------------------------- |
+| `AnalysisService`       | Entry point — `EnqueueJob()` and `EnqueueBatch()` for other modules   |
+| `BaseAnalysisProcessor` | Abstract base — HTTP dispatch, Zod validation, retry, stall detection |
+| `SentimentProcessor`    | Concrete processor for sentiment analysis (extends Base)              |
+
+**Job flow:** `EnqueueJob()` → validates envelope with Zod → adds to BullMQ queue with deterministic ID → processor picks up job → HTTP POST to external worker → validates response with Zod → persists result.
+
+**Resilience:** Exponential backoff retries, stall detection, graceful degradation when Redis is unavailable (`ServiceUnavailableException`), HTTP timeout via `AbortController`.
+
+**Local development:** `docker compose up` starts Redis and a mock worker (Hono HTTP server on port 3001) that simulates worker responses.
+
+## 8. Health Checks
+
+The `HealthModule` uses `@nestjs/terminus` to provide structured health checks at `GET /health`:
+
+| Indicator  | Checks                                  |
+| ---------- | --------------------------------------- |
+| `database` | `SELECT 1` via MikroORM `EntityManager` |
+| `redis`    | Read/write test via cache manager       |
+
+Returns HTTP 200 with `status: 'ok'` when healthy, HTTP 503 with `status: 'error'` and per-indicator details when unhealthy.
+
+## 9. Startup & Initialization Flow
 
 The application enforces a strict initialization sequence in `InitializeDatabase` before it begins accepting traffic. This ensures that the database schema and required infrastructure state are always synchronized with the code.
 

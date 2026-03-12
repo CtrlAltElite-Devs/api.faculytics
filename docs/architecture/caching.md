@@ -4,13 +4,13 @@ This document describes the caching architecture used in `api.faculytics`, inclu
 
 ## 1. Overview
 
-The caching layer provides a thin abstraction (`CacheService`) over NestJS `CacheModule` with namespace-aware key tracking for targeted invalidation. It supports both **Redis** (production) and **in-memory** (development/testing) stores transparently.
+The caching layer provides a thin abstraction (`CacheService`) over NestJS `CacheModule` with namespace-aware key tracking for targeted invalidation. It uses **Redis** via `@keyv/redis` — `REDIS_URL` is required (also used by BullMQ for job queues).
 
 ## 2. Technology Stack
 
 - **Cache Framework:** `@nestjs/cache-manager` v3 + `cache-manager` v7
 - **Redis Adapter:** `@keyv/redis` (Keyv-compatible adapter required by cache-manager v7)
-- **Fallback:** In-memory store when `REDIS_URL` is not configured
+- **Note:** `REDIS_URL` is required — Redis is shared with BullMQ job queues
 
 ## 3. Architecture
 
@@ -66,7 +66,7 @@ enum CacheNamespace {
 
 | Environment Variable | Default       | Description                                                        |
 | -------------------- | ------------- | ------------------------------------------------------------------ |
-| `REDIS_URL`          | _(none)_      | Redis connection URL. If unset, falls back to in-memory cache.     |
+| `REDIS_URL`          | _(required)_  | Redis connection URL. Required for both caching and job queues.    |
 | `REDIS_KEY_PREFIX`   | `faculytics:` | Namespace prefix for Redis keys.                                   |
 | `REDIS_CACHE_TTL`    | `60`          | Default TTL in seconds (applied when no per-key TTL is specified). |
 

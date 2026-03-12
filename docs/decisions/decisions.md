@@ -46,3 +46,22 @@ Rather than using Redis pattern-based key scanning (`KEYS` / `SCAN`), the cachin
 - **Bounded memory:** The registry only tracks keys for a small, fixed set of cached endpoints, so memory usage is negligible.
 
 See [Caching Architecture](../architecture/caching.md) for full details.
+
+## 9. BullMQ over RabbitMQ for Job Processing
+
+The AI inference pipeline uses BullMQ (Redis-backed) instead of RabbitMQ for async job processing:
+
+- **No new infrastructure:** Reuses the existing Redis instance — no separate message broker to operate.
+- **All workers are HTTP endpoints:** RunPod serverless and LLM APIs are HTTP-based. No AMQP consumers exist or are planned, so RabbitMQ's cross-language support is unnecessary.
+- **Queue-per-type isolation:** Each analysis type (sentiment, topic model, embeddings) gets its own queue with independent concurrency and retry policies.
+- **Trade-off:** Single Redis serves both caching and queues in development. In production, these should be split into separate instances (cache: `allkeys-lru`, queue: `noeviction`) to prevent job data eviction.
+
+See [AI Inference Pipeline](../architecture/ai-inference-pipeline.md) for full architecture.
+
+## 10. Redis Required (No In-Memory Fallback)
+
+`REDIS_URL` changed from optional to required. The in-memory cache fallback was removed because BullMQ requires a real Redis connection. This simplifies the codebase (eliminates a dead code branch) at the cost of requiring Redis for all environments — mitigated by `docker-compose.yml` providing a local Redis instance.
+
+## 11. Terminus Health Checks
+
+Migrated from a barebones `'healthy'` string response to `@nestjs/terminus` with structured JSON and HTTP status codes (200/503). This is a breaking change for any monitoring that parses the response body, but load balancers and K8s probes typically check status codes, making it transparent to most infrastructure.

@@ -23,6 +23,7 @@ import { IngestionEngine } from './ingestion/services/ingestion-engine.service';
 import { IngestionMapperService } from './ingestion/services/ingestion-mapper.service';
 import DataLoaderModule from '../common/data-loaders/index.module';
 import { CommonModule } from '../common/common.module';
+import { AnalysisModule } from '../analysis/analysis.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { CommonModule } from '../common/common.module';
     ]),
     DataLoaderModule,
     CommonModule,
+    AnalysisModule,
   ],
   controllers: [QuestionnaireController],
   providers: [

@@ -2,7 +2,7 @@
 title: 'Analytics Metadata for Questionnaire Submissions'
 slug: 'analytics-metadata-questionnaire-submissions'
 created: '2026-03-13'
-status: 'ready-for-dev'
+status: 'implementation-complete'
 revised: '2026-03-13'
 revision_notes: 'Adversarial review — 14 findings resolved'
 stepsCompleted: [1, 2, 3, 4]
@@ -645,7 +645,7 @@ export const SENTIMENT_GATE = {
 
 #### Phase 4: Worker Contract Schemas & Documentation
 
-- [ ] Task 12: Create worker contract Zod schemas
+- [x] Task 12: Create worker contract Zod schemas
   - File: `src/modules/analysis/dto/sentiment-worker.dto.ts` (create)
   - File: `src/modules/analysis/dto/topic-model-worker.dto.ts` (create)
   - File: `src/modules/analysis/dto/recommendations-worker.dto.ts` (create)
@@ -653,13 +653,13 @@ export const SENTIMENT_GATE = {
   - Action: Export inferred TypeScript types from each schema
   - Notes: These are the source of truth. Worker contract docs are generated from these.
 
-- [ ] Task 13: Create pipeline status DTO
+- [x] Task 13: Create pipeline status DTO
   - File: `src/modules/analysis/dto/pipeline-status.dto.ts` (create)
   - File: `src/modules/analysis/dto/create-pipeline.dto.ts` (create)
   - Action: Define Zod schema for pipeline status response per the Pipeline Status Contract section
   - Action: Define request DTO for pipeline creation: `semesterId` (required), `facultyId`, `questionnaireVersionId`, `departmentId`, `programId`, `campusId`, `courseId` (all optional)
 
-- [ ] Task 14: Create worker contract documentation
+- [x] Task 14: Create worker contract documentation
   - File: `docs/worker-contracts/sentiment-worker.md` (create)
   - File: `docs/worker-contracts/topic-modeling-worker.md` (create)
   - File: `docs/worker-contracts/recommendations-worker.md` (create)
@@ -668,26 +668,26 @@ export const SENTIMENT_GATE = {
 
 #### Phase 4B: Batch Processing Infrastructure
 
-- [ ] Task 14B: Create batch analysis DTOs
+- [x] Task 14B: Create batch analysis DTOs
   - File: `src/modules/analysis/dto/batch-analysis-job-message.dto.ts` (create)
   - File: `src/modules/analysis/dto/batch-analysis-result-message.dto.ts` (create)
   - Action: Define `batchAnalysisJobSchema` with `items: z.array(z.object({ submissionId, text }))` and `metadata: z.object({ pipelineId, runId })` — see Architecture: Batch Processing Pattern section for full schema
   - Action: Define `batchAnalysisResultSchema` with `results: z.array(z.record(z.string(), z.unknown()))` — array of per-item results
   - Action: Export inferred TypeScript types: `BatchAnalysisJobMessage`, `BatchAnalysisResultMessage`
 
-- [ ] Task 14C: Create BaseBatchProcessor abstract class
+- [x] Task 14C: Create BaseBatchProcessor abstract class
   - File: `src/modules/analysis/processors/base-batch.processor.ts` (create)
   - Action: Extend `WorkerHost`. Mirror `BaseAnalysisProcessor` pattern but use `BatchAnalysisJobMessage` and `BatchAnalysisResultMessage` schemas. Same hooks: abstract `GetWorkerUrl()` and `Persist()`. Same HTTP dispatch pattern (fetch to worker URL). Same Zod validation of response. Same error handling (`@OnWorkerEvent('failed')`).
   - Notes: One BullMQ job = one batch = one HTTP call = one completion event. The `Persist()` hook receives the full batch result. Each concrete processor re-parses the `results` array with its own typed Zod schema inside `Persist()`.
 
 #### Phase 5: Processors
 
-- [ ] Task 15: Create EmbeddingProcessor
+- [x] Task 15: Create EmbeddingProcessor
   - File: `src/modules/analysis/processors/embedding.processor.ts` (create)
   - Action: Extend `BaseAnalysisProcessor`. `GetWorkerUrl()` returns `env.EMBEDDINGS_WORKER_URL`. `Persist()` creates or updates `SubmissionEmbedding` entity via `UnitOfWork`.
   - Notes: Embedding processor handles both per-submission dispatch (auto on submit) and batch backfill (pipeline embedding check). Use `@Processor('embedding', { concurrency: env.EMBEDDINGS_CONCURRENCY })`.
 
-- [ ] Task 16: Update SentimentProcessor to extend BaseBatchProcessor
+- [x] Task 16: Update SentimentProcessor to extend BaseBatchProcessor
   - File: `src/modules/analysis/processors/sentiment.processor.ts` (modify)
   - Action: Change parent class from `BaseAnalysisProcessor` to `BaseBatchProcessor`. Replace no-op `Persist()` with real implementation: re-parse `results` array with typed `sentimentResultSchema` (per-item), create `SentimentResult` entities with typed scores (`positiveScore`, `neutralScore`, `negativeScore`), derive `label` from highest score, store `rawResult` JSONB per item, persist all in one `UnitOfWork` transaction
   - Action: Inject `EntityManager` and repositories
@@ -695,14 +695,14 @@ export const SENTIMENT_GATE = {
   - Action: On failure after max retries (`@OnWorkerEvent('failed')`), update run and pipeline status to `failed`, log raw response body (pre-mortem #6)
   - Notes: Pre-mortem #1 — ensure pipeline transitions to `failed` on processor failure. One BullMQ job = entire sentiment batch = one completion callback.
 
-- [ ] Task 17: Create TopicModelProcessor
+- [x] Task 17: Create TopicModelProcessor
   - File: `src/modules/analysis/processors/topic-model.processor.ts` (create)
   - Action: Extend `BaseBatchProcessor`. `GetWorkerUrl()` returns `env.TOPIC_MODEL_WORKER_URL`. `Persist()` re-parses results with typed topic model schema, creates `Topic` entities → `TopicAssignment` entities in `UnitOfWork` transaction. Updates `TopicModelRun` with `topicCount`, `outlierCount`, `metrics`.
   - Action: Chunk `TopicAssignment` inserts using `TOPIC_ASSIGNMENT_BATCH_SIZE` constant (pre-mortem #7)
   - Action: In `Persist()`, after creating all entities: call `PipelineOrchestratorService.OnTopicModelComplete(pipelineId)`
   - Notes: Use `@Processor('topic-model', { concurrency: env.TOPIC_MODEL_CONCURRENCY })`. Filter assignments by probability > 0.01 threshold. Set `isDominant` on highest-probability assignment per submission.
 
-- [ ] Task 18: Create RecommendationsProcessor
+- [x] Task 18: Create RecommendationsProcessor
   - File: `src/modules/analysis/processors/recommendations.processor.ts` (create)
   - Action: Extend `BaseBatchProcessor`. `GetWorkerUrl()` returns `env.RECOMMENDATIONS_WORKER_URL`. `Persist()` re-parses results with typed recommendations schema, creates `RecommendedAction` entities via `UnitOfWork`. Updates `RecommendationRun` with `sentimentCoverage`, `topicCoverage`.
   - Action: In `Persist()`, after creating all entities: call `PipelineOrchestratorService.OnRecommendationsComplete(pipelineId)`
@@ -710,7 +710,7 @@ export const SENTIMENT_GATE = {
 
 #### Phase 6: Pipeline Orchestrator & Controller
 
-- [ ] Task 19: Create PipelineOrchestratorService
+- [x] Task 19: Create PipelineOrchestratorService
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.ts` (create)
   - Action: Implement methods:
     - `CreatePipeline(dto)` — check for active duplicate (status not completed/failed/cancelled, pre-mortem #8), call `AnalysisPipelineRepository.ComputeCoverageStats(scope)` for coverage (dynamic multi-join query based on non-null scope fields, staleness via `MAX(enrollment.updatedAt)`), generate warnings (including stale sync check), create `AnalysisPipeline` with `AWAITING_CONFIRMATION` status, return pipeline with coverage
@@ -724,7 +724,7 @@ export const SENTIMENT_GATE = {
     - `OnStageFailed(pipelineId, stage, error)` — transition to `FAILED`, log error
   - Notes: Inject `AnalysisService` for job dispatch, `UnitOfWork` for transactions, `EntityManager` for queries, all relevant repositories. Worker URL validation prevents silently queuing jobs that will fail.
 
-- [ ] Task 20: Create AnalysisController
+- [x] Task 20: Create AnalysisController
   - File: `src/modules/analysis/analysis.controller.ts` (create)
   - Action: Protected with `@UseJwtGuard()`. Endpoints:
     - `POST /analysis/pipelines` — create pipeline, accepts `CreatePipelineDto`, returns pipeline with coverage stats
@@ -735,7 +735,7 @@ export const SENTIMENT_GATE = {
 
 #### Phase 7: Module Wiring
 
-- [ ] Task 21: Update AnalysisModule
+- [x] Task 21: Update AnalysisModule
   - File: `src/modules/analysis/analysis.module.ts` (modify)
   - Action: Register new BullMQ queues: `BullModule.registerQueue({ name: 'embedding' }, { name: 'topic-model' }, { name: 'recommendations' })`
   - Action: Import `MikroOrmModule.forFeature([...all 9 new entities])` for repository injection
@@ -744,7 +744,7 @@ export const SENTIMENT_GATE = {
   - Action: Export `AnalysisService` and `PipelineOrchestratorService`
   - Notes: Import `CommonModule` for UnitOfWork access
 
-- [ ] Task 22: Wire embedding dispatch in submission flow
+- [x] Task 22: Wire embedding dispatch in submission flow
   - File: `src/modules/questionnaires/questionnaire.module.ts` (modify)
   - Action: Add `AnalysisModule` to imports array
   - File: `src/modules/questionnaires/services/questionnaire.service.ts` (modify)
@@ -753,18 +753,18 @@ export const SENTIMENT_GATE = {
 
 #### Phase 8: Tests
 
-- [ ] Task 23: Unit tests for entities and enums
+- [x] Task 23: Unit tests for entities and enums
   - File: `src/modules/analysis/enums/*.spec.ts` (create if needed)
   - Action: Verify enum values match expected strings for database CHECK constraints
 
-- [ ] Task 23B: Unit tests for BaseBatchProcessor
+- [x] Task 23B: Unit tests for BaseBatchProcessor
   - File: `src/modules/analysis/processors/base-batch.processor.spec.ts` (create)
   - Action: Create concrete test class extending `BaseBatchProcessor`. Test that `process()` sends HTTP request with `BatchAnalysisJobMessage` body, validates response with `batchAnalysisResultSchema`, calls `Persist()` with parsed batch result.
   - Action: Test Zod validation failure logs raw response body
   - Action: Test `@OnWorkerEvent('failed')` handler is wired
   - Notes: Mirror existing `base.processor.spec.ts` pattern but with batch schemas.
 
-- [ ] Task 24: Unit tests for PipelineOrchestratorService
+- [x] Task 24: Unit tests for PipelineOrchestratorService
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.spec.ts` (create)
   - Action: Test `CreatePipeline` — coverage computation via `ComputeCoverageStats()`, warning generation, duplicate pipeline check (active = not completed/failed/cancelled), stale sync detection via `MAX(updatedAt)`
   - Action: Test `ConfirmPipeline` — status transition, embedding backfill dispatch, **worker URL validation failure** (SENTIMENT_WORKER_URL not set → fail with message)
@@ -773,14 +773,14 @@ export const SENTIMENT_GATE = {
   - Action: Test stage transitions and failure handling
   - Notes: Mock repositories, AnalysisService, EntityManager. Use TestingModule pattern.
 
-- [ ] Task 25: Unit tests for updated SentimentProcessor
+- [x] Task 25: Unit tests for updated SentimentProcessor
   - File: `src/modules/analysis/processors/sentiment.processor.spec.ts` (modify)
   - Action: Test `Persist()` creates SentimentResult entities from batch result array with correct typed scores, derived label, rawResult JSONB
   - Action: Test failure handler updates pipeline status
   - Action: Test raw response logging on Zod validation failure
   - Notes: Now extends `BaseBatchProcessor` — test with `BatchAnalysisJobMessage` and `BatchAnalysisResultMessage`
 
-- [ ] Task 26: Unit tests for new processors
+- [x] Task 26: Unit tests for new processors
   - File: `src/modules/analysis/processors/embedding.processor.spec.ts` (create)
   - File: `src/modules/analysis/processors/topic-model.processor.spec.ts` (create)
   - File: `src/modules/analysis/processors/recommendations.processor.spec.ts` (create)
@@ -789,14 +789,14 @@ export const SENTIMENT_GATE = {
   - Action: Test TopicModelProcessor chunks TopicAssignment inserts
   - Action: Test each processor calls appropriate PipelineOrchestrator callback on completion
 
-- [ ] Task 27: Unit tests for AnalysisController
+- [x] Task 27: Unit tests for AnalysisController
   - File: `src/modules/analysis/analysis.controller.spec.ts` (create)
   - Action: Test pipeline creation endpoint returns coverage stats
   - Action: Test confirm endpoint transitions status
   - Action: Test status endpoint returns composed pipeline status
   - Notes: Mock PipelineOrchestratorService
 
-- [ ] Task 28: Integration test for embedding dispatch on submission
+- [x] Task 28: Integration test for embedding dispatch on submission
   - File: `src/modules/questionnaires/services/questionnaire.service.spec.ts` (modify)
   - Action: Add test: given a submission with qualitativeComment, when submitQuestionnaire completes, then AnalysisService.EnqueueJob is called with type 'embedding'
   - Action: Add test: given a submission without qualitativeComment, then no embedding job is enqueued
@@ -804,59 +804,66 @@ export const SENTIMENT_GATE = {
 
 ### Acceptance Criteria
 
-- [ ] AC 1: Embedding Auto-Dispatch
+- [x] AC1: Embedding Auto-Dispatch
   - Given a submission with a qualitativeComment AND `EMBEDDINGS_WORKER_URL` is configured, when `submitQuestionnaire()` completes successfully, then an embedding job is enqueued via `AnalysisService.EnqueueJob('embedding', ...)` with the submission's qualitative comment text and metadata.
 
-- [ ] AC 1B: Embedding Skip When Worker URL Not Configured
+- [x] AC1B: Embedding Skip When Worker URL Not Configured
   - Given a submission with a qualitativeComment but `EMBEDDINGS_WORKER_URL` is NOT configured, when `submitQuestionnaire()` completes, then no embedding job is enqueued and no error is thrown.
 
-- [ ] AC 2: Embedding Skip on No Comment
+- [x] AC2: Embedding Skip on No Comment
   - Given a submission without a qualitativeComment (null), when `submitQuestionnaire()` completes, then no embedding job is enqueued.
 
-- [ ] AC 3: Pipeline Creation with Coverage Stats
+- [x] AC3: Pipeline Creation with Coverage Stats
   - Given a semester with 150 enrolled students and 47 submissions (43 with comments), when an admin creates a pipeline for that semester, then the response includes `totalEnrolled: 150`, `submissionCount: 47`, `commentCount: 43`, `responseRate: 0.31`, and appropriate warnings.
 
-- [ ] AC 4: Pipeline Duplicate Prevention
+- [x] AC4: Pipeline Duplicate Prevention
   - Given an active pipeline (status not completed/failed) for semester S1 + department CCS, when an admin attempts to create a new pipeline with the same scope, then the API returns the existing active pipeline instead of creating a duplicate.
 
-- [ ] AC 5: Pipeline Confirmation and Execution
+- [x] AC5: Pipeline Confirmation and Execution
   - Given a pipeline in `awaiting_confirmation` status, when the admin confirms it, then the pipeline transitions through stages sequentially: `embedding_check` → `sentiment_analysis` → `sentiment_gate` → `topic_modeling` → `generating_recommendations` → `completed`.
 
-- [ ] AC 6: Sentiment Gate Filtering
+- [x] AC6: Sentiment Gate Filtering
   - Given sentiment results where submission A is "negative" (3 words), submission B is "positive" (5 words), and submission C is "positive" (15 words), when the sentiment gate is applied, then A passes (negative always included), B is excluded (positive < 10 words), and C passes (positive >= 10 words).
 
-- [ ] AC 7: Sentiment Result Persistence
+- [x] AC7: Sentiment Result Persistence
   - Given a completed sentiment batch job, when the processor persists results, then each `SentimentResult` has typed `positiveScore`, `neutralScore`, `negativeScore` columns, a derived `label`, and the full `rawResult` JSONB.
 
-- [ ] AC 8: Topic Model Persistence with Soft Assignments
+- [x] AC8: Topic Model Persistence with Soft Assignments
   - Given a completed topic modeling job with 5 topics and 50 submissions, when the processor persists results, then a `TopicModelRun` is created with `topicCount: 5`, 5 `Topic` entities with keywords and labels, and `TopicAssignment` entries for each submission-topic pair where probability > 0.01, with `isDominant` set on the highest-probability assignment per submission.
 
-- [ ] AC 9: Recommendation Persistence
+- [x] AC9: Recommendation Persistence
   - Given a completed recommendations job, when the processor persists results, then a `RecommendationRun` is created with `sentimentCoverage` and `topicCoverage` counts, and `RecommendedAction` entities with `category`, `actionText`, `priority`, and `supportingEvidence`.
 
-- [ ] AC 10: Pipeline Status Endpoint
+- [x] AC10: Pipeline Status Endpoint
   - Given a pipeline in `sentiment_analysis` stage, when the status endpoint is called, then the response includes the scope, coverage stats, per-stage status (embeddings: completed, sentiment: processing with progress, sentimentGate/topicModeling/recommendations: pending), and any warnings.
 
-- [ ] AC 11: Pipeline Failure Handling
+- [x] AC11: Pipeline Failure Handling
   - Given a sentiment batch job that fails after max retries, when the `@OnWorkerEvent('failed')` handler fires, then the `SentimentRun` status is set to `failed`, the `AnalysisPipeline` status transitions to `failed`, and the raw error is logged.
 
-- [ ] AC 11B: Pipeline Cancel
+- [x] AC11B: Pipeline Cancel
   - Given a pipeline in `sentiment_analysis` status, when the admin calls `POST /analysis/pipelines/:id/cancel`, then the pipeline status transitions to `cancelled`. A new pipeline for the same scope can be created afterward.
 
-- [ ] AC 11C: Worker URL Validation
+- [x] AC11C: Worker URL Validation
   - Given `TOPIC_MODEL_WORKER_URL` is not configured, when the orchestrator attempts to transition to topic_modeling stage, then the pipeline transitions to `failed` with a descriptive error message "TOPIC_MODEL_WORKER_URL not configured" rather than silently queuing a job that will fail.
 
-- [ ] AC 12: Coverage Warning — Stale Enrollment
+- [x] AC12: Coverage Warning — Stale Enrollment
   - Given the last enrollment sync was 48 hours ago, when a pipeline is created, then the warnings array includes "Enrollment data may be stale (last synced 2 days ago)."
 
-- [ ] AC 13: Post-Gate Warning — Small Corpus
+- [x] AC13: Post-Gate Warning — Small Corpus
   - Given the sentiment gate reduces the corpus to 15 submissions (below the 30 threshold), when the gate stage completes, then a warning is added to the pipeline: "Sentiment gate reduced corpus to 15 submissions. Topic modeling results may be unreliable."
 
-- [ ] AC 14: pgvector Embedding Storage
+- [x] AC14: pgvector Embedding Storage
   - Given a completed embedding job for a submission, when the processor persists the result, then a `SubmissionEmbedding` entity is created with a 768-dimensional vector stored via pgvector's `VectorType` and `modelName: "LaBSE"`.
 
-- [ ] AC 15: Worker Contract Documentation
+- [x] AC15: Worker Contract Documentation
   - Given the three worker contract docs exist in `docs/worker-contracts/`, when a worker developer reads the sentiment contract, then the doc includes endpoint URL pattern, request schema with field descriptions, response schema, error format, and example payloads matching the Zod schema in `src/modules/analysis/dto/sentiment-worker.dto.ts`.
+
+## Review Notes
+
+- Adversarial review completed (implementation review)
+- Findings: 14 total, 12 fixed, 2 acknowledged (no role guard pattern exists in codebase for F10; code deduplication F14 deferred)
+- Resolution approach: auto-fix
+- Key fixes: batch result schema passthrough (F8), topic model payload merge (F1), embedding backfill via AnalysisService (F2/F9), class-validator decorators (F3), sentiment gate N+1 elimination (F4), enrollment scoping (F5/F6), recommendations aggregated payload (F7), embedding stage status for terminal pipelines (F11), flaky test fix (F12), misleading error message (F13)
 
 ## Additional Context
 

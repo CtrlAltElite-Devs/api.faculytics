@@ -23,7 +23,11 @@ interface JobInput {
   };
 }
 
-type SupportedQueueType = 'sentiment';
+type SupportedQueueType =
+  | 'sentiment'
+  | 'embedding'
+  | 'topic-model'
+  | 'recommendations';
 
 @Injectable()
 export class AnalysisService {
@@ -32,9 +36,16 @@ export class AnalysisService {
 
   constructor(
     @InjectQueue('sentiment') private readonly sentimentQueue: Queue,
+    @InjectQueue('embedding') private readonly embeddingQueue: Queue,
+    @InjectQueue('topic-model') private readonly topicModelQueue: Queue,
+    @InjectQueue('recommendations')
+    private readonly recommendationsQueue: Queue,
   ) {
     this.queues = {
       sentiment: this.sentimentQueue,
+      embedding: this.embeddingQueue,
+      'topic-model': this.topicModelQueue,
+      recommendations: this.recommendationsQueue,
     };
   }
 

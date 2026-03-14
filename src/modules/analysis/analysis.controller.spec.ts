@@ -3,6 +3,31 @@ import { AnalysisController } from './analysis.controller';
 import { PipelineOrchestratorService } from './services/pipeline-orchestrator.service';
 import { PipelineStatus } from './enums';
 
+const makeMockPipeline = (
+  overrides: Partial<Record<string, unknown>> = {},
+) => ({
+  id: 'p1',
+  status: PipelineStatus.AWAITING_CONFIRMATION,
+  semester: { id: 's1' },
+  faculty: undefined,
+  questionnaireVersion: undefined,
+  department: undefined,
+  program: undefined,
+  campus: undefined,
+  course: undefined,
+  triggeredBy: { id: 'u1' },
+  totalEnrolled: 100,
+  submissionCount: 50,
+  commentCount: 10,
+  responseRate: '0.5000',
+  warnings: [],
+  errorMessage: undefined,
+  createdAt: new Date('2026-01-01T00:00:00Z'),
+  confirmedAt: undefined,
+  completedAt: undefined,
+  ...overrides,
+});
+
 describe('AnalysisController', () => {
   let controller: AnalysisController;
   let mockOrchestrator: {
@@ -38,11 +63,8 @@ describe('AnalysisController', () => {
   });
 
   describe('CreatePipeline', () => {
-    it('should delegate to orchestrator with userId', async () => {
-      const mockPipeline = {
-        id: 'p1',
-        status: PipelineStatus.AWAITING_CONFIRMATION,
-      };
+    it('should delegate to orchestrator with userId and return mapped DTO', async () => {
+      const mockPipeline = makeMockPipeline();
       mockOrchestrator.CreatePipeline.mockResolvedValue(mockPipeline);
 
       const body = { semesterId: 's1' };
@@ -52,31 +74,55 @@ describe('AnalysisController', () => {
 
       const result = await controller.CreatePipeline(body, req);
 
-      expect(result).toBe(mockPipeline);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'p1',
+          status: PipelineStatus.AWAITING_CONFIRMATION,
+          semesterId: 's1',
+          triggeredById: 'u1',
+          responseRate: 0.5,
+        }),
+      );
       expect(mockOrchestrator.CreatePipeline).toHaveBeenCalledWith(body, 'u1');
     });
   });
 
   describe('ConfirmPipeline', () => {
-    it('should delegate to orchestrator', async () => {
-      const mockPipeline = { id: 'p1', status: PipelineStatus.EMBEDDING_CHECK };
+    it('should delegate to orchestrator and return mapped DTO', async () => {
+      const mockPipeline = makeMockPipeline({
+        status: PipelineStatus.EMBEDDING_CHECK,
+      });
       mockOrchestrator.ConfirmPipeline.mockResolvedValue(mockPipeline);
 
       const result = await controller.ConfirmPipeline('p1');
 
-      expect(result).toBe(mockPipeline);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'p1',
+          status: PipelineStatus.EMBEDDING_CHECK,
+          semesterId: 's1',
+        }),
+      );
       expect(mockOrchestrator.ConfirmPipeline).toHaveBeenCalledWith('p1');
     });
   });
 
   describe('CancelPipeline', () => {
-    it('should delegate to orchestrator', async () => {
-      const mockPipeline = { id: 'p1', status: PipelineStatus.CANCELLED };
+    it('should delegate to orchestrator and return mapped DTO', async () => {
+      const mockPipeline = makeMockPipeline({
+        status: PipelineStatus.CANCELLED,
+      });
       mockOrchestrator.CancelPipeline.mockResolvedValue(mockPipeline);
 
       const result = await controller.CancelPipeline('p1');
 
-      expect(result).toBe(mockPipeline);
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'p1',
+          status: PipelineStatus.CANCELLED,
+          semesterId: 's1',
+        }),
+      );
       expect(mockOrchestrator.CancelPipeline).toHaveBeenCalledWith('p1');
     });
   });

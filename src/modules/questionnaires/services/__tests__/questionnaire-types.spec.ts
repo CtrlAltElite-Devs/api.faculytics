@@ -16,6 +16,7 @@ import { QuestionnaireSchemaValidator } from '../questionnaire-schema.validator'
 import { ScoringService } from '../scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { CacheService } from '../../../common/cache/cache.service';
+import { AnalysisService } from '../../../analysis/analysis.service';
 import {
   QuestionnaireStatus,
   QuestionnaireType,
@@ -80,6 +81,10 @@ describe('QuestionnaireService - Types & Versions', () => {
             upsert: jest.fn(),
             create: jest.fn(),
           },
+        },
+        {
+          provide: AnalysisService,
+          useValue: { EnqueueJob: jest.fn() },
         },
         {
           provide: CacheService,

@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -41,9 +42,13 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { UserRole } from '../../auth/roles.enum';
 import { CacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-namespaces';
+import { AnalysisService } from '../../analysis/analysis.service';
+import { env } from 'src/configurations/env';
 
 @Injectable()
 export class QuestionnaireService {
+  private readonly logger = new Logger(QuestionnaireService.name);
+
   constructor(
     @InjectRepository(Questionnaire)
     private readonly questionnaireRepo: EntityRepository<Questionnaire>,
@@ -59,6 +64,7 @@ export class QuestionnaireService {
     private readonly scoringService: ScoringService,
     private readonly em: EntityManager,
     private readonly cacheService: CacheService,
+    private readonly analysisService: AnalysisService,
   ) {}
 
   async getQuestionnaireTypes(): Promise<QuestionnaireTypeResponse[]> {
@@ -542,6 +548,25 @@ export class QuestionnaireService {
         );
       }
       throw e;
+    }
+
+    // Fire-and-forget embedding dispatch
+    if (submission.qualitativeComment && env.EMBEDDINGS_WORKER_URL) {
+      try {
+        await this.analysisService.EnqueueJob(
+          'embedding',
+          submission.qualitativeComment,
+          {
+            submissionId: submission.id,
+            facultyId: data.facultyId,
+            versionId: data.versionId,
+          },
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to enqueue embedding for submission ${submission.id}: ${(err as Error).message}`,
+        );
+      }
     }
 
     return submission;

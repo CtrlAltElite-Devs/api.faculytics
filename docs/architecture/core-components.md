@@ -65,8 +65,13 @@ classDiagram
 
     class AnalysisModule {
         +AnalysisService
+        +AnalysisController
+        +PipelineOrchestratorService
         +SentimentProcessor
-        +BaseAnalysisProcessor
+        +TopicModelProcessor
+        +RecommendationsProcessor
+        +EmbeddingProcessor
+        +BaseBatchProcessor
     }
 
     class MoodleModule {
@@ -130,19 +135,59 @@ The `MoodleClient` enforces a 10-second timeout (`MOODLE_REQUEST_TIMEOUT_MS`) on
 
 The `MoodleLoginStrategy` catches `MoodleConnectivityError` and translates it to a `401 Unauthorized` with a user-friendly message.
 
-## 7. Analysis Job Queue
+## 7. Analysis Pipeline
 
-The `AnalysisModule` provides async job processing for AI analysis tasks using BullMQ on Redis. See [AI Inference Pipeline](./ai-inference-pipeline.md) for the full architecture.
+The `AnalysisModule` provides a multi-stage analysis pipeline that orchestrates AI processing of qualitative feedback. See [AI Inference Pipeline](./ai-inference-pipeline.md) for the full architecture and [Analysis Pipeline Workflow](../workflows/analysis-pipeline.md) for the stage-by-stage flow.
 
-**Queue-per-type pattern:** Each analysis type gets its own BullMQ queue and processor with independent concurrency, retry policies, and rate limiting.
+### Pipeline Orchestrator
 
-| Component               | Purpose                                                               |
-| ----------------------- | --------------------------------------------------------------------- |
-| `AnalysisService`       | Entry point — `EnqueueJob()` and `EnqueueBatch()` for other modules   |
-| `BaseAnalysisProcessor` | Abstract base — HTTP dispatch, Zod validation, retry, stall detection |
-| `SentimentProcessor`    | Concrete processor for sentiment analysis (extends Base)              |
+The `PipelineOrchestratorService` manages the full analysis lifecycle through a confirm-before-execute pattern:
 
-**Job flow:** `EnqueueJob()` → validates envelope with Zod → adds to BullMQ queue with deterministic ID → processor picks up job → HTTP POST to external worker → validates response with Zod → persists result.
+1. **Create** — Computes coverage stats (response rate, submission/comment counts) and generates warnings
+2. **Confirm** — Validates configuration and dispatches the first stage
+3. **Stage progression** — Each processor calls back into the orchestrator to advance to the next stage
+4. **Terminal states** — `COMPLETED`, `FAILED`, or `CANCELLED`
+
+### Components
+
+| Component                     | Purpose                                                                       |
+| ----------------------------- | ----------------------------------------------------------------------------- |
+| `PipelineOrchestratorService` | Creates pipelines, manages stage transitions, dispatches batch jobs           |
+| `AnalysisService`             | Low-level entry point — `EnqueueJob()` and `EnqueueBatch()` for ad-hoc jobs   |
+| `AnalysisController`          | REST API for pipeline CRUD (`POST/GET /analysis/pipelines`)                   |
+| `BaseBatchProcessor`          | Abstract base — HTTP dispatch, Zod validation, retry, stall detection         |
+| `SentimentProcessor`          | Batch sentiment analysis, triggers sentiment gate on completion               |
+| `TopicModelProcessor`         | Batch topic modeling with chunked assignment persistence                      |
+| `RecommendationsProcessor`    | Generates prioritized action items from aggregated analysis data              |
+| `EmbeddingProcessor`          | Per-submission embedding generation (upsert, extends `BaseAnalysisProcessor`) |
+
+### Pipeline Stages
+
+```
+AWAITING_CONFIRMATION → SENTIMENT_ANALYSIS → SENTIMENT_GATE → TOPIC_MODELING → GENERATING_RECOMMENDATIONS → COMPLETED
+```
+
+Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMPLETED` / `FAILED`).
+
+### Queue Architecture
+
+Four BullMQ queues with independent concurrency:
+
+| Queue             | Processor                  | Concurrency Default |
+| ----------------- | -------------------------- | ------------------- |
+| `sentiment`       | `SentimentProcessor`       | 3                   |
+| `embedding`       | `EmbeddingProcessor`       | 3                   |
+| `topic-model`     | `TopicModelProcessor`      | 1                   |
+| `recommendations` | `RecommendationsProcessor` | 1                   |
+
+### REST Endpoints
+
+| Method | Path                              | Description                                           |
+| ------ | --------------------------------- | ----------------------------------------------------- |
+| POST   | `/analysis/pipelines`             | Create a pipeline (returns coverage stats + warnings) |
+| POST   | `/analysis/pipelines/:id/confirm` | Confirm and start execution                           |
+| POST   | `/analysis/pipelines/:id/cancel`  | Cancel a non-terminal pipeline                        |
+| GET    | `/analysis/pipelines/:id/status`  | Get pipeline status with stage details                |
 
 **Resilience:** Exponential backoff retries, stall detection, graceful degradation when Redis is unavailable (`ServiceUnavailableException`), HTTP timeout via `AbortController`.
 

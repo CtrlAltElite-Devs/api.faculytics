@@ -16,6 +16,7 @@ import { EnrollmentsModule } from './enrollments/enrollments.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QuestionnaireModule } from './questionnaires/questionnaires.module';
 import { AnalysisModule } from './analysis/analysis.module';
+import { DimensionsModule } from './dimensions/dimensions.module';
 import { LoggerModule } from 'nestjs-pino';
 import { v4 } from 'uuid';
 
@@ -27,6 +28,7 @@ export const ApplicationModules = [
   EnrollmentsModule,
   QuestionnaireModule,
   AnalysisModule,
+  DimensionsModule,
 ];
 
 export const InfrastructureModules = [

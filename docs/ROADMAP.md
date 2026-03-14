@@ -40,14 +40,19 @@ Enabling structured feedback through a flexible domain engine and universal inge
 
 ## Phase 3: AI & Inference Pipeline
 
-Enriching qualitative feedback through asynchronous computational middleware.
+Enriching qualitative feedback through asynchronous computational middleware. See [AI Inference Pipeline](./architecture/ai-inference-pipeline.md) and [Analysis Pipeline Workflow](./workflows/analysis-pipeline.md).
 
-- [ ] **Message Queue Integration:** Asynchronous pipeline using BullMQ or RabbitMQ for inference and large-scale file ingestion.
-- [ ] **Async Inference Workers:** Dedicated consumers for computational tasks.
-- [ ] **Sentiment Analysis:** Processing qualitative responses for emotional tone.
-- [ ] **Topic Modeling & Clustering:** Grouping feedback into institutional themes.
-- [ ] **Embedding Generation:** Vector storage for semantic search and similarity analysis.
-- [ ] **Inference Versioning:** Tracking model artifacts, prompt templates, and execution metadata.
+- [x] **BullMQ Job Queue (FAC-44):** `@nestjs/bullmq` on Redis with queue-per-type pattern, retry policies, and stall detection.
+- [x] **Pipeline Orchestrator (FAC-46):** Multi-stage pipeline with confirm-before-execute pattern, coverage stats, and sequential stage progression.
+- [x] **Sentiment Analysis (FAC-46):** Batch sentiment classification with per-submission positive/neutral/negative scores.
+- [x] **Sentiment Gate (FAC-46):** Filters low-signal positive comments before topic modeling (negative/neutral always pass; positive needs ≥ 10 words).
+- [x] **Topic Modeling (FAC-46):** BERTopic-based topic discovery with keyword extraction, soft assignments, and quality metrics.
+- [x] **Embedding Generation (FAC-46):** pgvector storage (768-dim LaBSE), upsert behavior, best-effort backfill during pipeline confirmation.
+- [x] **Recommendations Engine (FAC-46):** LLM-based action recommendations from aggregated sentiment and topic data, with priority levels and supporting evidence.
+- [x] **Worker Contracts:** Typed Zod schemas for sentiment, topic model, and recommendations workers. See `docs/worker-contracts/`.
+- [x] **Inference Versioning:** Worker version tracking on all run entities for provenance.
+- [ ] **RunPod Integration:** Replace mock worker URLs with deployed RunPod/LLM endpoint URLs.
+- [ ] **Pipeline Monitoring:** Bull Board or custom dashboard for inspecting failed jobs and pipeline health.
 
 ## Phase 4: Analytics & Reporting Infrastructure
 

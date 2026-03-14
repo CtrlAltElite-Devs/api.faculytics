@@ -3,6 +3,8 @@ import { Cron, CronExpression, SchedulerRegistry } from '@nestjs/schedule';
 import { BaseJob } from 'src/crons/base.job';
 import { JobRecordType } from 'src/crons/startup-job-registry';
 import { EnrollmentSyncService } from 'src/modules/moodle/services/moodle-enrollment-sync.service';
+import { CacheService } from 'src/modules/common/cache/cache.service';
+import { CacheNamespace } from 'src/modules/common/cache/cache-namespaces';
 
 @Injectable()
 export class EnrollmentSyncJob extends BaseJob {
@@ -10,6 +12,7 @@ export class EnrollmentSyncJob extends BaseJob {
 
   constructor(
     private readonly enrollmentSyncService: EnrollmentSyncService,
+    private readonly cacheService: CacheService,
     schedulerRegistry: SchedulerRegistry,
   ) {
     super(schedulerRegistry, EnrollmentSyncJob.name);
@@ -37,6 +40,9 @@ export class EnrollmentSyncJob extends BaseJob {
 
     try {
       await this.enrollmentSyncService.syncAllCourses();
+      await this.cacheService.invalidateNamespace(
+        CacheNamespace.ENROLLMENTS_ME,
+      );
       this.logger.log(`${EnrollmentSyncJob.name} finished syncing enrollments`);
       this.isRunning = false;
       return {

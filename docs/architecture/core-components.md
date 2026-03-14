@@ -18,6 +18,9 @@ This document describes the high-level components, technology stack, and module 
 - **Authentication:** Passport.js (JWT and Refresh Token strategies)
 - **External API:** Moodle Web Services (REST)
 - **Task Scheduling:** NestJS Schedule (Cron)
+- **Caching:** `@nestjs/cache-manager` with Redis (`@keyv/redis`)
+- **Job Queue:** BullMQ (`@nestjs/bullmq`) on Redis
+- **Health Checks:** `@nestjs/terminus` with custom indicators
 - **Validation:** Zod (Environment variables), class-validator (DTOs)
 
 ## 3. Module Architecture
@@ -36,6 +39,8 @@ classDiagram
         JwtModule
         PassportModule
         ScheduleModule
+        CacheModule
+        BullModule
     }
     class ApplicationModules {
         <<Namespace>>
@@ -45,6 +50,7 @@ classDiagram
         HealthModule
         ChatKitModule
         QuestionnaireModule
+        AnalysisModule
     }
 
     AppModule --> InfrastructureModules : "imports"
@@ -55,6 +61,18 @@ classDiagram
     MoodleModule --> CommonModule : "uses UnitOfWork"
     EnrollmentsModule --> MoodleModule : "uses MoodleService"
     QuestionnaireModule --> CommonModule : "uses UnitOfWork"
+    AnalysisModule --> BullModule : "uses BullMQ queues"
+
+    class AnalysisModule {
+        +AnalysisService
+        +AnalysisController
+        +PipelineOrchestratorService
+        +SentimentProcessor
+        +TopicModelProcessor
+        +RecommendationsProcessor
+        +EmbeddingProcessor
+        +BaseBatchProcessor
+    }
 
     class MoodleModule {
         +MoodleService
@@ -100,12 +118,12 @@ Priority ranges: `0-99` core auth, `100-199` external providers, `200+` fallback
 
 Background jobs extend `BaseJob` and register in `StartupJobRegistry`. All jobs are in `src/crons/jobs/`.
 
-| Job                      | Schedule       | Purpose                                    |
-| ------------------------ | -------------- | ------------------------------------------ |
-| `CategorySyncJob`        | Startup + cron | Syncs Moodle categories to local hierarchy |
-| `CourseSyncJob`          | Startup + cron | Syncs Moodle courses                       |
-| `EnrollmentSyncJob`      | Startup + cron | Syncs user-course enrollments and roles    |
-| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days    |
+| Job                      | Schedule       | Purpose                                                               |
+| ------------------------ | -------------- | --------------------------------------------------------------------- |
+| `CategorySyncJob`        | Startup + cron | Syncs Moodle categories to local hierarchy                            |
+| `CourseSyncJob`          | Startup + cron | Syncs Moodle courses                                                  |
+| `EnrollmentSyncJob`      | Startup + cron | Syncs user-course enrollments and roles; invalidates enrollment cache |
+| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days                               |
 
 ## 6. Moodle Connectivity & Error Handling
 
@@ -117,7 +135,76 @@ The `MoodleClient` enforces a 10-second timeout (`MOODLE_REQUEST_TIMEOUT_MS`) on
 
 The `MoodleLoginStrategy` catches `MoodleConnectivityError` and translates it to a `401 Unauthorized` with a user-friendly message.
 
-## 7. Startup & Initialization Flow
+## 7. Analysis Pipeline
+
+The `AnalysisModule` provides a multi-stage analysis pipeline that orchestrates AI processing of qualitative feedback. See [AI Inference Pipeline](./ai-inference-pipeline.md) for the full architecture and [Analysis Pipeline Workflow](../workflows/analysis-pipeline.md) for the stage-by-stage flow.
+
+### Pipeline Orchestrator
+
+The `PipelineOrchestratorService` manages the full analysis lifecycle through a confirm-before-execute pattern:
+
+1. **Create** — Computes coverage stats (response rate, submission/comment counts) and generates warnings
+2. **Confirm** — Validates configuration and dispatches the first stage
+3. **Stage progression** — Each processor calls back into the orchestrator to advance to the next stage
+4. **Terminal states** — `COMPLETED`, `FAILED`, or `CANCELLED`
+
+### Components
+
+| Component                     | Purpose                                                                       |
+| ----------------------------- | ----------------------------------------------------------------------------- |
+| `PipelineOrchestratorService` | Creates pipelines, manages stage transitions, dispatches batch jobs           |
+| `AnalysisService`             | Low-level entry point — `EnqueueJob()` and `EnqueueBatch()` for ad-hoc jobs   |
+| `AnalysisController`          | REST API for pipeline CRUD (`POST/GET /analysis/pipelines`)                   |
+| `BaseBatchProcessor`          | Abstract base — HTTP dispatch, Zod validation, retry, stall detection         |
+| `SentimentProcessor`          | Batch sentiment analysis, triggers sentiment gate on completion               |
+| `TopicModelProcessor`         | Batch topic modeling with chunked assignment persistence                      |
+| `RecommendationsProcessor`    | Generates prioritized action items from aggregated analysis data              |
+| `EmbeddingProcessor`          | Per-submission embedding generation (upsert, extends `BaseAnalysisProcessor`) |
+
+### Pipeline Stages
+
+```
+AWAITING_CONFIRMATION → SENTIMENT_ANALYSIS → SENTIMENT_GATE → TOPIC_MODELING → GENERATING_RECOMMENDATIONS → COMPLETED
+```
+
+Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMPLETED` / `FAILED`).
+
+### Queue Architecture
+
+Four BullMQ queues with independent concurrency:
+
+| Queue             | Processor                  | Concurrency Default |
+| ----------------- | -------------------------- | ------------------- |
+| `sentiment`       | `SentimentProcessor`       | 3                   |
+| `embedding`       | `EmbeddingProcessor`       | 3                   |
+| `topic-model`     | `TopicModelProcessor`      | 1                   |
+| `recommendations` | `RecommendationsProcessor` | 1                   |
+
+### REST Endpoints
+
+| Method | Path                              | Description                                           |
+| ------ | --------------------------------- | ----------------------------------------------------- |
+| POST   | `/analysis/pipelines`             | Create a pipeline (returns coverage stats + warnings) |
+| POST   | `/analysis/pipelines/:id/confirm` | Confirm and start execution                           |
+| POST   | `/analysis/pipelines/:id/cancel`  | Cancel a non-terminal pipeline                        |
+| GET    | `/analysis/pipelines/:id/status`  | Get pipeline status with stage details                |
+
+**Resilience:** Exponential backoff retries, stall detection, graceful degradation when Redis is unavailable (`ServiceUnavailableException`), HTTP timeout via `AbortController`.
+
+**Local development:** `docker compose up` starts Redis and a mock worker (Hono HTTP server on port 3001) that simulates worker responses.
+
+## 8. Health Checks
+
+The `HealthModule` uses `@nestjs/terminus` to provide structured health checks at `GET /health`:
+
+| Indicator  | Checks                                  |
+| ---------- | --------------------------------------- |
+| `database` | `SELECT 1` via MikroORM `EntityManager` |
+| `redis`    | Read/write test via cache manager       |
+
+Returns HTTP 200 with `status: 'ok'` when healthy, HTTP 503 with `status: 'error'` and per-indicator details when unhealthy.
+
+## 9. Startup & Initialization Flow
 
 The application enforces a strict initialization sequence in `InitializeDatabase` before it begins accepting traffic. This ensures that the database schema and required infrastructure state are always synchronized with the code.
 

@@ -13,6 +13,7 @@ Faculytics API is a NestJS backend for an analytics platform that integrates wit
 npm run start:dev          # Start with watch mode
 npm run build              # Build the project
 npm run lint               # Lint and auto-fix
+docker compose up          # Start Redis + mock worker for local dev
 
 # Testing
 npm run test               # Run unit tests
@@ -32,8 +33,8 @@ npx mikro-orm migration:list     # Check migration status
 
 The app uses a split between **Infrastructure** and **Application** modules (`src/modules/index.module.ts`):
 
-- **InfrastructureModules**: ConfigModule, PassportModule, MikroOrmModule, JwtModule, ScheduleModule
-- **ApplicationModules**: HealthModule, MoodleModule, AuthModule, ChatKitModule, EnrollmentsModule, QuestionnaireModule
+- **InfrastructureModules**: ConfigModule, PassportModule, MikroOrmModule, JwtModule, ScheduleModule, BullModule, TerminusModule
+- **ApplicationModules**: HealthModule, MoodleModule, AuthModule, ChatKitModule, EnrollmentsModule, QuestionnaireModule, AnalysisModule
 
 ### Key Patterns
 
@@ -75,6 +76,16 @@ The app uses a split between **Infrastructure** and **Application** modules (`sr
   - `CourseSyncJob`: Syncs Moodle courses
   - `EnrollmentSyncJob`: Syncs user-course enrollments
   - `RefreshTokenCleanupJob`: Purges expired refresh tokens every 12 hours (7-day retention)
+
+### Analysis Job Queue
+
+BullMQ on Redis provides async job processing for AI analysis tasks:
+
+- **Queue-per-type pattern**: Each analysis type (sentiment, topic model, embeddings) gets its own BullMQ queue and processor
+- **Entry points**: `AnalysisService.EnqueueJob()` and `EnqueueBatch()` — other modules use these to dispatch analysis jobs
+- **BaseAnalysisProcessor**: Abstract base class handling HTTP dispatch to external workers, Zod validation of responses, retry/error handling, and observability events
+- **Mock worker**: `mock-worker/` directory contains a Hono HTTP server mimicking worker responses for local dev
+- **Local dev**: `docker compose up` starts Redis and mock worker
 
 ### Ingestion Engine
 
@@ -139,6 +150,7 @@ Required environment variables (see `.env.sample`):
 - `JWT_SECRET`, `REFRESH_SECRET`: Token signing secrets
 - `CORS_ORIGINS`: JSON array of allowed origins
 - `OPENAI_API_KEY`: OpenAI API key (for ChatKit module)
+- `REDIS_URL`: Redis connection URL (used for caching and job queues)
 
 Optional:
 
@@ -146,3 +158,9 @@ Optional:
 - `SYNC_ON_STARTUP`: Set to `"true"` to run Course and Enrollment sync on startup (default: disabled)
 - `SUPER_ADMIN_USERNAME`: Default super admin username (default: `superadmin`)
 - `SUPER_ADMIN_PASSWORD`: Default super admin password (default: `password123`)
+- `BULLMQ_DEFAULT_ATTEMPTS`: Job retry attempts (default: `3`)
+- `BULLMQ_DEFAULT_BACKOFF_MS`: Initial backoff delay in ms (default: `5000`)
+- `BULLMQ_DEFAULT_TIMEOUT_MS`: Job-level timeout in ms (default: `120000`)
+- `BULLMQ_HTTP_TIMEOUT_MS`: HTTP request timeout in ms (default: `90000`)
+- `BULLMQ_SENTIMENT_CONCURRENCY`: Sentiment processor concurrency (default: `3`)
+- `SENTIMENT_WORKER_URL`: RunPod/mock worker URL for sentiment analysis

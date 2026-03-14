@@ -9,18 +9,23 @@ import {
   Query,
   Request,
   UseInterceptors,
+  UseGuards,
 } from '@nestjs/common';
 import { QuestionnaireService } from './services/questionnaire.service';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CreateQuestionnaireRequest } from './dto/requests/create-questionnaire-request.dto';
 import { CreateVersionRequest } from './dto/requests/create-version-request.dto';
+import { UpdateVersionRequest } from './dto/requests/update-version-request.dto';
 import { SubmitQuestionnaireRequest } from './dto/requests/submit-questionnaire-request.dto';
 import { SaveDraftRequest } from './dto/requests/save-draft-request.dto';
 import { GetDraftRequest } from './dto/requests/get-draft-request.dto';
 import { GetVersionsByTypeParam } from './dto/requests/get-versions-by-type-request.dto';
 import { QuestionnaireVersionsResponse } from './dto/responses/questionnaire-version-response.dto';
+import { QuestionnaireVersionDetailResponse } from './dto/responses/questionnaire-version-detail-response.dto';
 import { DraftResponse } from './dto/responses/draft-response.dto';
-import { UseJwtGuard } from 'src/security/decorators';
+import { UseJwtGuard, Roles } from 'src/security/decorators';
+import { RolesGuard } from 'src/security/guards/roles.guard';
+import { UserRole } from '../auth/roles.enum';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
 import type { AuthenticatedRequest } from '../common/interceptors/http/authenticated-request';
 
@@ -96,6 +101,47 @@ export class QuestionnaireController {
   @ApiResponse({ status: 404, description: 'Version not found' })
   async deprecateVersion(@Param('versionId') versionId: string) {
     return this.questionnaireService.DeprecateVersion(versionId);
+  }
+
+  @Get('versions/:versionId')
+  @UseJwtGuard()
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @UseGuards(RolesGuard)
+  @ApiOperation({ summary: 'Get a questionnaire version by ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Version found',
+    type: QuestionnaireVersionDetailResponse,
+  })
+  @ApiResponse({ status: 404, description: 'Version not found' })
+  async getVersionById(
+    @Param('versionId') versionId: string,
+  ): Promise<QuestionnaireVersionDetailResponse> {
+    const version = await this.questionnaireService.GetVersionById(versionId);
+    return QuestionnaireVersionDetailResponse.Map(version);
+  }
+
+  @Patch('versions/:versionId')
+  @UseJwtGuard()
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @UseGuards(RolesGuard)
+  @ApiOperation({ summary: 'Update a draft questionnaire version' })
+  @ApiResponse({
+    status: 200,
+    description: 'Version updated successfully',
+    type: QuestionnaireVersionDetailResponse,
+  })
+  @ApiResponse({ status: 400, description: 'Version is not a draft' })
+  @ApiResponse({ status: 404, description: 'Version not found' })
+  async updateDraftVersion(
+    @Param('versionId') versionId: string,
+    @Body() data: UpdateVersionRequest,
+  ): Promise<QuestionnaireVersionDetailResponse> {
+    const version = await this.questionnaireService.UpdateDraftVersion(
+      versionId,
+      { schema: data.schema, title: data.title },
+    );
+    return QuestionnaireVersionDetailResponse.Map(version);
   }
 
   @Post('submissions')

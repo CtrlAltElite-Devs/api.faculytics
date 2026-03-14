@@ -289,6 +289,53 @@ export class QuestionnaireService {
     return version;
   }
 
+  async GetVersionById(versionId: string): Promise<QuestionnaireVersion> {
+    const version = await this.versionRepo.findOne(versionId, {
+      populate: ['questionnaire'],
+    });
+
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${versionId} not found.`,
+      );
+    }
+
+    return version;
+  }
+
+  async UpdateDraftVersion(
+    versionId: string,
+    data: { schema: QuestionnaireSchemaSnapshot; title?: string },
+  ): Promise<QuestionnaireVersion> {
+    const version = await this.versionRepo.findOne(versionId, {
+      populate: ['questionnaire'],
+    });
+
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${versionId} not found.`,
+      );
+    }
+
+    if (version.status !== QuestionnaireStatus.DRAFT) {
+      throw new BadRequestException('Only draft versions can be updated.');
+    }
+
+    version.schemaSnapshot = data.schema;
+
+    if (data.title !== undefined) {
+      version.questionnaire.title = data.title;
+    }
+
+    await this.em.flush();
+    await this.cacheService.invalidateNamespaces(
+      CacheNamespace.QUESTIONNAIRE_TYPES,
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+    );
+
+    return version;
+  }
+
   async GetLatestActiveVersion(questionnaireId: string) {
     const questionnaire = await this.questionnaireRepo.findOne(questionnaireId);
 

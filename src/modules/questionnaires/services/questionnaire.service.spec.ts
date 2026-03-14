@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { env } from 'src/configurations/env';
 import { Test, TestingModule } from '@nestjs/testing';
 import { QuestionnaireService } from './questionnaire.service';
@@ -818,6 +819,121 @@ describe('QuestionnaireService', () => {
       const result = await service.ListMyDrafts(RESPONDENT_ID);
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('GetVersionById', () => {
+    it('should throw NotFoundException if version is not found', async () => {
+      versionRepo.findOne.mockResolvedValue(null);
+      await expect(service.GetVersionById('v1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should return version with populated questionnaire', async () => {
+      const mockVersion = {
+        id: 'v1',
+        questionnaire: {
+          id: 'q1',
+          title: 'Test',
+          type: 'FACULTY_IN_CLASSROOM',
+        },
+        versionNumber: 1,
+        status: QuestionnaireStatus.DRAFT,
+        isActive: false,
+        schemaSnapshot: { sections: [] },
+      };
+      versionRepo.findOne.mockResolvedValue(mockVersion as any);
+
+      const result = await service.GetVersionById('v1');
+
+      expect(result).toEqual(mockVersion);
+      expect(versionRepo.findOne).toHaveBeenCalledWith('v1', {
+        populate: ['questionnaire'],
+      });
+    });
+  });
+
+  describe('UpdateDraftVersion', () => {
+    const mockSchema = {
+      meta: {
+        questionnaireType: 'FACULTY_IN_CLASSROOM',
+        version: 1,
+        maxScore: 5,
+      },
+      sections: [{ id: 'sec1', questions: [] }],
+    };
+
+    it('should throw NotFoundException if version is not found', async () => {
+      versionRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.UpdateDraftVersion('v1', { schema: mockSchema as any }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if version is not a draft', async () => {
+      versionRepo.findOne.mockResolvedValue({
+        id: 'v1',
+        status: QuestionnaireStatus.ACTIVE,
+        questionnaire: { id: 'q1', title: 'Test' },
+      } as any);
+
+      await expect(
+        service.UpdateDraftVersion('v1', { schema: mockSchema as any }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should update schema successfully', async () => {
+      const mockVersion = {
+        id: 'v1',
+        status: QuestionnaireStatus.DRAFT,
+        schemaSnapshot: { sections: [] },
+        questionnaire: { id: 'q1', title: 'Original Title' },
+      };
+      versionRepo.findOne.mockResolvedValue(mockVersion as any);
+
+      const result = await service.UpdateDraftVersion('v1', {
+        schema: mockSchema as any,
+      });
+
+      expect(result.schemaSnapshot).toEqual(mockSchema);
+      expect(result.questionnaire.title).toBe('Original Title');
+      expect(em.flush).toHaveBeenCalled();
+    });
+
+    it('should update both schema and title when title is provided', async () => {
+      const mockVersion = {
+        id: 'v1',
+        status: QuestionnaireStatus.DRAFT,
+        schemaSnapshot: { sections: [] },
+        questionnaire: { id: 'q1', title: 'Original Title' },
+      };
+      versionRepo.findOne.mockResolvedValue(mockVersion as any);
+
+      const result = await service.UpdateDraftVersion('v1', {
+        schema: mockSchema as any,
+        title: 'New Title',
+      });
+
+      expect(result.schemaSnapshot).toEqual(mockSchema);
+      expect(result.questionnaire.title).toBe('New Title');
+      expect(em.flush).toHaveBeenCalled();
+    });
+
+    it('should not update title when title is omitted', async () => {
+      const mockVersion = {
+        id: 'v1',
+        status: QuestionnaireStatus.DRAFT,
+        schemaSnapshot: { sections: [] },
+        questionnaire: { id: 'q1', title: 'Original Title' },
+      };
+      versionRepo.findOne.mockResolvedValue(mockVersion as any);
+
+      await service.UpdateDraftVersion('v1', {
+        schema: mockSchema as any,
+      });
+
+      expect(mockVersion.questionnaire.title).toBe('Original Title');
     });
   });
 

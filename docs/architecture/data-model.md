@@ -44,6 +44,29 @@ erDiagram
 
     CHATKIT_THREAD ||--o{ CHATKIT_THREAD_ITEM : "contains"
 
+    ANALYSIS_PIPELINE ||--o{ SENTIMENT_RUN : "has"
+    ANALYSIS_PIPELINE ||--o{ TOPIC_MODEL_RUN : "has"
+    ANALYSIS_PIPELINE ||--o{ RECOMMENDATION_RUN : "has"
+    ANALYSIS_PIPELINE }|--|| SEMESTER : "scoped to"
+    ANALYSIS_PIPELINE }o--o| USER : "faculty (optional)"
+    ANALYSIS_PIPELINE }o--o| QUESTIONNAIRE_VERSION : "version (optional)"
+    ANALYSIS_PIPELINE }o--o| DEPARTMENT : "dept (optional)"
+    ANALYSIS_PIPELINE }o--o| PROGRAM : "program (optional)"
+    ANALYSIS_PIPELINE }o--o| CAMPUS : "campus (optional)"
+    ANALYSIS_PIPELINE }o--o| COURSE : "course (optional)"
+    ANALYSIS_PIPELINE }|--|| USER : "triggered by"
+
+    SENTIMENT_RUN ||--o{ SENTIMENT_RESULT : "contains"
+    SENTIMENT_RESULT }|--|| QUESTIONNAIRE_SUBMISSION : "analyzes"
+
+    TOPIC_MODEL_RUN ||--o{ TOPIC : "discovers"
+    TOPIC ||--o{ TOPIC_ASSIGNMENT : "has"
+    TOPIC_ASSIGNMENT }|--|| QUESTIONNAIRE_SUBMISSION : "assigns"
+
+    RECOMMENDATION_RUN ||--o{ RECOMMENDED_ACTION : "generates"
+
+    QUESTIONNAIRE_SUBMISSION ||--o| SUBMISSION_EMBEDDING : "embedded as"
+
     USER {
         uuid id
         string userName UK
@@ -225,6 +248,112 @@ erDiagram
         string description "nullable"
     }
 
+    ANALYSIS_PIPELINE {
+        uuid id
+        uuid semesterId
+        uuid facultyId "nullable"
+        uuid questionnaireVersionId "nullable"
+        uuid departmentId "nullable"
+        uuid programId "nullable"
+        uuid campusId "nullable"
+        uuid courseId "nullable"
+        uuid triggeredById
+        int totalEnrolled
+        int submissionCount
+        int commentCount
+        decimal responseRate "10,4"
+        text[] warnings
+        int sentimentGateIncluded "nullable"
+        int sentimentGateExcluded "nullable"
+        enum status "PipelineStatus"
+        text errorMessage "nullable"
+        date confirmedAt "nullable"
+        date completedAt "nullable"
+    }
+
+    SENTIMENT_RUN {
+        uuid id
+        uuid pipelineId
+        int submissionCount
+        string workerVersion "nullable"
+        string jobId "nullable"
+        enum status "RunStatus"
+        date completedAt "nullable"
+    }
+
+    SENTIMENT_RESULT {
+        uuid id
+        uuid runId
+        uuid submissionId
+        decimal positiveScore "10,4"
+        decimal neutralScore "10,4"
+        decimal negativeScore "10,4"
+        string label
+        jsonb rawResult
+        boolean passedTopicGate
+        date processedAt
+    }
+
+    TOPIC_MODEL_RUN {
+        uuid id
+        uuid pipelineId
+        int submissionCount
+        int topicCount
+        int outlierCount
+        jsonb modelParams "nullable"
+        jsonb metrics "nullable"
+        string workerVersion "nullable"
+        string jobId "nullable"
+        enum status "RunStatus"
+        date completedAt "nullable"
+    }
+
+    TOPIC {
+        uuid id
+        uuid runId
+        int topicIndex
+        string rawLabel
+        string label "nullable"
+        text[] keywords
+        int docCount
+    }
+
+    TOPIC_ASSIGNMENT {
+        uuid id
+        uuid topicId
+        uuid submissionId
+        decimal probability "10,4"
+        boolean isDominant
+    }
+
+    RECOMMENDATION_RUN {
+        uuid id
+        uuid pipelineId
+        int submissionCount
+        int sentimentCoverage
+        int topicCoverage
+        string workerVersion "nullable"
+        string jobId "nullable"
+        enum status "RunStatus"
+        date completedAt "nullable"
+    }
+
+    RECOMMENDED_ACTION {
+        uuid id
+        uuid runId
+        string category
+        text actionText
+        enum priority "ActionPriority"
+        jsonb supportingEvidence
+    }
+
+    SUBMISSION_EMBEDDING {
+        uuid id
+        uuid submissionId
+        vector embedding "768-dim"
+        string modelName
+    }
+
     CHATKIT_THREAD {
         string id PK
         uuid userId
@@ -252,6 +381,14 @@ erDiagram
 - **Questionnaire Version:** Composite unique on `(questionnaire, versionNumber)`.
 - **Questionnaire Submission:** Composite unique on `(respondent, faculty, questionnaireVersion, semester, course)`. Indexed on `(faculty, semester)`, `(department, semester)`, `(program, semester)`, `(campus, semester)`.
 - **Questionnaire Draft:** Partial unique indexes handling nullable `course_id` and soft deletes.
+
+### Analytics Pipeline Indexes
+
+- **Analysis Pipeline:** Composite index on `(semester, status)` for scoped pipeline lookups.
+- **Sentiment Run / Topic Model Run / Recommendation Run:** Indexed on `pipeline` for per-pipeline run queries.
+- **Sentiment Result:** Indexed on `run` and `submission` for gate processing and per-submission lookups.
+- **Topic / Topic Assignment:** Indexed on `run` / `topic` / `submission` for topic model result traversal.
+- **Submission Embedding:** Indexed on `submission` for upsert lookups. Uses `pgvector` `VectorType` (768-dim).
 
 ### Institutional Snapshots
 

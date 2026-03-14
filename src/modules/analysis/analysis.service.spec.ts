@@ -9,6 +9,9 @@ import { AnalysisService } from './analysis.service';
 describe('AnalysisService', () => {
   let service: AnalysisService;
   let sentimentQueue: { add: jest.Mock; addBulk: jest.Mock };
+  let embeddingQueue: { add: jest.Mock; addBulk: jest.Mock };
+  let topicModelQueue: { add: jest.Mock; addBulk: jest.Mock };
+  let recommendationsQueue: { add: jest.Mock; addBulk: jest.Mock };
 
   const metadata = {
     submissionId: 's1',
@@ -16,16 +19,27 @@ describe('AnalysisService', () => {
     versionId: 'v1',
   };
 
+  const createMockQueue = () => ({
+    add: jest.fn().mockResolvedValue({ id: 'mock-id' }),
+    addBulk: jest.fn().mockResolvedValue([]),
+  });
+
   beforeEach(async () => {
-    sentimentQueue = {
-      add: jest.fn().mockResolvedValue({ id: 's1:sentiment' }),
-      addBulk: jest.fn().mockResolvedValue([]),
-    };
+    sentimentQueue = createMockQueue();
+    embeddingQueue = createMockQueue();
+    topicModelQueue = createMockQueue();
+    recommendationsQueue = createMockQueue();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalysisService,
         { provide: getQueueToken('sentiment'), useValue: sentimentQueue },
+        { provide: getQueueToken('embedding'), useValue: embeddingQueue },
+        { provide: getQueueToken('topic-model'), useValue: topicModelQueue },
+        {
+          provide: getQueueToken('recommendations'),
+          useValue: recommendationsQueue,
+        },
       ],
     }).compile();
 
@@ -63,6 +77,15 @@ describe('AnalysisService', () => {
       expect(envelope.jobId).toBeDefined();
       expect(envelope.publishedAt).toBeDefined();
       expect(opts.jobId).toBe('s1:sentiment');
+    });
+
+    it('should add a job to the embedding queue', async () => {
+      await service.EnqueueJob('embedding', 'Some text', metadata);
+
+      expect(embeddingQueue.add).toHaveBeenCalledTimes(1);
+      const call = embeddingQueue.add.mock.calls[0] as unknown[];
+      const opts = call[2] as Record<string, unknown>;
+      expect(opts.jobId).toBe('s1:embedding');
     });
 
     it('should use deterministic job ID based on submissionId and type', async () => {

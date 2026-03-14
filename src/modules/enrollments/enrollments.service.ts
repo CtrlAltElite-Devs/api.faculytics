@@ -2,14 +2,32 @@ import { EntityManager } from '@mikro-orm/core';
 import { Injectable } from '@nestjs/common';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { User } from 'src/entities/user.entity';
+import { CacheService } from '../common/cache/cache.service';
+import { CacheNamespace } from '../common/cache/cache-namespaces';
 import { FacultyShortResponseDto } from './dto/responses/faculty-short.response.dto';
 import { MyEnrollmentsResponseDto } from './dto/responses/my-enrollments.response.dto';
 
 @Injectable()
 export class EnrollmentsService {
-  constructor(private readonly em: EntityManager) {}
+  constructor(
+    private readonly em: EntityManager,
+    private readonly cacheService: CacheService,
+  ) {}
 
   async getMyEnrollments(
+    user: User,
+    page: number,
+    limit: number,
+  ): Promise<MyEnrollmentsResponseDto> {
+    return this.cacheService.wrap(
+      CacheNamespace.ENROLLMENTS_ME,
+      `${user.id}:${page}:${limit}`,
+      () => this.fetchMyEnrollments(user, page, limit),
+      1800000,
+    );
+  }
+
+  private async fetchMyEnrollments(
     user: User,
     page: number,
     limit: number,
@@ -37,6 +55,7 @@ export class EnrollmentsService {
           moodleCourseId: e.course.moodleCourseId,
           shortname: e.course.shortname,
           fullname: e.course.fullname,
+          courseImage: e.course.courseImage ?? undefined,
         },
         faculty: facultyMap.get(e.course.id) ?? null,
       })),

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
+import { env } from 'src/configurations/env';
 import { Test, TestingModule } from '@nestjs/testing';
 import { QuestionnaireService } from './questionnaire.service';
 import { getRepositoryToken } from '@mikro-orm/nestjs';
@@ -17,6 +18,8 @@ import {
 import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { CacheService } from '../../common/cache/cache.service';
+import { AnalysisService } from '../../analysis/analysis.service';
 import {
   BadRequestException,
   ConflictException,
@@ -37,6 +40,7 @@ describe('QuestionnaireService', () => {
   let enrollmentRepo: jest.Mocked<EntityRepository<Enrollment>>;
   let versionRepo: jest.Mocked<EntityRepository<QuestionnaireVersion>>;
   let questionnaireRepo: jest.Mocked<EntityRepository<Questionnaire>>;
+  let analysisService: { EnqueueJob: jest.Mock };
 
   const RESPONDENT_ID = 'r1';
   const FACULTY_ID = 'f1';
@@ -114,6 +118,24 @@ describe('QuestionnaireService', () => {
               ),
           },
         },
+        {
+          provide: CacheService,
+          useValue: {
+            wrap: jest
+              .fn()
+              .mockImplementation(
+                (_ns: string, _key: string, fn: () => Promise<unknown>) => fn(),
+              ),
+            invalidateNamespace: jest.fn(),
+            invalidateNamespaces: jest.fn(),
+          },
+        },
+        {
+          provide: AnalysisService,
+          useValue: {
+            EnqueueJob: jest.fn().mockResolvedValue('mock-job-id'),
+          },
+        },
       ],
     }).compile();
 
@@ -124,6 +146,7 @@ describe('QuestionnaireService', () => {
     enrollmentRepo = module.get(getRepositoryToken(Enrollment));
     versionRepo = module.get(getRepositoryToken(QuestionnaireVersion));
     questionnaireRepo = module.get(getRepositoryToken(Questionnaire));
+    analysisService = module.get(AnalysisService);
   });
 
   it('should be defined', () => {
@@ -335,6 +358,55 @@ describe('QuestionnaireService', () => {
       expect(em.persist).toHaveBeenCalled();
       expect(em.flush).toHaveBeenCalled();
       expect(result.facultyEmployeeNumberSnapshot).toBe('fac123');
+    });
+
+    it('should enqueue embedding job when submission has qualitative comment and worker URL is configured', async () => {
+      enrollmentRepo.findOne.mockResolvedValue({ isActive: true } as any);
+      submissionRepo.findOne.mockResolvedValue(null);
+
+      const dataWithComment = {
+        ...mockData,
+        qualitativeComment: 'Great professor, very helpful and knowledgeable.',
+      };
+
+      // Temporarily set env.EMBEDDINGS_WORKER_URL for this test
+      const originalUrl = env.EMBEDDINGS_WORKER_URL;
+      (env as Record<string, unknown>).EMBEDDINGS_WORKER_URL =
+        'http://mock-worker:8000/embed';
+      try {
+        await service.submitQuestionnaire(dataWithComment);
+        expect(analysisService.EnqueueJob).toHaveBeenCalledTimes(1);
+      } finally {
+        (env as Record<string, unknown>).EMBEDDINGS_WORKER_URL = originalUrl;
+      }
+    });
+
+    it('should not enqueue embedding when no qualitative comment', async () => {
+      enrollmentRepo.findOne.mockResolvedValue({ isActive: true } as any);
+      submissionRepo.findOne.mockResolvedValue(null);
+
+      await service.submitQuestionnaire(mockData);
+
+      // Without a qualitative comment, no embedding should be enqueued
+      // The condition checks for qualitativeComment existence
+      expect(analysisService.EnqueueJob).not.toHaveBeenCalled();
+    });
+
+    it('should succeed even if embedding dispatch fails', async () => {
+      enrollmentRepo.findOne.mockResolvedValue({ isActive: true } as any);
+      submissionRepo.findOne.mockResolvedValue(null);
+      analysisService.EnqueueJob.mockRejectedValue(
+        new Error('Redis unavailable'),
+      );
+
+      const dataWithComment = {
+        ...mockData,
+        qualitativeComment: 'Test comment for embedding failure',
+      };
+
+      // Should not throw — embedding is fire-and-forget
+      const result = await service.submitQuestionnaire(dataWithComment);
+      expect(result).toBeDefined();
     });
 
     it('should allow Dean to submit without enrollment', async () => {

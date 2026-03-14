@@ -18,6 +18,15 @@ import { QuestionnaireAnswer } from './questionnaire-answer.entity';
 import { QuestionnaireDraft } from './questionnaire-draft.entity';
 import { UserInstitutionalRole } from './user-institutional-role.entity';
 import { SystemConfig } from './system-config.entity';
+import { AnalysisPipeline } from './analysis-pipeline.entity';
+import { RecommendationRun } from './recommendation-run.entity';
+import { RecommendedAction } from './recommended-action.entity';
+import { SentimentResult } from './sentiment-result.entity';
+import { SentimentRun } from './sentiment-run.entity';
+import { SubmissionEmbedding } from './submission-embedding.entity';
+import { Topic } from './topic.entity';
+import { TopicAssignment } from './topic-assignment.entity';
+import { TopicModelRun } from './topic-model-run.entity';
 
 export {
   ChatKitThread,
@@ -40,6 +49,15 @@ export {
   RefreshToken,
   UserInstitutionalRole,
   SystemConfig,
+  AnalysisPipeline,
+  RecommendationRun,
+  RecommendedAction,
+  SentimentResult,
+  SentimentRun,
+  SubmissionEmbedding,
+  Topic,
+  TopicAssignment,
+  TopicModelRun,
 };
 
 export const entities = [
@@ -63,4 +81,13 @@ export const entities = [
   QuestionnaireDraft,
   UserInstitutionalRole,
   SystemConfig,
+  AnalysisPipeline,
+  RecommendationRun,
+  RecommendedAction,
+  SentimentResult,
+  SentimentRun,
+  SubmissionEmbedding,
+  Topic,
+  TopicAssignment,
+  TopicModelRun,
 ];

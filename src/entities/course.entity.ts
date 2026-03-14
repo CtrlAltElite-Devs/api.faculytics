@@ -32,4 +32,7 @@ export class Course extends CustomBaseEntity {
 
   @Property({ default: true })
   isActive!: boolean;
+
+  @Property({ nullable: true })
+  courseImage?: string;
 }

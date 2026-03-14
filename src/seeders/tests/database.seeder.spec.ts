@@ -3,8 +3,10 @@ import { InfrastructureSeeder } from '../infrastructure/infrastructure.seeder';
 import { DimensionSeeder } from '../infrastructure/dimension.seeder';
 import { UserSeeder } from '../infrastructure/user.seeder';
 import { SystemConfigSeeder } from '../infrastructure/system-config.seeder';
+import { QuestionnaireSeeder } from '../infrastructure/questionnaire.seeder';
 import { User } from '../../entities/user.entity';
 import { SystemConfig } from '../../entities/system-config.entity';
+import { Questionnaire } from '../../entities/questionnaire.entity';
 import { UserRole } from '../../modules/auth/roles.enum';
 
 describe('DatabaseSeeders', () => {
@@ -75,6 +77,31 @@ describe('DatabaseSeeders', () => {
     });
   });
 
+  describe('QuestionnaireSeeder', () => {
+    it('should create 3 questionnaires and 3 versions when none exist', async () => {
+      const seeder = new QuestionnaireSeeder();
+      em.findOne.mockResolvedValue(null);
+
+      await seeder.run(em);
+
+      // 3 questionnaires + 3 versions = 6 persist calls
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(em.persist).toHaveBeenCalledTimes(6);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(em.persist).toHaveBeenCalledWith(expect.any(Questionnaire));
+    });
+
+    it('should skip when questionnaires already exist', async () => {
+      const seeder = new QuestionnaireSeeder();
+      em.findOne.mockResolvedValue(new Questionnaire());
+
+      await seeder.run(em);
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(em.persist).not.toHaveBeenCalled();
+    });
+  });
+
   describe('InfrastructureSeeder (Integration)', () => {
     it('should call sub-seeders', async () => {
       const infraSeeder = new InfrastructureSeeder();
@@ -88,6 +115,7 @@ describe('DatabaseSeeders', () => {
         DimensionSeeder,
         UserSeeder,
         SystemConfigSeeder,
+        QuestionnaireSeeder,
       ]);
     });
   });

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EnrollmentsService } from './enrollments.service';
 import { EntityManager } from '@mikro-orm/core';
 import { User } from 'src/entities/user.entity';
+import { CacheService } from '../common/cache/cache.service';
 
 describe('EnrollmentsService', () => {
   let service: EnrollmentsService;
@@ -16,6 +17,18 @@ describe('EnrollmentsService', () => {
           useValue: {
             findAndCount: jest.fn(),
             find: jest.fn(),
+          },
+        },
+        {
+          provide: CacheService,
+          useValue: {
+            wrap: jest
+              .fn()
+              .mockImplementation(
+                (_ns: string, _key: string, fn: () => Promise<unknown>) => fn(),
+              ),
+            invalidateNamespace: jest.fn(),
+            invalidateNamespaces: jest.fn(),
           },
         },
       ],
@@ -40,6 +53,7 @@ describe('EnrollmentsService', () => {
           moodleCourseId: 101,
           shortname: 'CS101',
           fullname: 'Intro to CS',
+          courseImage: 'https://example.com/course.jpg',
         },
       },
     ];
@@ -93,6 +107,7 @@ describe('EnrollmentsService', () => {
           moodleCourseId: 101,
           shortname: 'CS101',
           fullname: 'Intro to CS',
+          courseImage: null,
         },
       },
     ];

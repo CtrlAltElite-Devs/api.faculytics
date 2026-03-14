@@ -108,6 +108,7 @@ export class MoodleUserHydrationService {
             isVisible: remoteCourse.visible === 1,
             timeModified: new Date(remoteCourse.timemodified * 1000),
             isActive: true,
+            courseImage: remoteCourse.courseimage ?? null,
           },
           { managed: false },
         );
@@ -122,6 +123,7 @@ export class MoodleUserHydrationService {
             'isVisible',
             'timeModified',
             'isActive',
+            'courseImage',
             'updatedAt',
           ],
         });

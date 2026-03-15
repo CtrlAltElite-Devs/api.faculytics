@@ -37,7 +37,7 @@ The orchestrator:
 
 1. Validates the pipeline is in `AWAITING_CONFIRMATION` status.
 2. Checks that `SENTIMENT_WORKER_URL` is configured.
-3. **Embedding backfill (best-effort):** If `EMBEDDINGS_WORKER_URL` is configured and some submissions lack embeddings, enqueues individual embedding jobs. These run alongside sentiment analysis.
+3. **Embedding backfill (best-effort):** If `EMBEDDINGS_WORKER_URL` is configured and some submissions with `cleanedComment` lack embeddings, enqueues individual embedding jobs using the cleaned text. These run alongside sentiment analysis.
 4. Creates a `SentimentRun` entity and dispatches a batch job to the sentiment queue.
 5. Advances pipeline to `SENTIMENT_ANALYSIS`.
 
@@ -45,7 +45,7 @@ The orchestrator:
 
 The `SentimentProcessor`:
 
-1. Sends all comments as a batch HTTP POST to the sentiment worker.
+1. Sends all `cleanedComment` texts as a batch HTTP POST to the sentiment worker.
 2. Validates each result item against `sentimentResultItemSchema`.
 3. Determines the dominant label (positive/neutral/negative) from scores.
 4. Creates `SentimentResult` entities.

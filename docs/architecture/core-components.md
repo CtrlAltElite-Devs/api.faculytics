@@ -156,8 +156,9 @@ The `PipelineOrchestratorService` manages the full analysis lifecycle through a 
 | `AnalysisService`             | Low-level entry point — `EnqueueJob()` and `EnqueueBatch()` for ad-hoc jobs   |
 | `AnalysisController`          | REST API for pipeline CRUD (`POST/GET /analysis/pipelines`)                   |
 | `BaseBatchProcessor`          | Abstract base — HTTP dispatch, Zod validation, retry, stall detection         |
+| `RunPodBatchProcessor`        | RunPod-specific subclass — auth headers, `{ input/output }` envelope handling |
 | `SentimentProcessor`          | Batch sentiment analysis, triggers sentiment gate on completion               |
-| `TopicModelProcessor`         | Batch topic modeling with chunked assignment persistence                      |
+| `TopicModelProcessor`         | Batch topic modeling via RunPod, chunked assignment persistence               |
 | `RecommendationsProcessor`    | Generates prioritized action items from aggregated analysis data              |
 | `EmbeddingProcessor`          | Per-submission embedding generation (upsert, extends `BaseAnalysisProcessor`) |
 

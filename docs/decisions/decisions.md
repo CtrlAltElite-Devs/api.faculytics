@@ -94,3 +94,17 @@ Embeddings are stored using `pgvector` on the existing PostgreSQL database rathe
 
 - **Rationale:** Embeddings are used for topic modeling input, not real-time similarity search. Keeping them in Postgres avoids new infrastructure and simplifies backup/restore.
 - **Trade-off:** If high-throughput similarity search is needed later (e.g., semantic search), a dedicated vector DB may be required. The `SubmissionEmbedding` entity can be adapted to sync to an external store.
+
+## 16. Cleaned Comment Preprocessing
+
+Raw `qualitativeComment` text is cleaned into a separate `cleanedComment` column at submission time. All downstream analysis stages (sentiment, embeddings, topic modeling) use `cleanedComment` instead of the raw text.
+
+- **Rationale:** Multilingual student feedback (Cebuano, Tagalog, English, code-switched) contains noise — Excel import artifacts (`#NAME?`), URLs, laughter tokens (`hahaha`, `lol`), keyboard mash, repeated characters, and broken emoji. Cleaning at write time ensures consistent input across all analysis stages and avoids re-cleaning on every pipeline run.
+- **Trade-off:** Submissions with `qualitativeComment` but `cleanedComment = null` (text reduced to nothing after cleaning) are excluded from analysis entirely. The raw text is preserved for audit/display purposes.
+
+## 17. RunPod Processor Abstraction
+
+Topic modeling (and future GPU-bound workers) use a `RunPodBatchProcessor` base class that extends `BaseBatchProcessor` with RunPod-specific envelope handling (`{ input: ... }` / `{ output: ... }`) and bearer token auth.
+
+- **Rationale:** RunPod serverless has a fixed request/response envelope format. Encoding this in a shared base class avoids duplicating wrapping logic across multiple GPU worker processors.
+- **Trade-off:** Adds an inheritance layer. Acceptable because the alternative (conditionals in `BaseBatchProcessor`) would couple the base class to a specific vendor.

@@ -204,6 +204,7 @@ erDiagram
         decimal totalScore "10,2"
         decimal normalizedScore "10,2"
         text qualitativeComment "nullable"
+        text cleanedComment "nullable"
         date submittedAt
         string facultyNameSnapshot
         string departmentCodeSnapshot

@@ -12,7 +12,7 @@ import { TOPIC_ASSIGNMENT_BATCH_SIZE } from '../constants';
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { BatchAnalysisResultMessage } from '../dto/batch-analysis-result-message.dto';
 import { topicModelWorkerResponseSchema } from '../dto/topic-model-worker.dto';
-import { BaseBatchProcessor } from './base-batch.processor';
+import { RunPodBatchProcessor } from './runpod-batch.processor';
 import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.service';
 
 @Processor('topic-model', {
@@ -20,7 +20,7 @@ import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.s
   stalledInterval: env.BULLMQ_STALLED_INTERVAL_MS,
   maxStalledCount: env.BULLMQ_MAX_STALLED_COUNT,
 })
-export class TopicModelProcessor extends BaseBatchProcessor {
+export class TopicModelProcessor extends RunPodBatchProcessor {
   protected readonly logger = new Logger(TopicModelProcessor.name);
 
   constructor(
@@ -33,6 +33,10 @@ export class TopicModelProcessor extends BaseBatchProcessor {
 
   GetWorkerUrl(): string | undefined {
     return env.TOPIC_MODEL_WORKER_URL;
+  }
+
+  protected override getHttpTimeoutMs(): number {
+    return env.BULLMQ_TOPIC_MODEL_HTTP_TIMEOUT_MS;
   }
 
   async Persist(

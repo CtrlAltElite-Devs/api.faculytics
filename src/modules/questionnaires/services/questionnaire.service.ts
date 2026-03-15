@@ -44,6 +44,7 @@ import { CacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-namespaces';
 import { AnalysisService } from '../../analysis/analysis.service';
 import { env } from 'src/configurations/env';
+import { cleanText } from '../utils/clean-text';
 
 @Injectable()
 export class QuestionnaireService {
@@ -551,6 +552,9 @@ export class QuestionnaireService {
       totalScore: scores.totalScore,
       normalizedScore: scores.normalizedScore,
       qualitativeComment: data.qualitativeComment,
+      cleanedComment: data.qualitativeComment
+        ? (cleanText(data.qualitativeComment) ?? undefined)
+        : undefined,
       submittedAt: new Date(),
 
       // Snapshots
@@ -597,12 +601,12 @@ export class QuestionnaireService {
       throw e;
     }
 
-    // Fire-and-forget embedding dispatch
-    if (submission.qualitativeComment && env.EMBEDDINGS_WORKER_URL) {
+    // Fire-and-forget embedding dispatch (uses cleaned text for alignment with topic modeling)
+    if (submission.cleanedComment && env.EMBEDDINGS_WORKER_URL) {
       try {
         await this.analysisService.EnqueueJob(
           'embedding',
-          submission.qualitativeComment,
+          submission.cleanedComment,
           {
             submissionId: submission.id,
             facultyId: data.facultyId,

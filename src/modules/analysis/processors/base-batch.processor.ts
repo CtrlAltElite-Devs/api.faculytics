@@ -17,6 +17,26 @@ export abstract class BaseBatchProcessor extends WorkerHost {
     result: BatchAnalysisResultMessage,
   ): Promise<void>;
 
+  /** Override to add custom headers (e.g. auth). */
+  protected buildHeaders(): Record<string, string> {
+    return { 'Content-Type': 'application/json' };
+  }
+
+  /** Override to wrap the request body (e.g. RunPod `{ input: ... }`). */
+  protected wrapBody(data: BatchAnalysisJobMessage): unknown {
+    return data;
+  }
+
+  /** Override to unwrap the response body (e.g. RunPod `body.output`). */
+  protected unwrapResponse(body: unknown): unknown {
+    return body;
+  }
+
+  /** Override for per-processor HTTP timeout. */
+  protected getHttpTimeoutMs(): number {
+    return env.BULLMQ_HTTP_TIMEOUT_MS;
+  }
+
   async process(job: Job<BatchAnalysisJobMessage>): Promise<void> {
     const workerUrl = this.GetWorkerUrl();
     if (!workerUrl) {
@@ -25,25 +45,23 @@ export abstract class BaseBatchProcessor extends WorkerHost {
       );
     }
 
+    const timeoutMs = this.getHttpTimeoutMs();
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      env.BULLMQ_HTTP_TIMEOUT_MS,
-    );
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     let response: Response;
     try {
       response = await fetch(workerUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(job.data),
+        headers: this.buildHeaders(),
+        body: JSON.stringify(this.wrapBody(job.data)),
         signal: controller.signal,
       });
     } catch (error) {
       clearTimeout(timeout);
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new Error(
-          `HTTP request to ${job.queueName} worker timed out after ${env.BULLMQ_HTTP_TIMEOUT_MS}ms`,
+          `HTTP request to ${job.queueName} worker timed out after ${timeoutMs}ms`,
         );
       }
       throw error;
@@ -58,11 +76,12 @@ export abstract class BaseBatchProcessor extends WorkerHost {
     }
 
     const rawBody: unknown = await response.json();
-    const parseResult = batchAnalysisResultSchema.safeParse(rawBody);
+    const unwrapped = this.unwrapResponse(rawBody);
+    const parseResult = batchAnalysisResultSchema.safeParse(unwrapped);
 
     if (!parseResult.success) {
       this.logger.error(
-        `Malformed worker response for job ${job.id}: ${JSON.stringify(rawBody)}`,
+        `Malformed worker response for job ${job.id}: ${JSON.stringify(unwrapped)}`,
       );
       throw new Error(
         `Worker response validation failed for job ${job.id}: ${parseResult.error.message}`,

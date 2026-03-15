@@ -207,11 +207,11 @@ export class PipelineOrchestratorService {
 
     pipeline.confirmedAt = new Date();
 
-    // Check embedding coverage
+    // Check embedding coverage (use cleanedComment — text that survived preprocessing)
     const scope = this.buildSubmissionScope(pipeline);
     const submissions = await fork.find(QuestionnaireSubmission, {
       ...scope,
-      qualitativeComment: { $ne: null },
+      cleanedComment: { $ne: null },
     });
 
     const submissionIds = submissions.map((s) => s.id);
@@ -234,7 +234,7 @@ export class PipelineOrchestratorService {
         try {
           await this.analysisService.EnqueueJob(
             'embedding',
-            sub.qualitativeComment!,
+            sub.cleanedComment!,
             { submissionId: sub.id, facultyId: '', versionId: '' },
           );
         } catch (err) {
@@ -310,8 +310,7 @@ export class PipelineOrchestratorService {
         // For positive sentiment, check word count
         const submission = submissionMap.get(result.submission.id);
         const wordCount =
-          submission?.qualitativeComment?.split(/\s+/).filter(Boolean).length ??
-          0;
+          submission?.cleanedComment?.split(/\s+/).filter(Boolean).length ?? 0;
 
         if (wordCount >= SENTIMENT_GATE.POSITIVE_MIN_WORD_COUNT) {
           passingIds.push(result.id);
@@ -688,14 +687,14 @@ export class PipelineOrchestratorService {
     const scope = this.buildSubmissionScope(pipeline);
     const submissions = await em.find(QuestionnaireSubmission, {
       ...scope,
-      qualitativeComment: { $ne: null },
+      cleanedComment: { $ne: null },
     });
 
     if (submissions.length === 0) {
       await this.failPipeline(
         em,
         pipeline,
-        'No submissions with comments found for sentiment analysis',
+        'No submissions with cleaned comments found for sentiment analysis',
       );
       return;
     }
@@ -714,7 +713,7 @@ export class PipelineOrchestratorService {
       type: 'sentiment',
       items: submissions.map((s) => ({
         submissionId: s.id,
-        text: s.qualitativeComment!,
+        text: s.cleanedComment!,
       })),
       metadata: {
         pipelineId: pipeline.id,
@@ -761,10 +760,10 @@ export class PipelineOrchestratorService {
       return;
     }
 
-    // Get submissions with embeddings
+    // Get submissions with embeddings (use cleanedComment for topic modeling text)
     const submissions = await em.find(QuestionnaireSubmission, {
       id: { $in: passingSubmissionIds },
-      qualitativeComment: { $ne: null },
+      cleanedComment: { $ne: null },
     });
 
     const embeddings = await em.find(SubmissionEmbedding, {
@@ -795,7 +794,7 @@ export class PipelineOrchestratorService {
 
     const items = withEmbeddings.map((s) => ({
       submissionId: s.id,
-      text: s.qualitativeComment!,
+      text: s.cleanedComment!,
       embedding: embeddingMap.get(s.id)!,
     }));
 

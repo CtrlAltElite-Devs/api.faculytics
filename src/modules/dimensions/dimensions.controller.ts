@@ -6,11 +6,9 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { UseJwtGuard, Roles } from 'src/security/decorators';
-import { RolesGuard } from 'src/security/guards/roles.guard';
+import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
 import { DimensionsService } from './services/dimensions.service';
 import { CreateDimensionRequestDto } from './dto/requests/create-dimension.request.dto';
@@ -19,9 +17,7 @@ import { ListDimensionsQueryDto } from './dto/requests/list-dimensions-query.dto
 
 @ApiTags('Dimensions')
 @Controller('dimensions')
-@UseJwtGuard()
-@Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-@UseGuards(RolesGuard)
+@UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN)
 export class DimensionsController {
   constructor(private readonly dimensionsService: DimensionsService) {}
 

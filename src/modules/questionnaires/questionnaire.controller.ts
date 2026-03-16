@@ -9,7 +9,6 @@ import {
   Query,
   Request,
   UseInterceptors,
-  UseGuards,
 } from '@nestjs/common';
 import { QuestionnaireService } from './services/questionnaire.service';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
@@ -23,8 +22,7 @@ import { GetVersionsByTypeParam } from './dto/requests/get-versions-by-type-requ
 import { QuestionnaireVersionsResponse } from './dto/responses/questionnaire-version-response.dto';
 import { QuestionnaireVersionDetailResponse } from './dto/responses/questionnaire-version-detail-response.dto';
 import { DraftResponse } from './dto/responses/draft-response.dto';
-import { UseJwtGuard, Roles } from 'src/security/decorators';
-import { RolesGuard } from 'src/security/guards/roles.guard';
+import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
 import type { AuthenticatedRequest } from '../common/interceptors/http/authenticated-request';
@@ -104,9 +102,7 @@ export class QuestionnaireController {
   }
 
   @Get('versions/:versionId')
-  @UseJwtGuard()
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @UseGuards(RolesGuard)
+  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @ApiOperation({ summary: 'Get a questionnaire version by ID' })
   @ApiResponse({
     status: 200,
@@ -122,9 +118,7 @@ export class QuestionnaireController {
   }
 
   @Patch('versions/:versionId')
-  @UseJwtGuard()
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN)
-  @UseGuards(RolesGuard)
+  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @ApiOperation({ summary: 'Update a draft questionnaire version' })
   @ApiResponse({
     status: 200,

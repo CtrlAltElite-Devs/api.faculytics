@@ -5,6 +5,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getQueueToken } from '@nestjs/bullmq';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { PipelineOrchestratorService } from './pipeline-orchestrator.service';
+import { TopicLabelService } from './topic-label.service';
 import { AnalysisService } from '../analysis.service';
 import { PipelineStatus, RunStatus } from '../enums';
 import { SENTIMENT_GATE } from '../constants';
@@ -59,6 +60,10 @@ describe('PipelineOrchestratorService', () => {
         PipelineOrchestratorService,
         { provide: EntityManager, useValue: mockEm },
         { provide: AnalysisService, useValue: mockAnalysisService },
+        {
+          provide: TopicLabelService,
+          useValue: { generateLabels: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: getQueueToken('sentiment'), useValue: sentimentQueue },
         { provide: getQueueToken('topic-model'), useValue: topicModelQueue },
         {

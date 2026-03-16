@@ -108,3 +108,11 @@ Topic modeling (and future GPU-bound workers) use a `RunPodBatchProcessor` base 
 
 - **Rationale:** RunPod serverless has a fixed request/response envelope format. Encoding this in a shared base class avoids duplicating wrapping logic across multiple GPU worker processors.
 - **Trade-off:** Adds an inheritance layer. Acceptable because the alternative (conditionals in `BaseBatchProcessor`) would couple the base class to a specific vendor.
+
+## 18. LLM-Based Topic Labeling as Inline Pipeline Step
+
+BERTopic produces machine-generated raw labels (e.g., `0_teaching_maayo_method`) that are not human-readable. The `TopicLabelService` calls OpenAI `gpt-4o-mini` with structured output (Zod schema via `zodResponseFormat`) to generate short (2-4 word) English labels for each topic before the recommendations stage.
+
+- **Inline, not queued:** Topic labeling runs synchronously inside the orchestrator's `OnTopicModelComplete()` handler rather than as a separate BullMQ stage. The LLM call is fast (single request for all topics) and doesn't justify queue overhead.
+- **Non-blocking fallback:** If the LLM call fails, topics retain their `rawLabel`. Downstream consumers (recommendations aggregation, status endpoint) use `topic.label ?? topic.rawLabel`, so the pipeline never fails due to labeling.
+- **Trade-off:** Adds an OpenAI dependency to the pipeline. Acceptable because `OPENAI_API_KEY` is already required for the ChatKit module, and the cost per call is minimal (one request per pipeline run with a small payload).

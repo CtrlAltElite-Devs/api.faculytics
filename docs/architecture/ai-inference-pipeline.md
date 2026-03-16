@@ -37,7 +37,8 @@ stateDiagram-v2
 
     SENTIMENT_ANALYSIS --> SENTIMENT_GATE: OnSentimentComplete()
     SENTIMENT_GATE --> TOPIC_MODELING: Gate applied, dispatch topic model
-    TOPIC_MODELING --> GENERATING_RECOMMENDATIONS: OnTopicModelComplete()
+    TOPIC_MODELING --> TOPIC_LABELING: OnTopicModelComplete()
+    TOPIC_LABELING --> GENERATING_RECOMMENDATIONS: Labels generated
     GENERATING_RECOMMENDATIONS --> COMPLETED: OnRecommendationsComplete()
 
     SENTIMENT_ANALYSIS --> FAILED: stage error
@@ -59,6 +60,7 @@ stateDiagram-v2
 | **Sentiment Analysis** | Batch of comments                       | Per-submission sentiment scores                                          |
 | **Sentiment Gate**     | Sentiment results                       | Filtered corpus (negative/neutral always pass; positive needs ≥10 words) |
 | **Topic Modeling**     | Gate-passing submissions + embeddings   | Topics, keyword clusters, soft assignments                               |
+| **Topic Labeling**     | Topics with raw labels + keywords       | Human-readable labels (2-4 words) via LLM                                |
 | **Recommendations**    | Aggregated sentiment + topics           | Prioritized action items                                                 |
 
 ### Coverage Warnings
@@ -216,7 +218,21 @@ BaseBatchProcessor          ← HTTP dispatch, Zod validation, retry
 | `unwrapResponse(body)` | Pass-through                     | RunPod `{ output: ... }` unwrapping           |
 | `getHttpTimeoutMs()`   | `BULLMQ_HTTP_TIMEOUT_MS`         | Per-processor timeout (topic model uses 300s) |
 
-## 11. Adding a New Analysis Type
+## 11. Topic Labeling
+
+After topic modeling completes and before recommendations are dispatched, the `TopicLabelService` generates human-readable labels for each discovered topic using an LLM (OpenAI `gpt-4o-mini`).
+
+**How it works:**
+
+1. The orchestrator fetches the latest `TopicModelRun` and its `Topic` entities.
+2. `TopicLabelService.generateLabels()` sends all topics (raw labels + keywords) to the LLM in a single request.
+3. The LLM returns short (2-4 word, title case) labels via structured output (`zodResponseFormat`).
+4. Labels are written to the `Topic.label` field and flushed to the database.
+5. Downstream consumers (recommendations, status endpoint) prefer `topic.label` over `topic.rawLabel`.
+
+**Resilience:** If the LLM call fails (rate limit, network error, empty response), the service logs a warning and falls back silently — topics retain their BERTopic-generated `rawLabel`. This is a non-blocking, best-effort enrichment step.
+
+## 12. Adding a New Analysis Type
 
 1. Create `NewTypeProcessor extends BaseBatchProcessor` (or `RunPodBatchProcessor` for RunPod workers) in `src/modules/analysis/processors/`
 2. Add `NEW_TYPE_WORKER_URL` and `NEW_TYPE_CONCURRENCY` to `src/configurations/env/bullmq.env.ts`
@@ -226,3 +242,5 @@ BaseBatchProcessor          ← HTTP dispatch, Zod validation, retry
 6. Update `PipelineStatus` enum with new stage
 7. Add worker contract doc in `docs/worker-contracts/`
 8. Add mock endpoint in `mock-worker/server.ts`
+
+For **non-queue enrichment steps** (like topic labeling), create a service in `src/modules/analysis/services/`, register it in `AnalysisModule`, inject it into `PipelineOrchestratorService`, and call it inline during stage transitions.

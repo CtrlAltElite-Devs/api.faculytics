@@ -67,6 +67,7 @@ classDiagram
         +AnalysisService
         +AnalysisController
         +PipelineOrchestratorService
+        +TopicLabelService
         +SentimentProcessor
         +TopicModelProcessor
         +RecommendationsProcessor
@@ -150,22 +151,23 @@ The `PipelineOrchestratorService` manages the full analysis lifecycle through a 
 
 ### Components
 
-| Component                     | Purpose                                                                       |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| `PipelineOrchestratorService` | Creates pipelines, manages stage transitions, dispatches batch jobs           |
-| `AnalysisService`             | Low-level entry point — `EnqueueJob()` and `EnqueueBatch()` for ad-hoc jobs   |
-| `AnalysisController`          | REST API for pipeline CRUD (`POST/GET /analysis/pipelines`)                   |
-| `BaseBatchProcessor`          | Abstract base — HTTP dispatch, Zod validation, retry, stall detection         |
-| `RunPodBatchProcessor`        | RunPod-specific subclass — auth headers, `{ input/output }` envelope handling |
-| `SentimentProcessor`          | Batch sentiment analysis, triggers sentiment gate on completion               |
-| `TopicModelProcessor`         | Batch topic modeling via RunPod, chunked assignment persistence               |
-| `RecommendationsProcessor`    | Generates prioritized action items from aggregated analysis data              |
-| `EmbeddingProcessor`          | Per-submission embedding generation (upsert, extends `BaseAnalysisProcessor`) |
+| Component                     | Purpose                                                                            |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| `PipelineOrchestratorService` | Creates pipelines, manages stage transitions, dispatches batch jobs                |
+| `AnalysisService`             | Low-level entry point — `EnqueueJob()` and `EnqueueBatch()` for ad-hoc jobs        |
+| `AnalysisController`          | REST API for pipeline CRUD (`POST/GET /analysis/pipelines`)                        |
+| `BaseBatchProcessor`          | Abstract base — HTTP dispatch, Zod validation, retry, stall detection              |
+| `RunPodBatchProcessor`        | RunPod-specific subclass — auth headers, `{ input/output }` envelope handling      |
+| `SentimentProcessor`          | Batch sentiment analysis, triggers sentiment gate on completion                    |
+| `TopicModelProcessor`         | Batch topic modeling via RunPod, chunked assignment persistence                    |
+| `TopicLabelService`           | LLM-based labeling of BERTopic topics (gpt-4o-mini, inline before recommendations) |
+| `RecommendationsProcessor`    | Generates prioritized action items from aggregated analysis data                   |
+| `EmbeddingProcessor`          | Per-submission embedding generation (upsert, extends `BaseAnalysisProcessor`)      |
 
 ### Pipeline Stages
 
 ```
-AWAITING_CONFIRMATION → SENTIMENT_ANALYSIS → SENTIMENT_GATE → TOPIC_MODELING → GENERATING_RECOMMENDATIONS → COMPLETED
+AWAITING_CONFIRMATION → SENTIMENT_ANALYSIS → SENTIMENT_GATE → TOPIC_MODELING → TOPIC_LABELING → GENERATING_RECOMMENDATIONS → COMPLETED
 ```
 
 Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMPLETED` / `FAILED`).

@@ -82,12 +82,23 @@ The `TopicModelProcessor`:
 6. Updates run metadata (topic count, outlier count, quality metrics).
 7. Calls `OnTopicModelComplete()`.
 
-## 6. Recommendations
+## 6. Topic Labeling
+
+After topic modeling completes and before recommendations are dispatched, the orchestrator runs an inline enrichment step:
+
+1. Fetches the latest `TopicModelRun` and all its `Topic` entities.
+2. Calls `TopicLabelService.generateLabels(topics)`, which sends topics (raw labels + keywords) to OpenAI `gpt-4o-mini`.
+3. The LLM returns short, human-readable labels (2-4 words, title case) via Zod-validated structured output.
+4. Labels are written to `Topic.label` and flushed to the database.
+
+**Fallback:** If the LLM call fails, topics keep their BERTopic-generated `rawLabel`. This step is non-blocking.
+
+## 7. Recommendations
 
 The orchestrator aggregates data from previous stages:
 
 - Sentiment label counts (positive/neutral/negative)
-- Top 10 topics with keywords and document counts
+- Top 10 topics with keywords and document counts (using `topic.label` when available, falling back to `topic.rawLabel`)
 - Coverage metadata
 
 Creates a `RecommendationRun` and dispatches to the recommendations queue.
@@ -98,7 +109,7 @@ The `RecommendationsProcessor`:
 2. Creates `RecommendedAction` entities with category, priority (HIGH/MEDIUM/LOW), action text, and supporting evidence (JSONB).
 3. Calls `OnRecommendationsComplete()`.
 
-## 7. Completion
+## 8. Completion
 
 Pipeline status moves to `COMPLETED` with `completedAt` timestamp.
 

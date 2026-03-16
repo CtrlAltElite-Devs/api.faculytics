@@ -36,6 +36,7 @@ import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { batchAnalysisJobSchema } from '../dto/batch-analysis-job-message.dto';
 import { PipelineStatusResponse } from '../dto/pipeline-status.dto';
 import { AnalysisService } from '../analysis.service';
+import { TopicLabelService } from './topic-label.service';
 
 interface CoverageStats {
   totalEnrolled: number;
@@ -68,6 +69,7 @@ export class PipelineOrchestratorService {
   constructor(
     private readonly em: EntityManager,
     private readonly analysisService: AnalysisService,
+    private readonly topicLabelService: TopicLabelService,
     @InjectQueue('sentiment') private readonly sentimentQueue: Queue,
     @InjectQueue('topic-model') private readonly topicModelQueue: Queue,
     @InjectQueue('recommendations')
@@ -383,6 +385,18 @@ export class PipelineOrchestratorService {
         'RECOMMENDATIONS_WORKER_URL not configured',
       );
       return;
+    }
+
+    // Generate human-readable labels before dispatching recommendations
+    const topicModelRun = await fork.findOne(
+      TopicModelRun,
+      { pipeline },
+      { orderBy: { createdAt: 'DESC' } },
+    );
+    if (topicModelRun) {
+      const topics = await fork.find(Topic, { run: topicModelRun });
+      await this.topicLabelService.generateLabels(topics);
+      await fork.flush();
     }
 
     pipeline.status = PipelineStatus.GENERATING_RECOMMENDATIONS;
@@ -889,7 +903,7 @@ export class PipelineOrchestratorService {
       );
       for (const t of topics) {
         topTopics.push({
-          label: t.rawLabel,
+          label: t.label ?? t.rawLabel,
           keywords: t.keywords,
           docCount: t.docCount,
         });

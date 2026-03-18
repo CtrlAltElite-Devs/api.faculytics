@@ -20,6 +20,8 @@ import { EmbeddingProcessor } from './processors/embedding.processor';
 import { TopicModelProcessor } from './processors/topic-model.processor';
 import { RecommendationsProcessor } from './processors/recommendations.processor';
 import { PipelineOrchestratorService } from './services/pipeline-orchestrator.service';
+import { TopicLabelService } from './services/topic-label.service';
+import { RecommendationGenerationService } from './services/recommendation-generation.service';
 
 @Module({
   imports: [
@@ -50,6 +52,8 @@ import { PipelineOrchestratorService } from './services/pipeline-orchestrator.se
     TopicModelProcessor,
     RecommendationsProcessor,
     PipelineOrchestratorService,
+    TopicLabelService,
+    RecommendationGenerationService,
   ],
   exports: [AnalysisService, PipelineOrchestratorService],
 })

@@ -11,6 +11,21 @@ export const PIPELINE_STAGE_TIMEOUT_MS = 1_800_000;
 /** Chunk size for bulk TopicAssignment inserts */
 export const TOPIC_ASSIGNMENT_BATCH_SIZE = 500;
 
+export const RECOMMENDATION_THRESHOLDS = {
+  /** Minimum comments for HIGH confidence */
+  HIGH_CONFIDENCE_MIN_COMMENTS: 10,
+  /** Minimum sentiment agreement ratio for HIGH confidence */
+  HIGH_CONFIDENCE_MIN_AGREEMENT: 0.7,
+  /** Minimum comments for MEDIUM confidence (below this = LOW) */
+  MEDIUM_CONFIDENCE_MIN_COMMENTS: 5,
+  /** Maximum sample quotes per evidence source */
+  MAX_SAMPLE_QUOTES: 3,
+  /** Maximum topics to include in LLM prompt */
+  MAX_TOPICS_FOR_PROMPT: 10,
+  /** Maximum sample comments to include in LLM prompt */
+  MAX_SAMPLE_COMMENTS_FOR_PROMPT: 20,
+} as const;
+
 export const COVERAGE_WARNINGS = {
   /** Minimum response rate before warning */
   MIN_RESPONSE_RATE: 0.25,

@@ -17,6 +17,7 @@ sequenceDiagram
     QuestionnaireService->>ScoringService: CalculateScores(schema, answers)
     ScoringService-->>QuestionnaireService: TotalScore, NormalizedScore, Breakdown
     QuestionnaireService->>QuestionnaireService: Create Institutional Snapshot
+    QuestionnaireService->>QuestionnaireService: cleanText(qualitativeComment) → cleanedComment
     QuestionnaireService->>Database: Persist Submission, Answers, and Snapshot
     Database-->>QuestionnaireService: Success
     QuestionnaireService-->>QuestionnaireController: SubmissionResult

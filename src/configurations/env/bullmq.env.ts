@@ -13,8 +13,11 @@ export const bullmqEnvSchema = z.object({
   EMBEDDINGS_CONCURRENCY: z.coerce.number().default(3),
   TOPIC_MODEL_WORKER_URL: z.url().optional(),
   TOPIC_MODEL_CONCURRENCY: z.coerce.number().default(1),
+  BULLMQ_TOPIC_MODEL_HTTP_TIMEOUT_MS: z.coerce.number().default(300000),
+  RUNPOD_API_KEY: z.string().optional(),
   RECOMMENDATIONS_WORKER_URL: z.url().optional(),
   RECOMMENDATIONS_CONCURRENCY: z.coerce.number().default(1),
+  RECOMMENDATIONS_MODEL: z.string().default('gpt-4o-mini'),
 });
 
 export type BullMqEnv = z.infer<typeof bullmqEnvSchema>;

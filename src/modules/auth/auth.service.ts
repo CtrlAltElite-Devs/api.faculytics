@@ -2,7 +2,6 @@ import {
   Inject,
   Injectable,
   Logger,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { LoginRequest } from './dto/requests/login.request.dto';
@@ -12,13 +11,14 @@ import { CustomJwtService } from '../common/custom-jwt-service';
 import { LoginResponse } from './dto/responses/login.response.dto';
 import { User } from 'src/entities/user.entity';
 import { MeResponse } from './dto/responses/me.response.dto';
-import { RequestMetadata } from '../common/interceptors/http/enriched-request';
 import { RefreshJwtPayload } from '../common/custom-jwt-service/refresh-jwt-payload.dto';
 import { v4 } from 'uuid';
 import { RefreshToken } from 'src/entities/refresh-token.entity';
 import * as bcrypt from 'bcrypt';
 import { RefreshTokenRepository } from 'src/repositories/refresh-token.repository';
 import { LOGIN_STRATEGIES, LoginStrategy } from './strategies';
+import { CurrentUserService } from '../common/cls/current-user.service';
+import { RequestMetadataService } from '../common/cls/request-metadata.service';
 
 @Injectable()
 export class AuthService {
@@ -31,13 +31,15 @@ export class AuthService {
     loginStrategies: LoginStrategy[],
     private readonly jwtService: CustomJwtService,
     private readonly unitOfWork: UnitOfWork,
+    private readonly currentUserService: CurrentUserService,
+    private readonly requestMetadataService: RequestMetadataService,
   ) {
     this.sortedStrategies = [...loginStrategies].sort(
       (a, b) => a.priority - b.priority,
     );
   }
 
-  async Login(body: LoginRequest, metaData: RequestMetadata) {
+  async Login(body: LoginRequest) {
     return await this.unitOfWork.runInTransaction(async (em) => {
       const localUser = await em.findOne(User, { userName: body.username });
 
@@ -66,24 +68,18 @@ export class AuthService {
         jwt: jwtPayload,
         refreshJwt: refreshTokenPayload,
         userId: result.user.id,
-        metaData,
       });
 
       return LoginResponse.Map(signedTokens);
     });
   }
 
-  Me(user: User | null | undefined) {
-    if (user === null || user === undefined)
-      throw new NotFoundException('user not found');
-    else return MeResponse.Map(user);
+  Me() {
+    const user = this.currentUserService.getOrFail();
+    return MeResponse.Map(user);
   }
 
-  async RefreshToken(
-    userId: string,
-    refreshToken: string,
-    metaData: RequestMetadata,
-  ) {
+  async RefreshToken(userId: string, refreshToken: string) {
     return await this.unitOfWork.runInTransaction(async (em) => {
       const refreshTokenRepository: RefreshTokenRepository =
         em.getRepository(RefreshToken);
@@ -114,7 +110,6 @@ export class AuthService {
         jwt: jwtPayload,
         refreshJwt: refreshTokenPayload,
         userId: user.id,
-        metaData,
       });
 
       matchingToken.replacedByTokenId = refreshTokenPayload.jti;
@@ -123,11 +118,12 @@ export class AuthService {
     });
   }
 
-  async Logout(userId: string) {
+  async Logout() {
+    const user = this.currentUserService.getOrFail();
     await this.unitOfWork.runInTransaction(async (em) => {
       const refreshTokenRepository: RefreshTokenRepository =
         em.getRepository(RefreshToken);
-      await refreshTokenRepository.revokeAllForUser(userId);
+      await refreshTokenRepository.revokeAllForUser(user.id);
     });
   }
 }

@@ -16,7 +16,10 @@ import { EnrollmentsModule } from './enrollments/enrollments.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QuestionnaireModule } from './questionnaires/questionnaires.module';
 import { AnalysisModule } from './analysis/analysis.module';
+import { DimensionsModule } from './dimensions/dimensions.module';
+import { FacultyModule } from './faculty/faculty.module';
 import { LoggerModule } from 'nestjs-pino';
+import { ClsModule } from 'nestjs-cls';
 import { v4 } from 'uuid';
 
 export const ApplicationModules = [
@@ -27,6 +30,8 @@ export const ApplicationModules = [
   EnrollmentsModule,
   QuestionnaireModule,
   AnalysisModule,
+  DimensionsModule,
+  FacultyModule,
 ];
 
 export const InfrastructureModules = [
@@ -42,6 +47,10 @@ export const InfrastructureModules = [
     signOptions: {
       expiresIn: '300s',
     },
+  }),
+  ClsModule.forRoot({
+    global: true,
+    middleware: { mount: true },
   }),
   ScheduleModule.forRoot(),
   BullModule.forRoot({ connection: { url: env.REDIS_URL } }),

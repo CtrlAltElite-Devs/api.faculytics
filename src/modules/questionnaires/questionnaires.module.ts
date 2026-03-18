@@ -8,6 +8,7 @@ import {
   QuestionnaireDraft,
   Dimension,
   Enrollment,
+  User,
 } from '../../entities/index.entity';
 import { QuestionnaireService } from './services/questionnaire.service';
 import { QuestionnaireController } from './questionnaire.controller';
@@ -35,6 +36,7 @@ import { AnalysisModule } from '../analysis/analysis.module';
       QuestionnaireDraft,
       Dimension,
       Enrollment,
+      User,
     ]),
     DataLoaderModule,
     CommonModule,

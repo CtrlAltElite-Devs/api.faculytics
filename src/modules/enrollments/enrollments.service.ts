@@ -1,9 +1,9 @@
 import { EntityManager } from '@mikro-orm/core';
 import { Injectable } from '@nestjs/common';
 import { Enrollment } from 'src/entities/enrollment.entity';
-import { User } from 'src/entities/user.entity';
 import { CacheService } from '../common/cache/cache.service';
 import { CacheNamespace } from '../common/cache/cache-namespaces';
+import { CurrentUserService } from '../common/cls/current-user.service';
 import { FacultyShortResponseDto } from './dto/responses/faculty-short.response.dto';
 import { MyEnrollmentsResponseDto } from './dto/responses/my-enrollments.response.dto';
 
@@ -12,29 +12,30 @@ export class EnrollmentsService {
   constructor(
     private readonly em: EntityManager,
     private readonly cacheService: CacheService,
+    private readonly currentUserService: CurrentUserService,
   ) {}
 
   async getMyEnrollments(
-    user: User,
     page: number,
     limit: number,
   ): Promise<MyEnrollmentsResponseDto> {
+    const user = this.currentUserService.getOrFail();
     return this.cacheService.wrap(
       CacheNamespace.ENROLLMENTS_ME,
       `${user.id}:${page}:${limit}`,
-      () => this.fetchMyEnrollments(user, page, limit),
+      () => this.fetchMyEnrollments(user.id, page, limit),
       1800000,
     );
   }
 
   private async fetchMyEnrollments(
-    user: User,
+    userId: string,
     page: number,
     limit: number,
   ): Promise<MyEnrollmentsResponseDto> {
     const [enrollments, totalItems] = await this.em.findAndCount(
       Enrollment,
-      { user: user.id, isActive: true },
+      { user: userId, isActive: true },
       {
         populate: ['course'],
         limit,

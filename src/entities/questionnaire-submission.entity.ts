@@ -72,6 +72,9 @@ export class QuestionnaireSubmission extends CustomBaseEntity {
   @Property({ type: 'text', nullable: true })
   qualitativeComment?: string;
 
+  @Property({ type: 'text', nullable: true })
+  cleanedComment?: string;
+
   @Property({ defaultRaw: 'now()' })
   submittedAt: Date = new Date();
 

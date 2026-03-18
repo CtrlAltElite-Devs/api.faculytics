@@ -35,6 +35,7 @@ describe('AnalysisController', () => {
     ConfirmPipeline: jest.Mock;
     CancelPipeline: jest.Mock;
     GetPipelineStatus: jest.Mock;
+    GetRecommendations: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -43,6 +44,7 @@ describe('AnalysisController', () => {
       ConfirmPipeline: jest.fn(),
       CancelPipeline: jest.fn(),
       GetPipelineStatus: jest.fn(),
+      GetRecommendations: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -141,6 +143,24 @@ describe('AnalysisController', () => {
 
       expect(result).toBe(mockStatus);
       expect(mockOrchestrator.GetPipelineStatus).toHaveBeenCalledWith('p1');
+    });
+  });
+
+  describe('GetRecommendations', () => {
+    it('should delegate to orchestrator.GetRecommendations with correct id', async () => {
+      const mockResponse = {
+        pipelineId: 'p1',
+        runId: 'r1',
+        status: 'COMPLETED',
+        actions: [],
+        completedAt: '2026-03-17T00:00:00.000Z',
+      };
+      mockOrchestrator.GetRecommendations.mockResolvedValue(mockResponse);
+
+      const result = await controller.GetRecommendations('p1');
+
+      expect(result).toBe(mockResponse);
+      expect(mockOrchestrator.GetRecommendations).toHaveBeenCalledWith('p1');
     });
   });
 });

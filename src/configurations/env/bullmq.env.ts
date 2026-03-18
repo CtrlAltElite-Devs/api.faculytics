@@ -17,6 +17,7 @@ export const bullmqEnvSchema = z.object({
   RUNPOD_API_KEY: z.string().optional(),
   RECOMMENDATIONS_WORKER_URL: z.url().optional(),
   RECOMMENDATIONS_CONCURRENCY: z.coerce.number().default(1),
+  RECOMMENDATIONS_MODEL: z.string().default('gpt-4o-mini'),
 });
 
 export type BullMqEnv = z.infer<typeof bullmqEnvSchema>;

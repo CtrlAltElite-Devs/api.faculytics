@@ -116,3 +116,20 @@ BERTopic produces machine-generated raw labels (e.g., `0_teaching_maayo_method`)
 - **Inline, not queued:** Topic labeling runs synchronously inside the orchestrator's `OnTopicModelComplete()` handler rather than as a separate BullMQ stage. The LLM call is fast (single request for all topics) and doesn't justify queue overhead.
 - **Non-blocking fallback:** If the LLM call fails, topics retain their `rawLabel`. Downstream consumers (recommendations aggregation, status endpoint) use `topic.label ?? topic.rawLabel`, so the pipeline never fails due to labeling.
 - **Trade-off:** Adds an OpenAI dependency to the pipeline. Acceptable because `OPENAI_API_KEY` is already required for the ChatKit module, and the cost per call is minimal (one request per pipeline run with a small payload).
+
+## 19. Direct LLM Recommendations over External Worker
+
+Recommendations were originally designed as an external HTTP worker (like sentiment and topic modeling). The `RecommendationGenerationService` now calls OpenAI directly from within the NestJS process instead.
+
+- **Rationale:** Recommendations don't require GPU compute — they're purely LLM text generation. Unlike sentiment/topic modeling workers that need specialized ML runtimes (PyTorch, BERTopic), recommendations only need an API key. The service also needs full database access to build rich prompts (dimension scores via SQL aggregation, per-topic sentiment breakdowns, proportional sample comment selection), which an external worker cannot do without duplicating the data model.
+- **Still queued:** The `RecommendationsProcessor` still uses BullMQ for retry semantics and pipeline stage progression. The queue dispatches a lightweight job (just pipeline/run IDs) and the processor calls `RecommendationGenerationService.Generate()` in-process.
+- **Structured output:** Uses OpenAI's `zodResponseFormat` for type-safe responses — the LLM returns JSON validated against the `llmRecommendationsResponseSchema` (category, headline, description, actionPlan, priority, topicReference).
+- **Trade-off:** Recommendation generation now runs in the API process, consuming memory and an OpenAI API call slot. Acceptable because one call per pipeline run is negligible load, and the alternative (an HTTP worker with replicated DB queries) adds complexity without benefit.
+
+## 20. Confidence-Scored Supporting Evidence
+
+Each recommendation includes a `supportingEvidence` object with computed confidence levels and structured data sources, rather than freeform text justification.
+
+- **Confidence computation:** Based on comment count thresholds and sentiment agreement ratio. HIGH requires ≥ 10 comments and ≥ 70% sentiment agreement; MEDIUM requires ≥ 5 comments; below that is LOW.
+- **Typed sources:** Evidence uses a discriminated union (`TopicSource | DimensionScoresSource`) stored as JSONB on `RecommendedAction`. This preserves the raw data the LLM used, enabling the frontend to render topic-specific sentiment breakdowns, dimension score charts, and sample quotes.
+- **Trade-off:** More complex entity schema (headline/description/actionPlan instead of a single `actionText`). Justified because the frontend needs structured data to render recommendation cards with actionable detail.

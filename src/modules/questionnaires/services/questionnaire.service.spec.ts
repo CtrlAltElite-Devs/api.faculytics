@@ -21,6 +21,7 @@ import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { CacheService } from '../../common/cache/cache.service';
 import { AnalysisService } from '../../analysis/analysis.service';
+import { CurrentUserService } from '../../common/cls/current-user.service';
 import {
   BadRequestException,
   ConflictException,
@@ -135,6 +136,12 @@ describe('QuestionnaireService', () => {
           provide: AnalysisService,
           useValue: {
             EnqueueJob: jest.fn().mockResolvedValue('mock-job-id'),
+          },
+        },
+        {
+          provide: CurrentUserService,
+          useValue: {
+            getOrFail: jest.fn().mockReturnValue({ id: RESPONDENT_ID }),
           },
         },
       ],
@@ -648,10 +655,7 @@ describe('QuestionnaireService', () => {
 
       (em.upsert as jest.Mock).mockResolvedValue(mockDraft);
 
-      const result = await service.SaveOrUpdateDraft(
-        RESPONDENT_ID,
-        mockDraftData,
-      );
+      const result = await service.SaveOrUpdateDraft(mockDraftData);
 
       expect(result).toEqual(mockDraft);
       expect(em.upsert).toHaveBeenCalledWith(QuestionnaireDraft, {
@@ -729,10 +733,7 @@ describe('QuestionnaireService', () => {
 
       (em.upsert as jest.Mock).mockResolvedValue(mockDraft);
 
-      const result = await service.SaveOrUpdateDraft(
-        RESPONDENT_ID,
-        dataWithoutCourse,
-      );
+      const result = await service.SaveOrUpdateDraft(dataWithoutCourse);
 
       expect(result.course).toBeNull();
     });
@@ -759,7 +760,7 @@ describe('QuestionnaireService', () => {
 
       draftRepo.findOne.mockResolvedValue(mockDraft as any);
 
-      const result = await service.GetDraft(RESPONDENT_ID, mockQuery);
+      const result = await service.GetDraft(mockQuery);
 
       expect(result).toEqual(mockDraft);
       expect(draftRepo.findOne).toHaveBeenCalledWith({
@@ -774,7 +775,7 @@ describe('QuestionnaireService', () => {
     it('should return null when draft not found', async () => {
       draftRepo.findOne.mockResolvedValue(null);
 
-      const result = await service.GetDraft(RESPONDENT_ID, mockQuery);
+      const result = await service.GetDraft(mockQuery);
 
       expect(result).toBeNull();
     });
@@ -783,7 +784,7 @@ describe('QuestionnaireService', () => {
       const queryWithoutCourse = { ...mockQuery, courseId: undefined };
       draftRepo.findOne.mockResolvedValue(null);
 
-      await service.GetDraft(RESPONDENT_ID, queryWithoutCourse);
+      await service.GetDraft(queryWithoutCourse);
 
       expect(draftRepo.findOne).toHaveBeenCalledWith({
         respondent: RESPONDENT_ID,
@@ -804,7 +805,7 @@ describe('QuestionnaireService', () => {
 
       draftRepo.find.mockResolvedValue(mockDrafts as any);
 
-      const result = await service.ListMyDrafts(RESPONDENT_ID);
+      const result = await service.ListMyDrafts();
 
       expect(result).toEqual(mockDrafts);
       expect(draftRepo.find).toHaveBeenCalledWith(
@@ -816,7 +817,7 @@ describe('QuestionnaireService', () => {
     it('should return empty array if no drafts', async () => {
       draftRepo.find.mockResolvedValue([]);
 
-      const result = await service.ListMyDrafts(RESPONDENT_ID);
+      const result = await service.ListMyDrafts();
 
       expect(result).toEqual([]);
     });
@@ -947,7 +948,7 @@ describe('QuestionnaireService', () => {
 
       draftRepo.findOne.mockResolvedValue(mockDraft as any);
 
-      await service.DeleteDraft(RESPONDENT_ID, 'd1');
+      await service.DeleteDraft('d1');
 
       expect(mockDraft.SoftDelete).toHaveBeenCalled();
       expect(em.flush).toHaveBeenCalled();
@@ -956,7 +957,7 @@ describe('QuestionnaireService', () => {
     it('should throw NotFoundException if draft not found', async () => {
       draftRepo.findOne.mockResolvedValue(null);
 
-      await expect(service.DeleteDraft(RESPONDENT_ID, 'd1')).rejects.toThrow(
+      await expect(service.DeleteDraft('d1')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -964,7 +965,7 @@ describe('QuestionnaireService', () => {
     it('should throw NotFoundException if draft not owned by respondent', async () => {
       draftRepo.findOne.mockResolvedValue(null);
 
-      await expect(service.DeleteDraft(RESPONDENT_ID, 'd1')).rejects.toThrow(
+      await expect(service.DeleteDraft('d1')).rejects.toThrow(
         NotFoundException,
       );
     });

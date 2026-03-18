@@ -24,7 +24,6 @@ export class FacultyService {
   ) {}
 
   async ListFaculty(
-    user: User,
     query: ListFacultyQueryDto,
   ): Promise<FacultyListResponseDto> {
     // 1. Validate semester exists
@@ -37,7 +36,6 @@ export class FacultyService {
 
     // 2. Resolve scope
     const departmentIds = await this.scopeResolverService.ResolveDepartmentIds(
-      user,
       query.semesterId,
     );
 

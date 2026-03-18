@@ -43,6 +43,7 @@ import { UserRole } from '../../auth/roles.enum';
 import { CacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-namespaces';
 import { AnalysisService } from '../../analysis/analysis.service';
+import { CurrentUserService } from '../../common/cls/current-user.service';
 import { env } from 'src/configurations/env';
 import { cleanText } from '../utils/clean-text';
 
@@ -66,6 +67,7 @@ export class QuestionnaireService {
     private readonly em: EntityManager,
     private readonly cacheService: CacheService,
     private readonly analysisService: AnalysisService,
+    private readonly currentUserService: CurrentUserService,
   ) {}
 
   async getQuestionnaireTypes(): Promise<QuestionnaireTypeResponse[]> {
@@ -672,17 +674,16 @@ export class QuestionnaireService {
     return null;
   }
 
-  async SaveOrUpdateDraft(
-    respondentId: string,
-    data: {
-      versionId: string;
-      facultyId: string;
-      semesterId: string;
-      courseId?: string;
-      answers: Record<string, number>;
-      qualitativeComment?: string;
-    },
-  ): Promise<QuestionnaireDraft> {
+  async SaveOrUpdateDraft(data: {
+    versionId: string;
+    facultyId: string;
+    semesterId: string;
+    courseId?: string;
+    answers: Record<string, number>;
+    qualitativeComment?: string;
+  }): Promise<QuestionnaireDraft> {
+    const respondentId = this.currentUserService.getOrFail().id;
+
     // Validate version exists and is active
     const version = await this.versionRepo.findOne(data.versionId);
     if (!version) {
@@ -763,15 +764,13 @@ export class QuestionnaireService {
     }
   }
 
-  async GetDraft(
-    respondentId: string,
-    query: {
-      versionId: string;
-      facultyId: string;
-      semesterId: string;
-      courseId?: string;
-    },
-  ): Promise<QuestionnaireDraft | null> {
+  async GetDraft(query: {
+    versionId: string;
+    facultyId: string;
+    semesterId: string;
+    courseId?: string;
+  }): Promise<QuestionnaireDraft | null> {
+    const respondentId = this.currentUserService.getOrFail().id;
     const draft = await this.draftRepo.findOne({
       respondent: respondentId,
       questionnaireVersion: query.versionId,
@@ -783,7 +782,8 @@ export class QuestionnaireService {
     return draft;
   }
 
-  async ListMyDrafts(respondentId: string): Promise<QuestionnaireDraft[]> {
+  async ListMyDrafts(): Promise<QuestionnaireDraft[]> {
+    const respondentId = this.currentUserService.getOrFail().id;
     const drafts = await this.draftRepo.find(
       { respondent: respondentId },
       { orderBy: { updatedAt: 'DESC' } },
@@ -792,7 +792,8 @@ export class QuestionnaireService {
     return drafts;
   }
 
-  async DeleteDraft(respondentId: string, draftId: string): Promise<void> {
+  async DeleteDraft(draftId: string): Promise<void> {
+    const respondentId = this.currentUserService.getOrFail().id;
     const draft = await this.draftRepo.findOne({
       id: draftId,
       respondent: respondentId,

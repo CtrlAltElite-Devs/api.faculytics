@@ -1,16 +1,8 @@
-import {
-  Controller,
-  Get,
-  Query,
-  Request,
-  UnauthorizedException,
-  UseInterceptors,
-} from '@nestjs/common';
+import { Controller, Get, Query, UseInterceptors } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
-import type { AuthenticatedRequest } from '../common/interceptors/http/authenticated-request';
 import { FacultyService } from './services/faculty.service';
 import { ListFacultyQueryDto } from './dto/requests/list-faculty-query.dto';
 import { FacultyListResponseDto } from './dto/responses/faculty-list.response.dto';
@@ -27,11 +19,7 @@ export class FacultyController {
   @ApiResponse({ status: 200, type: FacultyListResponseDto })
   async findAll(
     @Query() query: ListFacultyQueryDto,
-    @Request() req: AuthenticatedRequest,
   ): Promise<FacultyListResponseDto> {
-    if (!req.currentUser) {
-      throw new UnauthorizedException();
-    }
-    return this.facultyService.ListFaculty(req.currentUser, query);
+    return this.facultyService.ListFaculty(query);
   }
 }

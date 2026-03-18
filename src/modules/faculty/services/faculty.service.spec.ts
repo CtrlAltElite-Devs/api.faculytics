@@ -7,7 +7,6 @@ import {
 import { EntityManager } from '@mikro-orm/postgresql';
 import { FacultyService } from './faculty.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
-import { UserRole } from 'src/modules/auth/roles.enum';
 import { User } from 'src/entities/user.entity';
 import { ListFacultyQueryDto } from '../dto/requests/list-faculty-query.dto';
 
@@ -25,16 +24,6 @@ describe('FacultyService', () => {
   const deptId = 'dept-1';
   const deptId2 = 'dept-2';
   const programId = 'program-1';
-
-  const superAdmin = {
-    id: 'admin-1',
-    roles: [UserRole.SUPER_ADMIN],
-  } as unknown as User;
-
-  const dean = {
-    id: 'dean-1',
-    roles: [UserRole.DEAN],
-  } as unknown as User;
 
   const baseQuery: ListFacultyQueryDto = {
     semesterId,
@@ -120,12 +109,11 @@ describe('FacultyService', () => {
         2,
       );
 
-      const result = await service.ListFaculty(superAdmin, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result.data).toHaveLength(2);
       expect(result.meta.totalItems).toBe(2);
       expect(scopeResolver.ResolveDepartmentIds).toHaveBeenCalledWith(
-        superAdmin,
         semesterId,
       );
     });
@@ -140,7 +128,7 @@ describe('FacultyService', () => {
 
       setupFacultyResults([user1], [mockEnrollment('u1', 'FREAI')], 1);
 
-      const result = await service.ListFaculty(dean, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result.data).toHaveLength(1);
       expect(result.data[0].fullName).toBe('John Doe');
@@ -164,7 +152,7 @@ describe('FacultyService', () => {
         .mockResolvedValueOnce(users)
         .mockResolvedValueOnce(users.map((u) => mockEnrollment(u.id, 'CS101')));
 
-      const result = await service.ListFaculty(superAdmin, {
+      const result = await service.ListFaculty({
         ...baseQuery,
         page: 2,
         limit: 5,
@@ -186,7 +174,7 @@ describe('FacultyService', () => {
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
       setupEmptyResults();
 
-      await service.ListFaculty(superAdmin, {
+      await service.ListFaculty({
         ...baseQuery,
         search: 'Varst',
       });
@@ -204,7 +192,7 @@ describe('FacultyService', () => {
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
 
       await expect(
-        service.ListFaculty(dean, {
+        service.ListFaculty({
           ...baseQuery,
           departmentId: deptId2,
         }),
@@ -224,7 +212,7 @@ describe('FacultyService', () => {
         });
 
       await expect(
-        service.ListFaculty(superAdmin, {
+        service.ListFaculty({
           ...baseQuery,
           departmentId: deptId,
           programId,
@@ -245,7 +233,7 @@ describe('FacultyService', () => {
         });
 
       await expect(
-        service.ListFaculty(dean, {
+        service.ListFaculty({
           ...baseQuery,
           programId,
         }),
@@ -270,7 +258,7 @@ describe('FacultyService', () => {
         1,
       );
 
-      const result = await service.ListFaculty(superAdmin, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result.data).toHaveLength(1);
       expect(result.data[0].subjects).toEqual(['ELDNET1', 'ELEMSYS', 'FREAI']);
@@ -294,7 +282,7 @@ describe('FacultyService', () => {
         1,
       );
 
-      const result = await service.ListFaculty(superAdmin, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result.data[0].subjects).toEqual(['ALPHA', 'MIDDLE', 'ZETA']);
     });
@@ -306,7 +294,7 @@ describe('FacultyService', () => {
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
       setupEmptyResults();
 
-      const result = await service.ListFaculty(superAdmin, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result).toEqual({
         data: [],
@@ -327,7 +315,7 @@ describe('FacultyService', () => {
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
       setupEmptyResults();
 
-      await service.ListFaculty(superAdmin, {
+      await service.ListFaculty({
         ...baseQuery,
         search: '%admin_test',
       });
@@ -341,7 +329,7 @@ describe('FacultyService', () => {
     it('should return 404', async () => {
       em.findOne.mockResolvedValue(null);
 
-      await expect(service.ListFaculty(superAdmin, baseQuery)).rejects.toThrow(
+      await expect(service.ListFaculty(baseQuery)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -356,7 +344,7 @@ describe('FacultyService', () => {
 
       setupFacultyResults([user1], [mockEnrollment('u1', 'CS101')], 1);
 
-      const result = await service.ListFaculty(superAdmin, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result.data[0].fullName).toBe('John Doe');
     });
@@ -373,7 +361,7 @@ describe('FacultyService', () => {
 
       em.find.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 
-      const result = await service.ListFaculty(superAdmin, {
+      const result = await service.ListFaculty({
         ...baseQuery,
         page: 5,
         limit: 5,
@@ -397,7 +385,7 @@ describe('FacultyService', () => {
 
       executeMock.mockResolvedValueOnce([{ count: '0' }]);
 
-      const result = await service.ListFaculty(dean, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result.data).toEqual([]);
       expect(result.meta.totalItems).toBe(0);
@@ -413,7 +401,7 @@ describe('FacultyService', () => {
 
       setupFacultyResults([user1], [mockEnrollment('u1', 'CS101')], 1);
 
-      const result = await service.ListFaculty(superAdmin, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result.data[0].profilePicture).toBeNull();
     });
@@ -426,7 +414,7 @@ describe('FacultyService', () => {
 
       setupFacultyResults([user1], [mockEnrollment('u1', 'CS101')], 1);
 
-      const result = await service.ListFaculty(superAdmin, baseQuery);
+      const result = await service.ListFaculty(baseQuery);
 
       expect(result.data[0].profilePicture).toBe('http://pic.jpg');
     });

@@ -1,9 +1,9 @@
-import { Injectable, Scope } from '@nestjs/common';
+import { InjectableProxy } from 'nestjs-cls';
 import DataLoader from 'dataloader';
 import { User } from 'src/entities/user.entity';
 import { UserRepository } from 'src/repositories/user.repository';
 
-@Injectable({ scope: Scope.REQUEST })
+@InjectableProxy()
 export class UserLoader {
   private loader: DataLoader<string, User | null>;
 

@@ -1,22 +1,23 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
-import { User } from 'src/entities/user.entity';
 import { UserRole } from 'src/modules/auth/roles.enum';
 import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
 import { Department } from 'src/entities/department.entity';
+import { CurrentUserService } from '../cls/current-user.service';
 
 @Injectable()
 export class ScopeResolverService {
-  constructor(private readonly em: EntityManager) {}
+  constructor(
+    private readonly em: EntityManager,
+    private readonly currentUserService: CurrentUserService,
+  ) {}
 
   /**
    * Resolves the department IDs the user is allowed to access for a given semester.
    * Returns `null` for unrestricted access (super admin), or `string[]` of department UUIDs.
    */
-  async ResolveDepartmentIds(
-    user: User,
-    semesterId: string,
-  ): Promise<string[] | null> {
+  async ResolveDepartmentIds(semesterId: string): Promise<string[] | null> {
+    const user = this.currentUserService.getOrFail();
     if (user.roles.includes(UserRole.SUPER_ADMIN)) {
       return null;
     }

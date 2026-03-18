@@ -7,7 +7,6 @@ import {
   Get,
   Delete,
   Query,
-  Request,
   UseInterceptors,
 } from '@nestjs/common';
 import { QuestionnaireService } from './services/questionnaire.service';
@@ -25,7 +24,6 @@ import { DraftResponse } from './dto/responses/draft-response.dto';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
-import type { AuthenticatedRequest } from '../common/interceptors/http/authenticated-request';
 
 @ApiTags('Questionnaires')
 @Controller('questionnaires')
@@ -152,14 +150,8 @@ export class QuestionnaireController {
   @ApiResponse({ status: 201, description: 'Draft saved successfully' })
   @ApiResponse({ status: 400, description: 'Invalid data or inactive version' })
   @ApiResponse({ status: 404, description: 'Resource not found' })
-  async saveDraft(
-    @Body() data: SaveDraftRequest,
-    @Request() request: AuthenticatedRequest,
-  ): Promise<DraftResponse> {
-    const draft = await this.questionnaireService.SaveOrUpdateDraft(
-      request.currentUser!.id,
-      data,
-    );
+  async saveDraft(@Body() data: SaveDraftRequest): Promise<DraftResponse> {
+    const draft = await this.questionnaireService.SaveOrUpdateDraft(data);
 
     return {
       id: draft.id,
@@ -183,14 +175,10 @@ export class QuestionnaireController {
   })
   async getDraft(
     @Query() query: GetDraftRequest,
-    @Request() request: AuthenticatedRequest,
   ): Promise<DraftResponse | null> {
     // Security: Always filter by authenticated user's ID to prevent information disclosure
     // Returns null if no draft exists (rather than 404) since "no draft yet" is a valid state
-    const draft = await this.questionnaireService.GetDraft(
-      request.currentUser!.id,
-      query,
-    );
+    const draft = await this.questionnaireService.GetDraft(query);
 
     if (!draft) {
       return null;
@@ -213,12 +201,8 @@ export class QuestionnaireController {
   @UseInterceptors(CurrentUserInterceptor)
   @ApiOperation({ summary: 'List all drafts for the current user' })
   @ApiResponse({ status: 200, description: 'Drafts retrieved successfully' })
-  async listMyDrafts(
-    @Request() request: AuthenticatedRequest,
-  ): Promise<DraftResponse[]> {
-    const drafts = await this.questionnaireService.ListMyDrafts(
-      request.currentUser!.id,
-    );
+  async listMyDrafts(): Promise<DraftResponse[]> {
+    const drafts = await this.questionnaireService.ListMyDrafts();
 
     return drafts.map((draft) => ({
       id: draft.id,
@@ -238,11 +222,8 @@ export class QuestionnaireController {
   @ApiOperation({ summary: 'Delete a draft by ID' })
   @ApiResponse({ status: 200, description: 'Draft deleted successfully' })
   @ApiResponse({ status: 404, description: 'Draft not found' })
-  async deleteDraft(
-    @Param('id') id: string,
-    @Request() request: AuthenticatedRequest,
-  ): Promise<{ message: string }> {
-    await this.questionnaireService.DeleteDraft(request.currentUser!.id, id);
+  async deleteDraft(@Param('id') id: string): Promise<{ message: string }> {
+    await this.questionnaireService.DeleteDraft(id);
     return { message: 'Draft deleted successfully' };
   }
 }

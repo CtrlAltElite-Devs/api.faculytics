@@ -5,15 +5,20 @@ import {
   Logger,
   NestInterceptor,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { UAParser } from 'ua-parser-js';
-import { EnrichedRequest } from './http/enriched-request';
+import { RequestMetadataService } from '../cls/request-metadata.service';
 
 @Injectable()
 export class MetaDataInterceptor implements NestInterceptor {
   private readonly logger = new Logger(MetaDataInterceptor.name);
 
+  constructor(
+    private readonly requestMetadataService: RequestMetadataService,
+  ) {}
+
   intercept(context: ExecutionContext, next: CallHandler<any>) {
-    const request: EnrichedRequest = context.switchToHttp().getRequest();
+    const request: Request = context.switchToHttp().getRequest();
     const { method, url, headers, socket } = request;
 
     // Parse user-agent
@@ -26,18 +31,20 @@ export class MetaDataInterceptor implements NestInterceptor {
       ? forwarded.split(',')[0].trim()
       : socket.remoteAddress;
 
-    request.metaData = {
+    const metadata = {
       browserName: uaResult.browser.name ?? '',
       os: uaResult.os.name ?? '',
       ipAddress: ip ?? '',
     };
 
+    this.requestMetadataService.set(metadata);
+
     // 🔹 Clear, structured logging
     this.logger.log(
       `Metadata captured for [${method}] ${url} -> ` +
-        `IP="${request.metaData.ipAddress}", ` +
-        `Browser="${request.metaData.browserName}", ` +
-        `OS="${request.metaData.os}"`,
+        `IP="${metadata.ipAddress}", ` +
+        `Browser="${metadata.browserName}", ` +
+        `OS="${metadata.os}"`,
     );
 
     // Optional detailed debug log

@@ -5,8 +5,8 @@ import { RefreshJwtPayload } from './refresh-jwt-payload.dto';
 import { env } from 'src/configurations/env';
 import { RefreshTokenRepository } from 'src/repositories/refresh-token.repository';
 import * as bcrypt from 'bcrypt';
-import { RequestMetadata } from '../interceptors/http/enriched-request';
 import { RefreshToken } from 'src/entities/refresh-token.entity';
+import { RequestMetadataService } from '../cls/request-metadata.service';
 
 export type SignedAuthenticationPayload = {
   token: string;
@@ -17,7 +17,6 @@ export type CreateTokensPayload = {
   jwt: JwtPayload;
   refreshJwt: RefreshJwtPayload;
   userId: string;
-  metaData: RequestMetadata;
 };
 
 @Injectable()
@@ -25,6 +24,7 @@ export class CustomJwtService {
   constructor(
     private readonly jwtService: JwtService,
     private readonly refreshTokenRepository: RefreshTokenRepository,
+    private readonly requestMetadataService: RequestMetadataService,
   ) {}
 
   async CreateSignedTokens(
@@ -38,7 +38,6 @@ export class CustomJwtService {
 
     await this.PersistRefreshToken(
       refreshToken,
-      payload.metaData,
       payload.userId,
       payload.refreshJwt.jti,
     );
@@ -51,10 +50,10 @@ export class CustomJwtService {
 
   private async PersistRefreshToken(
     refreshToken: string,
-    metaData: RequestMetadata,
     userId: string,
     refreshId: string,
   ) {
+    const metaData = this.requestMetadataService.getOrFail();
     const hashedToken = await bcrypt.hash(refreshToken, 10);
 
     // revoke refresh refresh tokens

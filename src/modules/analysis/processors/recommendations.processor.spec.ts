@@ -1,15 +1,17 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Test, TestingModule } from '@nestjs/testing';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { RecommendationsProcessor } from './recommendations.processor';
+import { RecommendationGenerationService } from '../services/recommendation-generation.service';
 import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.service';
 import { env } from 'src/configurations/env';
-import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
-import { BatchAnalysisResultMessage } from '../dto/batch-analysis-result-message.dto';
+import { type RecommendationsJobMessage } from '../dto/recommendations.dto';
 import { Job } from 'bullmq';
 import { RunStatus } from '../enums';
 
-const createMockJob = (): Job<BatchAnalysisJobMessage> =>
+const createMockJob = (): Job<RecommendationsJobMessage> =>
   ({
     id: 'p1:recommendations',
     queueName: 'recommendations',
@@ -19,19 +21,20 @@ const createMockJob = (): Job<BatchAnalysisJobMessage> =>
       jobId: '550e8400-e29b-41d4-a716-446655440000',
       version: '1.0',
       type: 'recommendations',
-      items: [],
       metadata: { pipelineId: 'p1', runId: 'r1' },
       publishedAt: '2026-03-12T00:00:00.000Z',
     },
-  }) as unknown as Job<BatchAnalysisJobMessage>;
+  }) as unknown as Job<RecommendationsJobMessage>;
 
 describe('RecommendationsProcessor', () => {
   let processor: RecommendationsProcessor;
   let mockFork: {
     findOneOrFail: jest.Mock;
+    findOne: jest.Mock;
     create: jest.Mock;
     flush: jest.Mock;
   };
+  let mockGenerationService: { Generate: jest.Mock };
   let mockOrchestrator: {
     OnRecommendationsComplete: jest.Mock;
     OnStageFailed: jest.Mock;
@@ -40,6 +43,7 @@ describe('RecommendationsProcessor', () => {
   beforeEach(async () => {
     mockFork = {
       findOneOrFail: jest.fn(),
+      findOne: jest.fn().mockResolvedValue(null),
       create: jest
         .fn()
         .mockImplementation((_entity, data) => ({ ...data, id: 'new-id' })),
@@ -47,6 +51,10 @@ describe('RecommendationsProcessor', () => {
     };
 
     const mockEm = { fork: jest.fn().mockReturnValue(mockFork) };
+
+    mockGenerationService = {
+      Generate: jest.fn().mockResolvedValue([]),
+    };
 
     mockOrchestrator = {
       OnRecommendationsComplete: jest.fn().mockResolvedValue(undefined),
@@ -60,6 +68,7 @@ describe('RecommendationsProcessor', () => {
           useFactory: () =>
             new RecommendationsProcessor(
               mockEm as unknown as EntityManager,
+              mockGenerationService as unknown as RecommendationGenerationService,
               mockOrchestrator as unknown as PipelineOrchestratorService,
             ),
         },
@@ -69,65 +78,127 @@ describe('RecommendationsProcessor', () => {
     processor = module.get<RecommendationsProcessor>(RecommendationsProcessor);
   });
 
-  it('should return RECOMMENDATIONS_WORKER_URL from env', () => {
-    expect(processor.GetWorkerUrl()).toBe(env.RECOMMENDATIONS_WORKER_URL);
-  });
-
-  describe('Persist', () => {
-    it('should create RecommendedAction entities from results', async () => {
-      const mockRun = { id: 'r1', status: RunStatus.PENDING };
+  describe('process', () => {
+    it('should call Generate with correct pipelineId and runId', async () => {
+      const mockRun = { id: 'r1', status: RunStatus.PROCESSING };
       mockFork.findOneOrFail.mockResolvedValue(mockRun);
 
       const job = createMockJob();
-      const result: BatchAnalysisResultMessage = {
-        jobId: '550e8400-e29b-41d4-a716-446655440000',
-        version: '1.0',
-        status: 'completed',
-        results: [],
-        completedAt: '2026-03-12T00:01:00.000Z',
-      };
+      await processor.process(job);
 
-      (result as Record<string, unknown>)['actions'] = [
+      expect(mockGenerationService.Generate).toHaveBeenCalledWith('p1');
+    });
+
+    it('should persist RecommendedAction entities with all new fields', async () => {
+      const mockRun = { id: 'r1', status: RunStatus.PROCESSING };
+      mockFork.findOneOrFail.mockResolvedValue(mockRun);
+
+      mockGenerationService.Generate.mockResolvedValue([
         {
-          category: 'teaching_pace',
-          actionText: 'Slow down lecture delivery.',
-          priority: 'high',
-          supportingEvidence: { topicDocCount: 45 },
+          category: 'STRENGTH',
+          headline: 'Great Teaching',
+          description: 'Students love it.',
+          actionPlan: 'Keep going.',
+          priority: 'HIGH',
+          supportingEvidence: {
+            sources: [{ type: 'dimension_scores', scores: [] }],
+            confidenceLevel: 'HIGH',
+            basedOnSubmissions: 50,
+          },
         },
         {
-          category: 'engagement',
-          actionText: 'Add more interactive exercises.',
-          priority: 'medium',
-          supportingEvidence: { topicDocCount: 20 },
+          category: 'IMPROVEMENT',
+          headline: 'Update Materials',
+          description: 'Materials are outdated.',
+          actionPlan: 'Refresh content.',
+          priority: 'MEDIUM',
+          supportingEvidence: {
+            sources: [{ type: 'dimension_scores', scores: [] }],
+            confidenceLevel: 'MEDIUM',
+            basedOnSubmissions: 50,
+          },
         },
-      ];
+      ]);
 
-      await processor.Persist(job, result);
+      const job = createMockJob();
+      await processor.process(job);
 
       expect(mockFork.create).toHaveBeenCalledTimes(2);
+
+      const firstCall = mockFork.create.mock.calls[0][1];
+      expect(firstCall.category).toBe('STRENGTH');
+      expect(firstCall.headline).toBe('Great Teaching');
+      expect(firstCall.description).toBe('Students love it.');
+      expect(firstCall.actionPlan).toBe('Keep going.');
+      expect(firstCall.priority).toBe('HIGH');
+      expect(firstCall.supportingEvidence).toBeDefined();
+
+      const secondCall = mockFork.create.mock.calls[1][1];
+      expect(secondCall.category).toBe('IMPROVEMENT');
+    });
+
+    it('should mark run as COMPLETED with workerVersion from env', async () => {
+      const mockRun = {
+        id: 'r1',
+        status: RunStatus.PROCESSING,
+        workerVersion: undefined as string | undefined,
+        completedAt: undefined as Date | undefined,
+      };
+      mockFork.findOneOrFail.mockResolvedValue(mockRun);
+
+      const job = createMockJob();
+      await processor.process(job);
+
       expect(mockRun.status).toBe(RunStatus.COMPLETED);
+      expect(mockRun.workerVersion).toBe(env.RECOMMENDATIONS_MODEL);
+      expect(mockRun.completedAt).toBeDefined();
+      expect(mockFork.flush).toHaveBeenCalled();
+    });
+
+    it('should call OnRecommendationsComplete after successful persistence', async () => {
+      const mockRun = { id: 'r1', status: RunStatus.PROCESSING };
+      mockFork.findOneOrFail.mockResolvedValue(mockRun);
+
+      const job = createMockJob();
+      await processor.process(job);
+
       expect(mockOrchestrator.OnRecommendationsComplete).toHaveBeenCalledWith(
         'p1',
       );
     });
+  });
 
-    it('should call OnStageFailed when worker returns failure', async () => {
-      const job = createMockJob();
-      const result: BatchAnalysisResultMessage = {
-        jobId: '550e8400-e29b-41d4-a716-446655440000',
-        version: '1.0',
-        status: 'failed',
-        error: 'LLM quota exceeded',
-        completedAt: '2026-03-12T00:01:00.000Z',
-      };
+  describe('onFailed', () => {
+    it('should log error and call OnStageFailed when retries exhausted', () => {
+      const job = {
+        ...createMockJob(),
+        attemptsMade: 3,
+        opts: { attempts: 3 },
+      } as unknown as Job<RecommendationsJobMessage>;
 
-      await processor.Persist(job, result);
+      const error = new Error('LLM timeout');
+
+      processor.onFailed(job, error);
 
       expect(mockOrchestrator.OnStageFailed).toHaveBeenCalledWith(
         'p1',
         'generating_recommendations',
-        'LLM quota exceeded',
+        'LLM timeout',
       );
+    });
+
+    it('should not call OnStageFailed when retries not exhausted', () => {
+      const job = {
+        ...createMockJob(),
+        attemptsMade: 1,
+        opts: { attempts: 3 },
+      } as unknown as Job<RecommendationsJobMessage>;
+
+      const error = new Error('Temporary error');
+
+      processor.onFailed(job, error);
+
+      expect(mockOrchestrator.OnStageFailed).not.toHaveBeenCalled();
     });
   });
 });

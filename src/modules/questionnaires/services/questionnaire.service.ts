@@ -43,7 +43,9 @@ import { UserRole } from '../../auth/roles.enum';
 import { CacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-namespaces';
 import { AnalysisService } from '../../analysis/analysis.service';
+import { CurrentUserService } from '../../common/cls/current-user.service';
 import { env } from 'src/configurations/env';
+import { cleanText } from '../utils/clean-text';
 
 @Injectable()
 export class QuestionnaireService {
@@ -65,6 +67,7 @@ export class QuestionnaireService {
     private readonly em: EntityManager,
     private readonly cacheService: CacheService,
     private readonly analysisService: AnalysisService,
+    private readonly currentUserService: CurrentUserService,
   ) {}
 
   async getQuestionnaireTypes(): Promise<QuestionnaireTypeResponse[]> {
@@ -289,6 +292,53 @@ export class QuestionnaireService {
     return version;
   }
 
+  async GetVersionById(versionId: string): Promise<QuestionnaireVersion> {
+    const version = await this.versionRepo.findOne(versionId, {
+      populate: ['questionnaire'],
+    });
+
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${versionId} not found.`,
+      );
+    }
+
+    return version;
+  }
+
+  async UpdateDraftVersion(
+    versionId: string,
+    data: { schema: QuestionnaireSchemaSnapshot; title?: string },
+  ): Promise<QuestionnaireVersion> {
+    const version = await this.versionRepo.findOne(versionId, {
+      populate: ['questionnaire'],
+    });
+
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${versionId} not found.`,
+      );
+    }
+
+    if (version.status !== QuestionnaireStatus.DRAFT) {
+      throw new BadRequestException('Only draft versions can be updated.');
+    }
+
+    version.schemaSnapshot = data.schema;
+
+    if (data.title !== undefined) {
+      version.questionnaire.title = data.title;
+    }
+
+    await this.em.flush();
+    await this.cacheService.invalidateNamespaces(
+      CacheNamespace.QUESTIONNAIRE_TYPES,
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+    );
+
+    return version;
+  }
+
   async GetLatestActiveVersion(questionnaireId: string) {
     const questionnaire = await this.questionnaireRepo.findOne(questionnaireId);
 
@@ -504,6 +554,9 @@ export class QuestionnaireService {
       totalScore: scores.totalScore,
       normalizedScore: scores.normalizedScore,
       qualitativeComment: data.qualitativeComment,
+      cleanedComment: data.qualitativeComment
+        ? (cleanText(data.qualitativeComment) ?? undefined)
+        : undefined,
       submittedAt: new Date(),
 
       // Snapshots
@@ -550,12 +603,12 @@ export class QuestionnaireService {
       throw e;
     }
 
-    // Fire-and-forget embedding dispatch
-    if (submission.qualitativeComment && env.EMBEDDINGS_WORKER_URL) {
+    // Fire-and-forget embedding dispatch (uses cleaned text for alignment with topic modeling)
+    if (submission.cleanedComment && env.EMBEDDINGS_WORKER_URL) {
       try {
         await this.analysisService.EnqueueJob(
           'embedding',
-          submission.qualitativeComment,
+          submission.cleanedComment,
           {
             submissionId: submission.id,
             facultyId: data.facultyId,
@@ -621,17 +674,16 @@ export class QuestionnaireService {
     return null;
   }
 
-  async SaveOrUpdateDraft(
-    respondentId: string,
-    data: {
-      versionId: string;
-      facultyId: string;
-      semesterId: string;
-      courseId?: string;
-      answers: Record<string, number>;
-      qualitativeComment?: string;
-    },
-  ): Promise<QuestionnaireDraft> {
+  async SaveOrUpdateDraft(data: {
+    versionId: string;
+    facultyId: string;
+    semesterId: string;
+    courseId?: string;
+    answers: Record<string, number>;
+    qualitativeComment?: string;
+  }): Promise<QuestionnaireDraft> {
+    const respondentId = this.currentUserService.getOrFail().id;
+
     // Validate version exists and is active
     const version = await this.versionRepo.findOne(data.versionId);
     if (!version) {
@@ -712,15 +764,13 @@ export class QuestionnaireService {
     }
   }
 
-  async GetDraft(
-    respondentId: string,
-    query: {
-      versionId: string;
-      facultyId: string;
-      semesterId: string;
-      courseId?: string;
-    },
-  ): Promise<QuestionnaireDraft | null> {
+  async GetDraft(query: {
+    versionId: string;
+    facultyId: string;
+    semesterId: string;
+    courseId?: string;
+  }): Promise<QuestionnaireDraft | null> {
+    const respondentId = this.currentUserService.getOrFail().id;
     const draft = await this.draftRepo.findOne({
       respondent: respondentId,
       questionnaireVersion: query.versionId,
@@ -732,7 +782,8 @@ export class QuestionnaireService {
     return draft;
   }
 
-  async ListMyDrafts(respondentId: string): Promise<QuestionnaireDraft[]> {
+  async ListMyDrafts(): Promise<QuestionnaireDraft[]> {
+    const respondentId = this.currentUserService.getOrFail().id;
     const drafts = await this.draftRepo.find(
       { respondent: respondentId },
       { orderBy: { updatedAt: 'DESC' } },
@@ -741,7 +792,8 @@ export class QuestionnaireService {
     return drafts;
   }
 
-  async DeleteDraft(respondentId: string, draftId: string): Promise<void> {
+  async DeleteDraft(draftId: string): Promise<void> {
+    const respondentId = this.currentUserService.getOrFail().id;
     const draft = await this.draftRepo.findOne({
       id: draftId,
       respondent: respondentId,

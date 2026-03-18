@@ -7,6 +7,20 @@ import * as bcrypt from 'bcrypt';
 import { UnauthorizedException } from '@nestjs/common';
 import { LOGIN_STRATEGIES, LoginStrategy } from './strategies';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { CurrentUserService } from '../common/cls/current-user.service';
+import { RequestMetadataService } from '../common/cls/request-metadata.service';
+
+const mockMetadata = {
+  browserName: 'test',
+  os: 'test',
+  ipAddress: '127.0.0.1',
+};
+
+const mockRequestMetadataService = {
+  get: jest.fn().mockReturnValue(mockMetadata),
+  getOrFail: jest.fn().mockReturnValue(mockMetadata),
+  set: jest.fn(),
+};
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -58,6 +72,20 @@ describe('AuthService', () => {
               ),
           },
         },
+        {
+          provide: CurrentUserService,
+          useValue: {
+            get: jest.fn(),
+            getOrFail: jest.fn().mockReturnValue({ id: 'user-id' }),
+            getUserId: jest.fn().mockReturnValue('user-id'),
+            set: jest.fn(),
+            setJwtPayload: jest.fn(),
+          },
+        },
+        {
+          provide: RequestMetadataService,
+          useValue: mockRequestMetadataService,
+        },
       ],
     }).compile();
 
@@ -107,16 +135,29 @@ describe('AuthService', () => {
                 ),
             },
           },
+          {
+            provide: CurrentUserService,
+            useValue: {
+              get: jest.fn(),
+              getOrFail: jest.fn().mockReturnValue({ id: 'user-id' }),
+              set: jest.fn(),
+              setJwtPayload: jest.fn(),
+            },
+          },
+          {
+            provide: RequestMetadataService,
+            useValue: mockRequestMetadataService,
+          },
         ],
       }).compile();
 
     const serviceWithReversedOrder =
       moduleWithReversedOrder.get<AuthService>(AuthService);
 
-    await serviceWithReversedOrder.Login(
-      { username: 'test', password: 'test' },
-      { browserName: 'test', os: 'test', ipAddress: '127.0.0.1' },
-    );
+    await serviceWithReversedOrder.Login({
+      username: 'test',
+      password: 'test',
+    });
 
     // High priority (5) should be checked first and executed
     // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -126,12 +167,6 @@ describe('AuthService', () => {
   });
 
   describe('Login', () => {
-    const mockMetadata = {
-      browserName: 'test',
-      os: 'test',
-      ipAddress: '127.0.0.1',
-    };
-
     it('should use local strategy when user has a password', async () => {
       const password = 'password123';
       const hashedPassword = await bcrypt.hash(password, 10);
@@ -159,10 +194,10 @@ describe('AuthService', () => {
         refreshToken: 'refresh',
       });
 
-      const result = await service.Login(
-        { username: 'admin', password: 'password123' },
-        mockMetadata,
-      );
+      const result = await service.Login({
+        username: 'admin',
+        password: 'password123',
+      });
 
       expect(mockEm.findOne).toHaveBeenCalledWith(User, { userName: 'admin' });
       // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -205,10 +240,10 @@ describe('AuthService', () => {
         refreshToken: 'refresh',
       });
 
-      await service.Login(
-        { username: 'moodleuser', password: 'moodlepassword' },
-        mockMetadata,
-      );
+      await service.Login({
+        username: 'moodleuser',
+        password: 'moodlepassword',
+      });
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(mockMoodleStrategy.CanHandle).toHaveBeenCalled();
@@ -230,10 +265,7 @@ describe('AuthService', () => {
       mockMoodleStrategy.CanHandle.mockReturnValue(false);
 
       await expect(
-        service.Login(
-          { username: 'unknown', password: 'password' },
-          mockMetadata,
-        ),
+        service.Login({ username: 'unknown', password: 'password' }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
@@ -257,10 +289,7 @@ describe('AuthService', () => {
       );
 
       await expect(
-        service.Login(
-          { username: 'admin', password: 'wrong-password' },
-          mockMetadata,
-        ),
+        service.Login({ username: 'admin', password: 'wrong-password' }),
       ).rejects.toThrow(UnauthorizedException);
     });
   });

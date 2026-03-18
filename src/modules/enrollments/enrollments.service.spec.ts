@@ -3,12 +3,20 @@ import { EnrollmentsService } from './enrollments.service';
 import { EntityManager } from '@mikro-orm/core';
 import { User } from 'src/entities/user.entity';
 import { CacheService } from '../common/cache/cache.service';
+import { CurrentUserService } from '../common/cls/current-user.service';
 
 describe('EnrollmentsService', () => {
   let service: EnrollmentsService;
   let em: EntityManager;
+  let currentUserService: { getOrFail: jest.Mock };
+
+  const mockUser = { id: 'user-id' } as User;
 
   beforeEach(async () => {
+    currentUserService = {
+      getOrFail: jest.fn().mockReturnValue(mockUser),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EnrollmentsService,
@@ -31,6 +39,10 @@ describe('EnrollmentsService', () => {
             invalidateNamespaces: jest.fn(),
           },
         },
+        {
+          provide: CurrentUserService,
+          useValue: currentUserService,
+        },
       ],
     }).compile();
 
@@ -43,7 +55,6 @@ describe('EnrollmentsService', () => {
   });
 
   it('should return paginated enrollments with faculty data', async () => {
-    const mockUser = { id: 'user-id' } as User;
     const mockEnrollments = [
       {
         id: 'e1',
@@ -73,7 +84,7 @@ describe('EnrollmentsService', () => {
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
     (em.find as jest.Mock).mockResolvedValue(mockFacultyEnrollments);
 
-    const result = await service.getMyEnrollments(mockUser, 1, 10);
+    const result = await service.getMyEnrollments(1, 10);
 
     expect(result.data).toHaveLength(1);
     expect(result.data[0].id).toBe('e1');
@@ -97,7 +108,6 @@ describe('EnrollmentsService', () => {
   });
 
   it('should return null faculty when no faculty enrolled in course', async () => {
-    const mockUser = { id: 'user-id' } as User;
     const mockEnrollments = [
       {
         id: 'e1',
@@ -115,17 +125,15 @@ describe('EnrollmentsService', () => {
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
     (em.find as jest.Mock).mockResolvedValue([]);
 
-    const result = await service.getMyEnrollments(mockUser, 1, 10);
+    const result = await service.getMyEnrollments(1, 10);
 
     expect(result.data[0].faculty).toBeNull();
   });
 
   it('should not query faculty when no enrollments exist', async () => {
-    const mockUser = { id: 'user-id' } as User;
-
     (em.findAndCount as jest.Mock).mockResolvedValue([[], 0]);
 
-    const result = await service.getMyEnrollments(mockUser, 1, 10);
+    const result = await service.getMyEnrollments(1, 10);
 
     expect(result.data).toHaveLength(0);
     // eslint-disable-next-line @typescript-eslint/unbound-method

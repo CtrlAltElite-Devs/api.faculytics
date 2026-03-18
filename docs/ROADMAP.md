@@ -49,9 +49,10 @@ Enriching qualitative feedback through asynchronous computational middleware. Se
 - [x] **Topic Modeling (FAC-46):** BERTopic-based topic discovery with keyword extraction, soft assignments, and quality metrics.
 - [x] **Embedding Generation (FAC-46):** pgvector storage (768-dim LaBSE), upsert behavior, best-effort backfill during pipeline confirmation.
 - [x] **Recommendations Engine (FAC-46):** LLM-based action recommendations from aggregated sentiment and topic data, with priority levels and supporting evidence.
+- [x] **Recommendation Engine v2 (FAC-55):** Direct OpenAI generation with structured output, dimension score aggregation, per-topic sentiment breakdowns, confidence scoring, and `GET /analysis/pipelines/:id/recommendations` endpoint. Replaces external worker dispatch.
 - [x] **Worker Contracts:** Typed Zod schemas for sentiment, topic model, and recommendations workers. See `docs/worker-contracts/`.
 - [x] **Inference Versioning:** Worker version tracking on all run entities for provenance.
-- [ ] **RunPod Integration:** Replace mock worker URLs with deployed RunPod/LLM endpoint URLs.
+- [ ] **RunPod Integration:** Replace mock worker URLs with deployed RunPod/LLM endpoint URLs (sentiment, topic modeling).
 - [ ] **Pipeline Monitoring:** Bull Board or custom dashboard for inspecting failed jobs and pipeline health.
 
 ## Phase 4: Analytics & Reporting Infrastructure

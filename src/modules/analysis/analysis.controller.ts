@@ -44,4 +44,10 @@ export class AnalysisController {
   async GetPipelineStatus(@Param('id') id: string) {
     return this.orchestrator.GetPipelineStatus(id);
   }
+
+  @Get('pipelines/:id/recommendations')
+  @ApiOperation({ summary: 'Get recommendations for a completed pipeline' })
+  async GetRecommendations(@Param('id') id: string) {
+    return this.orchestrator.GetRecommendations(id);
+  }
 }

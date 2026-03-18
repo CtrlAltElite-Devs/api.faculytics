@@ -53,15 +53,15 @@ stateDiagram-v2
 
 ### Stage Details
 
-| Stage                  | Input                                   | Output                                                                   |
-| ---------------------- | --------------------------------------- | ------------------------------------------------------------------------ |
-| **Create**             | Scope filters (semester, faculty, etc.) | Coverage stats, warnings, `AnalysisPipeline` entity                      |
-| **Confirm**            | Pipeline ID                             | Embedding backfill (best-effort), sentiment dispatch                     |
-| **Sentiment Analysis** | Batch of comments                       | Per-submission sentiment scores                                          |
-| **Sentiment Gate**     | Sentiment results                       | Filtered corpus (negative/neutral always pass; positive needs ≥10 words) |
-| **Topic Modeling**     | Gate-passing submissions + embeddings   | Topics, keyword clusters, soft assignments                               |
-| **Topic Labeling**     | Topics with raw labels + keywords       | Human-readable labels (2-4 words) via LLM                                |
-| **Recommendations**    | Aggregated sentiment + topics           | Prioritized action items                                                 |
+| Stage                  | Input                                     | Output                                                                      |
+| ---------------------- | ----------------------------------------- | --------------------------------------------------------------------------- |
+| **Create**             | Scope filters (semester, faculty, etc.)   | Coverage stats, warnings, `AnalysisPipeline` entity                         |
+| **Confirm**            | Pipeline ID                               | Embedding backfill (best-effort), sentiment dispatch                        |
+| **Sentiment Analysis** | Batch of comments                         | Per-submission sentiment scores                                             |
+| **Sentiment Gate**     | Sentiment results                         | Filtered corpus (negative/neutral always pass; positive needs ≥10 words)    |
+| **Topic Modeling**     | Gate-passing submissions + embeddings     | Topics, keyword clusters, soft assignments                                  |
+| **Topic Labeling**     | Topics with raw labels + keywords         | Human-readable labels (2-4 words) via LLM                                   |
+| **Recommendations**    | Pipeline ID (all data queried in-process) | STRENGTH/IMPROVEMENT actions with confidence scores and structured evidence |
 
 ### Coverage Warnings
 
@@ -113,7 +113,8 @@ Worker-specific response schemas are validated by each processor:
 
 - Sentiment: `sentimentResultItemSchema` (positive/neutral/negative scores)
 - Topic model: `topicModelWorkerResponseSchema` (topics + assignments + metrics)
-- Recommendations: `recommendationsWorkerResponseSchema` (actions with priority + evidence)
+
+The recommendations stage does **not** use the batch message contract — see [Recommendation Generation](#12-recommendation-generation) below.
 
 See `docs/worker-contracts/` for full per-worker contracts.
 
@@ -148,23 +149,24 @@ Single Redis instance for development/staging. In production, split into two:
 
 ## 7. Environment Variables
 
-| Variable                             | Default | Description                            |
-| ------------------------------------ | ------- | -------------------------------------- |
-| `SENTIMENT_WORKER_URL`               | —       | RunPod/mock URL for sentiment analysis |
-| `EMBEDDINGS_WORKER_URL`              | —       | URL for embedding generation           |
-| `TOPIC_MODEL_WORKER_URL`             | —       | URL for topic modeling                 |
-| `RECOMMENDATIONS_WORKER_URL`         | —       | URL for recommendations                |
-| `BULLMQ_SENTIMENT_CONCURRENCY`       | 3       | Sentiment processor concurrency        |
-| `EMBEDDINGS_CONCURRENCY`             | 3       | Embedding processor concurrency        |
-| `TOPIC_MODEL_CONCURRENCY`            | 1       | Topic model processor concurrency      |
-| `RECOMMENDATIONS_CONCURRENCY`        | 1       | Recommendations processor concurrency  |
-| `BULLMQ_DEFAULT_ATTEMPTS`            | 3       | Job retry attempts                     |
-| `BULLMQ_DEFAULT_BACKOFF_MS`          | 5000    | Initial backoff delay                  |
-| `BULLMQ_HTTP_TIMEOUT_MS`             | 90000   | HTTP request timeout (default)         |
-| `BULLMQ_TOPIC_MODEL_HTTP_TIMEOUT_MS` | 300000  | Topic model HTTP timeout (5 min)       |
-| `BULLMQ_STALLED_INTERVAL_MS`         | 30000   | Stall detection interval               |
-| `BULLMQ_MAX_STALLED_COUNT`           | 2       | Max stalled retries before failure     |
-| `RUNPOD_API_KEY`                     | —       | RunPod API key for serverless workers  |
+| Variable                             | Default       | Description                                     |
+| ------------------------------------ | ------------- | ----------------------------------------------- |
+| `SENTIMENT_WORKER_URL`               | —             | RunPod/mock URL for sentiment analysis          |
+| `EMBEDDINGS_WORKER_URL`              | —             | URL for embedding generation                    |
+| `TOPIC_MODEL_WORKER_URL`             | —             | URL for topic modeling                          |
+| `RECOMMENDATIONS_WORKER_URL`         | —             | Deprecated — recommendations now use direct LLM |
+| `RECOMMENDATIONS_MODEL`              | `gpt-4o-mini` | OpenAI model for recommendation generation      |
+| `BULLMQ_SENTIMENT_CONCURRENCY`       | 3             | Sentiment processor concurrency                 |
+| `EMBEDDINGS_CONCURRENCY`             | 3             | Embedding processor concurrency                 |
+| `TOPIC_MODEL_CONCURRENCY`            | 1             | Topic model processor concurrency               |
+| `RECOMMENDATIONS_CONCURRENCY`        | 1             | Recommendations processor concurrency           |
+| `BULLMQ_DEFAULT_ATTEMPTS`            | 3             | Job retry attempts                              |
+| `BULLMQ_DEFAULT_BACKOFF_MS`          | 5000          | Initial backoff delay                           |
+| `BULLMQ_HTTP_TIMEOUT_MS`             | 90000         | HTTP request timeout (default)                  |
+| `BULLMQ_TOPIC_MODEL_HTTP_TIMEOUT_MS` | 300000        | Topic model HTTP timeout (5 min)                |
+| `BULLMQ_STALLED_INTERVAL_MS`         | 30000         | Stall detection interval                        |
+| `BULLMQ_MAX_STALLED_COUNT`           | 2             | Max stalled retries before failure              |
+| `RUNPOD_API_KEY`                     | —             | RunPod API key for serverless workers           |
 
 ## 8. Vector Storage
 
@@ -232,7 +234,83 @@ After topic modeling completes and before recommendations are dispatched, the `T
 
 **Resilience:** If the LLM call fails (rate limit, network error, empty response), the service logs a warning and falls back silently — topics retain their BERTopic-generated `rawLabel`. This is a non-blocking, best-effort enrichment step.
 
-## 12. Adding a New Analysis Type
+## 12. Recommendation Generation
+
+Unlike other pipeline stages that dispatch work to external HTTP workers, recommendations are generated **in-process** by `RecommendationGenerationService` calling the OpenAI API directly.
+
+### Why Not an External Worker?
+
+Recommendations don't need GPU compute — they're LLM text generation. The service also needs full database access to build rich prompts (dimension score aggregation, per-topic sentiment breakdowns, sample comment selection), which an external worker cannot do without replicating the data layer.
+
+### Data Flow
+
+```
+BullMQ job (pipeline/run IDs only)
+  → RecommendationsProcessor
+    → RecommendationGenerationService.Generate(pipelineId)
+      1. Load pipeline with scope relations
+      2. Query dimension scores (SQL AVG aggregation on QuestionnaireAnswer)
+      3. Load top 10 topics with per-topic sentiment breakdowns
+      4. Select sample quotes (strongest sentiment signal from dominant topic assignments)
+      5. Select proportional sample comments (distribution-aware across sentiment buckets)
+      6. Build system + user prompt
+      7. Call OpenAI with zodResponseFormat(llmRecommendationsResponseSchema)
+      8. Attach supporting evidence with computed confidence levels
+    → Persist RecommendedAction entities
+    → Mark RecommendationRun COMPLETED
+    → Advance pipeline to COMPLETED
+```
+
+### Prompt Structure
+
+The LLM receives:
+
+- **Context:** Submission count, comment count, response rate, global sentiment distribution
+- **Topics:** Top topics with keywords, comment counts, and per-topic sentiment breakdowns
+- **Dimension scores:** Average scores per questionnaire dimension
+- **Sample comments:** Up to 20 comments, proportionally selected across sentiment labels
+
+### Confidence Scoring
+
+Each recommendation gets a computed confidence level based on its backing data:
+
+| Level  | Criteria                                    |
+| ------ | ------------------------------------------- |
+| HIGH   | ≥ 10 comments AND ≥ 70% sentiment agreement |
+| MEDIUM | ≥ 5 comments (or HIGH criteria not met)     |
+| LOW    | < 5 comments                                |
+
+When a recommendation references a topic, confidence is scoped to that topic's comment count and sentiment. Otherwise, pipeline-level totals are used as fallback.
+
+### Supporting Evidence
+
+Each `RecommendedAction` stores a `supportingEvidence` JSONB column with:
+
+- **Sources:** Discriminated union of `TopicSource` (topic label, comment count, sentiment breakdown, sample quotes) and `DimensionScoresSource` (dimension code + average score pairs)
+- **Confidence level:** HIGH / MEDIUM / LOW
+- **basedOnSubmissions:** Total comment count in scope
+
+### Output Schema
+
+Actions follow the `RecommendedActionItem` schema:
+
+| Field                | Type                      | Description                                       |
+| -------------------- | ------------------------- | ------------------------------------------------- |
+| `category`           | `STRENGTH \| IMPROVEMENT` | Whether this is a positive finding or area to fix |
+| `headline`           | string                    | Short title (5-10 words)                          |
+| `description`        | string                    | 1-2 sentences explaining the observed pattern     |
+| `actionPlan`         | string                    | 2-4 sentences with concrete steps                 |
+| `priority`           | `HIGH \| MEDIUM \| LOW`   | Urgency level                                     |
+| `supportingEvidence` | SupportingEvidence        | Structured evidence with confidence score         |
+
+### Configuration
+
+| Variable                | Default       | Description                    |
+| ----------------------- | ------------- | ------------------------------ |
+| `RECOMMENDATIONS_MODEL` | `gpt-4o-mini` | OpenAI model for generation    |
+| `OPENAI_API_KEY`        | —             | Required (shared with ChatKit) |
+
+## 13. Adding a New Analysis Type
 
 1. Create `NewTypeProcessor extends BaseBatchProcessor` (or `RunPodBatchProcessor` for RunPod workers) in `src/modules/analysis/processors/`
 2. Add `NEW_TYPE_WORKER_URL` and `NEW_TYPE_CONCURRENCY` to `src/configurations/env/bullmq.env.ts`

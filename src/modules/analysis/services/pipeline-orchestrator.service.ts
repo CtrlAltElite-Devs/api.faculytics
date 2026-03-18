@@ -28,6 +28,7 @@ import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { PipelineStatus, RunStatus } from '../enums';
 import { SENTIMENT_GATE, COVERAGE_WARNINGS } from '../constants';
+import { buildSubmissionScope } from '../lib/build-submission-scope';
 import {
   CreatePipelineInput,
   createPipelineSchema,
@@ -35,6 +36,11 @@ import {
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { batchAnalysisJobSchema } from '../dto/batch-analysis-job-message.dto';
 import { PipelineStatusResponse } from '../dto/pipeline-status.dto';
+import {
+  type RecommendationsJobMessage,
+  recommendationsJobSchema,
+} from '../dto/recommendations.dto';
+import { RecommendationsResponseDto } from '../dto/responses/recommendations.response.dto';
 import { AnalysisService } from '../analysis.service';
 import { TopicLabelService } from './topic-label.service';
 
@@ -210,7 +216,7 @@ export class PipelineOrchestratorService {
     pipeline.confirmedAt = new Date();
 
     // Check embedding coverage (use cleanedComment — text that survived preprocessing)
-    const scope = this.buildSubmissionScope(pipeline);
+    const scope = buildSubmissionScope(pipeline);
     const submissions = await fork.find(QuestionnaireSubmission, {
       ...scope,
       cleanedComment: { $ne: null },
@@ -377,16 +383,6 @@ export class PipelineOrchestratorService {
 
     if (pipeline.status !== PipelineStatus.TOPIC_MODELING) return;
 
-    // Validate recommendations worker URL
-    if (!env.RECOMMENDATIONS_WORKER_URL) {
-      await this.failPipeline(
-        fork,
-        pipeline,
-        'RECOMMENDATIONS_WORKER_URL not configured',
-      );
-      return;
-    }
-
     // Generate human-readable labels before dispatching recommendations
     const topicModelRun = await fork.findOne(
       TopicModelRun,
@@ -454,7 +450,7 @@ export class PipelineOrchestratorService {
     );
 
     // Compute lastEnrollmentSyncAt by scoping through courses in submission scope
-    const scope = this.buildSubmissionScope(pipeline);
+    const scope = buildSubmissionScope(pipeline);
     let lastEnrollmentSyncAt: Date | null = null;
     const scopedSubs = await fork.find(
       QuestionnaireSubmission,
@@ -656,22 +652,6 @@ export class PipelineOrchestratorService {
     };
   }
 
-  private buildSubmissionScope(
-    pipeline: AnalysisPipeline,
-  ): Record<string, unknown> {
-    const scope: Record<string, unknown> = {
-      semester: pipeline.semester,
-    };
-    if (pipeline.faculty) scope['faculty'] = pipeline.faculty;
-    if (pipeline.questionnaireVersion)
-      scope['questionnaireVersion'] = pipeline.questionnaireVersion;
-    if (pipeline.department) scope['department'] = pipeline.department;
-    if (pipeline.program) scope['program'] = pipeline.program;
-    if (pipeline.campus) scope['campus'] = pipeline.campus;
-    if (pipeline.course) scope['course'] = pipeline.course;
-    return scope;
-  }
-
   private async getUnembeddedSubmissions(
     em: EntityManager,
     submissionIds: string[],
@@ -698,7 +678,7 @@ export class PipelineOrchestratorService {
     em: EntityManager,
     pipeline: AnalysisPipeline,
   ): Promise<void> {
-    const scope = this.buildSubmissionScope(pipeline);
+    const scope = buildSubmissionScope(pipeline);
     const submissions = await em.find(QuestionnaireSubmission, {
       ...scope,
       cleanedComment: { $ne: null },
@@ -852,6 +832,25 @@ export class PipelineOrchestratorService {
     );
   }
 
+  async GetRecommendations(
+    pipelineId: string,
+  ): Promise<RecommendationsResponseDto> {
+    const fork = this.em.fork();
+    const pipeline = await fork.findOne(AnalysisPipeline, pipelineId);
+
+    if (!pipeline) {
+      throw new NotFoundException(`Pipeline ${pipelineId} not found`);
+    }
+
+    const run = await fork.findOne(
+      RecommendationRun,
+      { pipeline },
+      { orderBy: { createdAt: 'DESC' }, populate: ['actions'] },
+    );
+
+    return RecommendationsResponseDto.Map(pipelineId, run ?? null);
+  }
+
   private async dispatchRecommendations(
     em: EntityManager,
     pipeline: AnalysisPipeline,
@@ -877,66 +876,17 @@ export class PipelineOrchestratorService {
     });
     await em.flush();
 
-    // Build aggregated data for recommendations worker
-    const sentimentCounts = { positive: 0, neutral: 0, negative: 0 };
-    if (sentimentRun) {
-      const sentimentResults = await em.find(SentimentResult, {
-        run: sentimentRun,
-      });
-      for (const r of sentimentResults) {
-        if (r.label === 'positive') sentimentCounts.positive++;
-        else if (r.label === 'neutral') sentimentCounts.neutral++;
-        else sentimentCounts.negative++;
-      }
-    }
-
-    const topTopics: { label: string; keywords: string[]; docCount: number }[] =
-      [];
-    if (topicModelRun) {
-      const topics = await em.find(
-        Topic,
-        { run: topicModelRun },
-        {
-          orderBy: { docCount: 'DESC' },
-          limit: 10,
-        },
-      );
-      for (const t of topics) {
-        topTopics.push({
-          label: t.label ?? t.rawLabel,
-          keywords: t.keywords,
-          docCount: t.docCount,
-        });
-      }
-    }
-
     const jobId = v4();
-    const payload = {
+    const payload: RecommendationsJobMessage = recommendationsJobSchema.parse({
       jobId,
       version: '1.0',
       type: 'recommendations',
-      items: [],
-      scope: {
-        semester: pipeline.semester?.id || '',
-        department: pipeline.department?.id,
-        program: pipeline.program?.id,
-        campus: pipeline.campus?.id,
-        faculty: pipeline.faculty?.id,
-        course: pipeline.course?.id,
-      },
-      data: {
-        submissionCount: pipeline.submissionCount,
-        commentCount: pipeline.commentCount,
-        responseRate: Number(pipeline.responseRate),
-        sentimentSummary: sentimentCounts,
-        topTopics,
-      },
       metadata: {
         pipelineId: pipeline.id,
         runId: run.id,
       },
       publishedAt: new Date().toISOString(),
-    };
+    });
 
     run.jobId = jobId;
     await em.flush();
@@ -948,7 +898,7 @@ export class PipelineOrchestratorService {
     });
 
     this.logger.log(
-      `Dispatched recommendations batch job for pipeline ${pipeline.id}`,
+      `Dispatched recommendations job for pipeline ${pipeline.id}`,
     );
   }
 

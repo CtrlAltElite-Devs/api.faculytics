@@ -114,7 +114,7 @@ Ad-hoc jobs use: `${submissionId}:${type}`.
 | Mechanism          | Configuration                               | Behavior                                                                            |
 | ------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Retry              | `BULLMQ_DEFAULT_ATTEMPTS` (default: 3)      | Exponential backoff starting at `BULLMQ_DEFAULT_BACKOFF_MS`                         |
-| HTTP Timeout       | `BULLMQ_HTTP_TIMEOUT_MS` (default: 90s)     | `AbortController` cancels request; job retries                                      |
+| HTTP Timeout       | `BULLMQ_HTTP_TIMEOUT_MS` (default: 90s)     | `AbortController` cancels request; job retries. Topic model uses 300s via override  |
 | Stall Detection    | `BULLMQ_STALLED_INTERVAL_MS` (default: 30s) | Re-queues stalled jobs up to `BULLMQ_MAX_STALLED_COUNT` times                       |
 | Validation Failure | —                                           | Malformed worker responses fail the stage (no retry)                                |
 | Redis Down         | —                                           | `ServiceUnavailableException` returned to caller; API continues serving             |
@@ -122,7 +122,7 @@ Ad-hoc jobs use: `${submissionId}:${type}`.
 
 ## Adding a New Analysis Type
 
-1. Create `NewTypeProcessor extends BaseBatchProcessor` in `src/modules/analysis/processors/`
+1. Create `NewTypeProcessor extends BaseBatchProcessor` (or `RunPodBatchProcessor` for RunPod workers) in `src/modules/analysis/processors/`
 2. Add `NEW_TYPE_WORKER_URL` and `NEW_TYPE_CONCURRENCY` to `src/configurations/env/bullmq.env.ts`
 3. Register queue in `AnalysisModule`: add to `BullModule.registerQueue()`
 4. Add `@InjectQueue('new-type')` to `PipelineOrchestratorService`

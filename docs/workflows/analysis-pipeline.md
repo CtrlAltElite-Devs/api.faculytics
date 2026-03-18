@@ -37,7 +37,7 @@ The orchestrator:
 
 1. Validates the pipeline is in `AWAITING_CONFIRMATION` status.
 2. Checks that `SENTIMENT_WORKER_URL` is configured.
-3. **Embedding backfill (best-effort):** If `EMBEDDINGS_WORKER_URL` is configured and some submissions lack embeddings, enqueues individual embedding jobs. These run alongside sentiment analysis.
+3. **Embedding backfill (best-effort):** If `EMBEDDINGS_WORKER_URL` is configured and some submissions with `cleanedComment` lack embeddings, enqueues individual embedding jobs using the cleaned text. These run alongside sentiment analysis.
 4. Creates a `SentimentRun` entity and dispatches a batch job to the sentiment queue.
 5. Advances pipeline to `SENTIMENT_ANALYSIS`.
 
@@ -45,7 +45,7 @@ The orchestrator:
 
 The `SentimentProcessor`:
 
-1. Sends all comments as a batch HTTP POST to the sentiment worker.
+1. Sends all `cleanedComment` texts as a batch HTTP POST to the sentiment worker.
 2. Validates each result item against `sentimentResultItemSchema`.
 3. Determines the dominant label (positive/neutral/negative) from scores.
 4. Creates `SentimentResult` entities.
@@ -82,23 +82,48 @@ The `TopicModelProcessor`:
 6. Updates run metadata (topic count, outlier count, quality metrics).
 7. Calls `OnTopicModelComplete()`.
 
-## 6. Recommendations
+## 6. Topic Labeling
 
-The orchestrator aggregates data from previous stages:
+After topic modeling completes and before recommendations are dispatched, the orchestrator runs an inline enrichment step:
 
-- Sentiment label counts (positive/neutral/negative)
-- Top 10 topics with keywords and document counts
-- Coverage metadata
+1. Fetches the latest `TopicModelRun` and all its `Topic` entities.
+2. Calls `TopicLabelService.generateLabels(topics)`, which sends topics (raw labels + keywords) to OpenAI `gpt-4o-mini`.
+3. The LLM returns short, human-readable labels (2-4 words, title case) via Zod-validated structured output.
+4. Labels are written to `Topic.label` and flushed to the database.
 
-Creates a `RecommendationRun` and dispatches to the recommendations queue.
+**Fallback:** If the LLM call fails, topics keep their BERTopic-generated `rawLabel`. This step is non-blocking.
 
-The `RecommendationsProcessor`:
+## 7. Recommendations
 
-1. Validates against `recommendationsWorkerResponseSchema`.
-2. Creates `RecommendedAction` entities with category, priority (HIGH/MEDIUM/LOW), action text, and supporting evidence (JSONB).
+The orchestrator creates a `RecommendationRun` and dispatches a lightweight job to the recommendations queue (containing only pipeline and run IDs).
+
+The `RecommendationsProcessor` calls `RecommendationGenerationService.Generate(pipelineId)`, which:
+
+1. Loads the pipeline with all scope relations.
+2. Aggregates dimension scores via SQL (`AVG(numeric_value) GROUP BY dimension_code`).
+3. Loads the top 10 topics and computes per-topic sentiment breakdowns by cross-referencing topic assignments with sentiment results.
+4. Selects sample quotes from dominant topic assignments (sorted by sentiment strength).
+5. Selects up to 20 sample comments proportionally across sentiment labels.
+6. Constructs a system + user prompt and calls OpenAI with `zodResponseFormat` for structured output.
+7. The LLM returns 3-7 recommendations split between STRENGTH (positive patterns) and IMPROVEMENT (areas to work on).
+8. Each recommendation is enriched with supporting evidence:
+   - Topic-level sources (label, comment count, sentiment breakdown, sample quotes)
+   - Dimension score sources (dimension code + average score pairs)
+   - Computed confidence level (HIGH/MEDIUM/LOW based on comment count and sentiment agreement)
+
+The processor then:
+
+1. Creates `RecommendedAction` entities with category, headline, description, actionPlan, priority, and supportingEvidence (JSONB).
+2. Marks the `RecommendationRun` as `COMPLETED`.
 3. Calls `OnRecommendationsComplete()`.
 
-## 7. Completion
+### Retrieving Recommendations
+
+**Endpoint:** `GET /analysis/pipelines/:id/recommendations`
+
+Returns the latest `RecommendationRun` for the pipeline with all actions. If the run is still processing, returns an empty actions array with the current run status.
+
+## 8. Completion
 
 Pipeline status moves to `COMPLETED` with `completedAt` timestamp.
 

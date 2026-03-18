@@ -10,7 +10,7 @@ import { RunStatus } from '../enums';
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { BatchAnalysisResultMessage } from '../dto/batch-analysis-result-message.dto';
 import { sentimentResultItemSchema } from '../dto/sentiment-worker.dto';
-import { BaseBatchProcessor } from './base-batch.processor';
+import { RunPodBatchProcessor } from './runpod-batch.processor';
 import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.service';
 
 @Processor('sentiment', {
@@ -18,7 +18,7 @@ import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.s
   stalledInterval: env.BULLMQ_STALLED_INTERVAL_MS,
   maxStalledCount: env.BULLMQ_MAX_STALLED_COUNT,
 })
-export class SentimentProcessor extends BaseBatchProcessor {
+export class SentimentProcessor extends RunPodBatchProcessor {
   protected readonly logger = new Logger(SentimentProcessor.name);
 
   constructor(

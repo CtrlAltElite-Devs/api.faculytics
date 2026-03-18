@@ -67,6 +67,8 @@ classDiagram
         +AnalysisService
         +AnalysisController
         +PipelineOrchestratorService
+        +TopicLabelService
+        +RecommendationGenerationService
         +SentimentProcessor
         +TopicModelProcessor
         +RecommendationsProcessor
@@ -150,21 +152,24 @@ The `PipelineOrchestratorService` manages the full analysis lifecycle through a 
 
 ### Components
 
-| Component                     | Purpose                                                                       |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| `PipelineOrchestratorService` | Creates pipelines, manages stage transitions, dispatches batch jobs           |
-| `AnalysisService`             | Low-level entry point — `EnqueueJob()` and `EnqueueBatch()` for ad-hoc jobs   |
-| `AnalysisController`          | REST API for pipeline CRUD (`POST/GET /analysis/pipelines`)                   |
-| `BaseBatchProcessor`          | Abstract base — HTTP dispatch, Zod validation, retry, stall detection         |
-| `SentimentProcessor`          | Batch sentiment analysis, triggers sentiment gate on completion               |
-| `TopicModelProcessor`         | Batch topic modeling with chunked assignment persistence                      |
-| `RecommendationsProcessor`    | Generates prioritized action items from aggregated analysis data              |
-| `EmbeddingProcessor`          | Per-submission embedding generation (upsert, extends `BaseAnalysisProcessor`) |
+| Component                         | Purpose                                                                             |
+| --------------------------------- | ----------------------------------------------------------------------------------- |
+| `PipelineOrchestratorService`     | Creates pipelines, manages stage transitions, dispatches batch jobs                 |
+| `AnalysisService`                 | Low-level entry point — `EnqueueJob()` and `EnqueueBatch()` for ad-hoc jobs         |
+| `AnalysisController`              | REST API for pipeline CRUD (`POST/GET /analysis/pipelines`)                         |
+| `BaseBatchProcessor`              | Abstract base — HTTP dispatch, Zod validation, retry, stall detection               |
+| `RunPodBatchProcessor`            | RunPod-specific subclass — auth headers, `{ input/output }` envelope handling       |
+| `SentimentProcessor`              | Batch sentiment analysis, triggers sentiment gate on completion                     |
+| `TopicModelProcessor`             | Batch topic modeling via RunPod, chunked assignment persistence                     |
+| `TopicLabelService`               | LLM-based labeling of BERTopic topics (gpt-4o-mini, inline before recommendations)  |
+| `RecommendationGenerationService` | Builds LLM prompts from DB data, calls OpenAI, computes confidence and evidence     |
+| `RecommendationsProcessor`        | BullMQ processor — delegates to `RecommendationGenerationService`, persists results |
+| `EmbeddingProcessor`              | Per-submission embedding generation (upsert, extends `BaseAnalysisProcessor`)       |
 
 ### Pipeline Stages
 
 ```
-AWAITING_CONFIRMATION → SENTIMENT_ANALYSIS → SENTIMENT_GATE → TOPIC_MODELING → GENERATING_RECOMMENDATIONS → COMPLETED
+AWAITING_CONFIRMATION → SENTIMENT_ANALYSIS → SENTIMENT_GATE → TOPIC_MODELING → TOPIC_LABELING → GENERATING_RECOMMENDATIONS → COMPLETED
 ```
 
 Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMPLETED` / `FAILED`).
@@ -182,12 +187,13 @@ Four BullMQ queues with independent concurrency:
 
 ### REST Endpoints
 
-| Method | Path                              | Description                                           |
-| ------ | --------------------------------- | ----------------------------------------------------- |
-| POST   | `/analysis/pipelines`             | Create a pipeline (returns coverage stats + warnings) |
-| POST   | `/analysis/pipelines/:id/confirm` | Confirm and start execution                           |
-| POST   | `/analysis/pipelines/:id/cancel`  | Cancel a non-terminal pipeline                        |
-| GET    | `/analysis/pipelines/:id/status`  | Get pipeline status with stage details                |
+| Method | Path                                      | Description                                           |
+| ------ | ----------------------------------------- | ----------------------------------------------------- |
+| POST   | `/analysis/pipelines`                     | Create a pipeline (returns coverage stats + warnings) |
+| POST   | `/analysis/pipelines/:id/confirm`         | Confirm and start execution                           |
+| POST   | `/analysis/pipelines/:id/cancel`          | Cancel a non-terminal pipeline                        |
+| GET    | `/analysis/pipelines/:id/status`          | Get pipeline status with stage details                |
+| GET    | `/analysis/pipelines/:id/recommendations` | Get recommendations for a completed pipeline          |
 
 **Resilience:** Exponential backoff retries, stall detection, graceful degradation when Redis is unavailable (`ServiceUnavailableException`), HTTP timeout via `AbortController`.
 

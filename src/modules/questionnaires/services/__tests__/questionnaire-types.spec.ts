@@ -17,6 +17,7 @@ import { ScoringService } from '../scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { CacheService } from '../../../common/cache/cache.service';
 import { AnalysisService } from '../../../analysis/analysis.service';
+import { CurrentUserService } from '../../../common/cls/current-user.service';
 import {
   QuestionnaireStatus,
   QuestionnaireType,
@@ -85,6 +86,12 @@ describe('QuestionnaireService - Types & Versions', () => {
         {
           provide: AnalysisService,
           useValue: { EnqueueJob: jest.fn() },
+        },
+        {
+          provide: CurrentUserService,
+          useValue: {
+            getOrFail: jest.fn().mockReturnValue({ id: 'test-user' }),
+          },
         },
         {
           provide: CacheService,

@@ -28,6 +28,7 @@ import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { PipelineStatus, RunStatus } from '../enums';
 import { SENTIMENT_GATE, COVERAGE_WARNINGS } from '../constants';
+import { buildSubmissionScope } from '../lib/build-submission-scope';
 import {
   CreatePipelineInput,
   createPipelineSchema,
@@ -35,7 +36,13 @@ import {
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { batchAnalysisJobSchema } from '../dto/batch-analysis-job-message.dto';
 import { PipelineStatusResponse } from '../dto/pipeline-status.dto';
+import {
+  type RecommendationsJobMessage,
+  recommendationsJobSchema,
+} from '../dto/recommendations.dto';
+import { RecommendationsResponseDto } from '../dto/responses/recommendations.response.dto';
 import { AnalysisService } from '../analysis.service';
+import { TopicLabelService } from './topic-label.service';
 
 interface CoverageStats {
   totalEnrolled: number;
@@ -68,6 +75,7 @@ export class PipelineOrchestratorService {
   constructor(
     private readonly em: EntityManager,
     private readonly analysisService: AnalysisService,
+    private readonly topicLabelService: TopicLabelService,
     @InjectQueue('sentiment') private readonly sentimentQueue: Queue,
     @InjectQueue('topic-model') private readonly topicModelQueue: Queue,
     @InjectQueue('recommendations')
@@ -207,11 +215,11 @@ export class PipelineOrchestratorService {
 
     pipeline.confirmedAt = new Date();
 
-    // Check embedding coverage
-    const scope = this.buildSubmissionScope(pipeline);
+    // Check embedding coverage (use cleanedComment — text that survived preprocessing)
+    const scope = buildSubmissionScope(pipeline);
     const submissions = await fork.find(QuestionnaireSubmission, {
       ...scope,
-      qualitativeComment: { $ne: null },
+      cleanedComment: { $ne: null },
     });
 
     const submissionIds = submissions.map((s) => s.id);
@@ -234,7 +242,7 @@ export class PipelineOrchestratorService {
         try {
           await this.analysisService.EnqueueJob(
             'embedding',
-            sub.qualitativeComment!,
+            sub.cleanedComment!,
             { submissionId: sub.id, facultyId: '', versionId: '' },
           );
         } catch (err) {
@@ -310,8 +318,7 @@ export class PipelineOrchestratorService {
         // For positive sentiment, check word count
         const submission = submissionMap.get(result.submission.id);
         const wordCount =
-          submission?.qualitativeComment?.split(/\s+/).filter(Boolean).length ??
-          0;
+          submission?.cleanedComment?.split(/\s+/).filter(Boolean).length ?? 0;
 
         if (wordCount >= SENTIMENT_GATE.POSITIVE_MIN_WORD_COUNT) {
           passingIds.push(result.id);
@@ -376,14 +383,16 @@ export class PipelineOrchestratorService {
 
     if (pipeline.status !== PipelineStatus.TOPIC_MODELING) return;
 
-    // Validate recommendations worker URL
-    if (!env.RECOMMENDATIONS_WORKER_URL) {
-      await this.failPipeline(
-        fork,
-        pipeline,
-        'RECOMMENDATIONS_WORKER_URL not configured',
-      );
-      return;
+    // Generate human-readable labels before dispatching recommendations
+    const topicModelRun = await fork.findOne(
+      TopicModelRun,
+      { pipeline },
+      { orderBy: { createdAt: 'DESC' } },
+    );
+    if (topicModelRun) {
+      const topics = await fork.find(Topic, { run: topicModelRun });
+      await this.topicLabelService.generateLabels(topics);
+      await fork.flush();
     }
 
     pipeline.status = PipelineStatus.GENERATING_RECOMMENDATIONS;
@@ -441,7 +450,7 @@ export class PipelineOrchestratorService {
     );
 
     // Compute lastEnrollmentSyncAt by scoping through courses in submission scope
-    const scope = this.buildSubmissionScope(pipeline);
+    const scope = buildSubmissionScope(pipeline);
     let lastEnrollmentSyncAt: Date | null = null;
     const scopedSubs = await fork.find(
       QuestionnaireSubmission,
@@ -643,22 +652,6 @@ export class PipelineOrchestratorService {
     };
   }
 
-  private buildSubmissionScope(
-    pipeline: AnalysisPipeline,
-  ): Record<string, unknown> {
-    const scope: Record<string, unknown> = {
-      semester: pipeline.semester,
-    };
-    if (pipeline.faculty) scope['faculty'] = pipeline.faculty;
-    if (pipeline.questionnaireVersion)
-      scope['questionnaireVersion'] = pipeline.questionnaireVersion;
-    if (pipeline.department) scope['department'] = pipeline.department;
-    if (pipeline.program) scope['program'] = pipeline.program;
-    if (pipeline.campus) scope['campus'] = pipeline.campus;
-    if (pipeline.course) scope['course'] = pipeline.course;
-    return scope;
-  }
-
   private async getUnembeddedSubmissions(
     em: EntityManager,
     submissionIds: string[],
@@ -685,17 +678,17 @@ export class PipelineOrchestratorService {
     em: EntityManager,
     pipeline: AnalysisPipeline,
   ): Promise<void> {
-    const scope = this.buildSubmissionScope(pipeline);
+    const scope = buildSubmissionScope(pipeline);
     const submissions = await em.find(QuestionnaireSubmission, {
       ...scope,
-      qualitativeComment: { $ne: null },
+      cleanedComment: { $ne: null },
     });
 
     if (submissions.length === 0) {
       await this.failPipeline(
         em,
         pipeline,
-        'No submissions with comments found for sentiment analysis',
+        'No submissions with cleaned comments found for sentiment analysis',
       );
       return;
     }
@@ -714,7 +707,7 @@ export class PipelineOrchestratorService {
       type: 'sentiment',
       items: submissions.map((s) => ({
         submissionId: s.id,
-        text: s.qualitativeComment!,
+        text: s.cleanedComment!,
       })),
       metadata: {
         pipelineId: pipeline.id,
@@ -761,10 +754,10 @@ export class PipelineOrchestratorService {
       return;
     }
 
-    // Get submissions with embeddings
+    // Get submissions with embeddings (use cleanedComment for topic modeling text)
     const submissions = await em.find(QuestionnaireSubmission, {
       id: { $in: passingSubmissionIds },
-      qualitativeComment: { $ne: null },
+      cleanedComment: { $ne: null },
     });
 
     const embeddings = await em.find(SubmissionEmbedding, {
@@ -795,7 +788,7 @@ export class PipelineOrchestratorService {
 
     const items = withEmbeddings.map((s) => ({
       submissionId: s.id,
-      text: s.qualitativeComment!,
+      text: s.cleanedComment!,
       embedding: embeddingMap.get(s.id)!,
     }));
 
@@ -839,6 +832,25 @@ export class PipelineOrchestratorService {
     );
   }
 
+  async GetRecommendations(
+    pipelineId: string,
+  ): Promise<RecommendationsResponseDto> {
+    const fork = this.em.fork();
+    const pipeline = await fork.findOne(AnalysisPipeline, pipelineId);
+
+    if (!pipeline) {
+      throw new NotFoundException(`Pipeline ${pipelineId} not found`);
+    }
+
+    const run = await fork.findOne(
+      RecommendationRun,
+      { pipeline },
+      { orderBy: { createdAt: 'DESC' }, populate: ['actions'] },
+    );
+
+    return RecommendationsResponseDto.Map(pipelineId, run ?? null);
+  }
+
   private async dispatchRecommendations(
     em: EntityManager,
     pipeline: AnalysisPipeline,
@@ -864,66 +876,17 @@ export class PipelineOrchestratorService {
     });
     await em.flush();
 
-    // Build aggregated data for recommendations worker
-    const sentimentCounts = { positive: 0, neutral: 0, negative: 0 };
-    if (sentimentRun) {
-      const sentimentResults = await em.find(SentimentResult, {
-        run: sentimentRun,
-      });
-      for (const r of sentimentResults) {
-        if (r.label === 'positive') sentimentCounts.positive++;
-        else if (r.label === 'neutral') sentimentCounts.neutral++;
-        else sentimentCounts.negative++;
-      }
-    }
-
-    const topTopics: { label: string; keywords: string[]; docCount: number }[] =
-      [];
-    if (topicModelRun) {
-      const topics = await em.find(
-        Topic,
-        { run: topicModelRun },
-        {
-          orderBy: { docCount: 'DESC' },
-          limit: 10,
-        },
-      );
-      for (const t of topics) {
-        topTopics.push({
-          label: t.rawLabel,
-          keywords: t.keywords,
-          docCount: t.docCount,
-        });
-      }
-    }
-
     const jobId = v4();
-    const payload = {
+    const payload: RecommendationsJobMessage = recommendationsJobSchema.parse({
       jobId,
       version: '1.0',
       type: 'recommendations',
-      items: [],
-      scope: {
-        semester: pipeline.semester?.id || '',
-        department: pipeline.department?.id,
-        program: pipeline.program?.id,
-        campus: pipeline.campus?.id,
-        faculty: pipeline.faculty?.id,
-        course: pipeline.course?.id,
-      },
-      data: {
-        submissionCount: pipeline.submissionCount,
-        commentCount: pipeline.commentCount,
-        responseRate: Number(pipeline.responseRate),
-        sentimentSummary: sentimentCounts,
-        topTopics,
-      },
       metadata: {
         pipelineId: pipeline.id,
         runId: run.id,
       },
       publishedAt: new Date().toISOString(),
-    };
+    });
 
     run.jobId = jobId;
     await em.flush();
@@ -935,7 +898,7 @@ export class PipelineOrchestratorService {
     });
 
     this.logger.log(
-      `Dispatched recommendations batch job for pipeline ${pipeline.id}`,
+      `Dispatched recommendations job for pipeline ${pipeline.id}`,
     );
   }
 

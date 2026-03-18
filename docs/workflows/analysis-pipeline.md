@@ -95,19 +95,33 @@ After topic modeling completes and before recommendations are dispatched, the or
 
 ## 7. Recommendations
 
-The orchestrator aggregates data from previous stages:
+The orchestrator creates a `RecommendationRun` and dispatches a lightweight job to the recommendations queue (containing only pipeline and run IDs).
 
-- Sentiment label counts (positive/neutral/negative)
-- Top 10 topics with keywords and document counts (using `topic.label` when available, falling back to `topic.rawLabel`)
-- Coverage metadata
+The `RecommendationsProcessor` calls `RecommendationGenerationService.Generate(pipelineId)`, which:
 
-Creates a `RecommendationRun` and dispatches to the recommendations queue.
+1. Loads the pipeline with all scope relations.
+2. Aggregates dimension scores via SQL (`AVG(numeric_value) GROUP BY dimension_code`).
+3. Loads the top 10 topics and computes per-topic sentiment breakdowns by cross-referencing topic assignments with sentiment results.
+4. Selects sample quotes from dominant topic assignments (sorted by sentiment strength).
+5. Selects up to 20 sample comments proportionally across sentiment labels.
+6. Constructs a system + user prompt and calls OpenAI with `zodResponseFormat` for structured output.
+7. The LLM returns 3-7 recommendations split between STRENGTH (positive patterns) and IMPROVEMENT (areas to work on).
+8. Each recommendation is enriched with supporting evidence:
+   - Topic-level sources (label, comment count, sentiment breakdown, sample quotes)
+   - Dimension score sources (dimension code + average score pairs)
+   - Computed confidence level (HIGH/MEDIUM/LOW based on comment count and sentiment agreement)
 
-The `RecommendationsProcessor`:
+The processor then:
 
-1. Validates against `recommendationsWorkerResponseSchema`.
-2. Creates `RecommendedAction` entities with category, priority (HIGH/MEDIUM/LOW), action text, and supporting evidence (JSONB).
+1. Creates `RecommendedAction` entities with category, headline, description, actionPlan, priority, and supportingEvidence (JSONB).
+2. Marks the `RecommendationRun` as `COMPLETED`.
 3. Calls `OnRecommendationsComplete()`.
+
+### Retrieving Recommendations
+
+**Endpoint:** `GET /analysis/pipelines/:id/recommendations`
+
+Returns the latest `RecommendationRun` for the pipeline with all actions. If the run is still processing, returns an empty actions array with the current run status.
 
 ## 8. Completion
 

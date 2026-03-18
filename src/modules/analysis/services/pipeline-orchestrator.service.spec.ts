@@ -326,6 +326,82 @@ describe('PipelineOrchestratorService', () => {
     });
   });
 
+  describe('GetRecommendations', () => {
+    it('should return completed recommendations with mapped DTO', async () => {
+      const pipeline = { id: 'p1' };
+      const run = {
+        id: 'r1',
+        status: RunStatus.COMPLETED,
+        completedAt: new Date('2026-03-17'),
+        actions: {
+          getItems: () => [
+            {
+              id: 'a1',
+              category: 'STRENGTH',
+              headline: 'Great Teaching',
+              description: 'Students love it.',
+              actionPlan: 'Keep going.',
+              priority: 'HIGH',
+              supportingEvidence: {
+                sources: [],
+                confidenceLevel: 'HIGH',
+                basedOnSubmissions: 50,
+              },
+              createdAt: new Date('2026-03-17'),
+            },
+          ],
+        },
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(run);
+
+      const result = await service.GetRecommendations('p1');
+
+      expect(result.pipelineId).toBe('p1');
+      expect(result.runId).toBe('r1');
+      expect(result.status).toBe(RunStatus.COMPLETED);
+      expect(result.actions.length).toBe(1);
+      expect(result.actions[0].headline).toBe('Great Teaching');
+    });
+
+    it('should throw NotFoundException when pipeline not found', async () => {
+      mockFork.findOne.mockResolvedValue(null);
+
+      await expect(service.GetRecommendations('p1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should return PENDING status with empty actions when no completed run', async () => {
+      const pipeline = { id: 'p1' };
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(null);
+
+      const result = await service.GetRecommendations('p1');
+
+      expect(result.status).toBe(RunStatus.PENDING);
+      expect(result.actions).toEqual([]);
+      expect(result.runId).toBeNull();
+    });
+
+    it('should return run status with empty actions when run exists but not completed', async () => {
+      const pipeline = { id: 'p1' };
+      const run = { id: 'r1', status: RunStatus.PROCESSING };
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(run);
+
+      const result = await service.GetRecommendations('p1');
+
+      expect(result.runId).toBe('r1');
+      expect(result.actions).toEqual([]);
+      expect(result.completedAt).toBeNull();
+    });
+  });
+
   describe('GetPipelineStatus', () => {
     it('should throw NotFoundException if pipeline not found', async () => {
       mockFork.findOne.mockResolvedValue(null);

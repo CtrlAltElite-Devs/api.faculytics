@@ -1,7 +1,7 @@
 import { Entity, Enum, Index, ManyToOne, Property } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { RecommendedActionRepository } from '../repositories/recommended-action.repository';
-import { ActionPriority } from '../modules/analysis/enums';
+import { ActionPriority, ActionCategory } from '../modules/analysis/enums';
 import { RecommendationRun } from './recommendation-run.entity';
 
 @Entity({ repository: () => RecommendedActionRepository })
@@ -10,11 +10,17 @@ export class RecommendedAction extends CustomBaseEntity {
   @ManyToOne(() => RecommendationRun)
   run!: RecommendationRun;
 
-  @Property()
-  category!: string;
+  @Enum(() => ActionCategory)
+  category!: ActionCategory;
 
   @Property({ type: 'text' })
-  actionText!: string;
+  headline!: string;
+
+  @Property({ type: 'text' })
+  description!: string;
+
+  @Property({ type: 'text' })
+  actionPlan!: string;
 
   @Enum(() => ActionPriority)
   priority!: ActionPriority;

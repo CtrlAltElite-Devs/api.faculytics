@@ -141,6 +141,14 @@ The `CurriculumModule` returns flat arrays instead of paginated responses for de
 - **Rationale:** Result sets are inherently small within a dean's scope (1-3 departments, 5-15 programs, 20-60 courses). Super admins see more but still manageable for a single university. Pagination would add DTO and service complexity for no practical benefit.
 - **Trade-off:** If the system scales to multi-university, super admin result sets could grow. Acceptable risk — pagination can be added later without breaking the API contract (response would change from `T[]` to `{ data: T[], meta: ... }`).
 
+## 23. Per-Card Submission Count over Bulk Endpoint
+
+Faculty card submission counts use a per-card `GET /faculty/:facultyId/submission-count?semesterId=X` endpoint instead of a bulk endpoint that returns counts for all faculty at once.
+
+- **Rationale:** Simpler contract (no array parsing/validation), individually cacheable, matches the React component-per-card pattern where TanStack Query handles parallel fetches with deduplication. Realistic page sizes (10-20 faculty) won't cause performance issues.
+- **Scope enforcement deferred:** The endpoint uses role-only guards (`DEAN`, `SUPER_ADMIN`) without re-deriving department scope. Faculty IDs are already scoped by the `GET /faculty` list endpoint. The data exposed is a bare count (not PII). Full department-level scope enforcement is deferred to a future bulk endpoint where it integrates naturally.
+- **Trade-off:** N+1 request pattern per page. Acceptable because TanStack Query parallelizes and deduplicates, and a bulk endpoint can be added later if this becomes a bottleneck.
+
 ## 20. Confidence-Scored Supporting Evidence
 
 Each recommendation includes a `supportingEvidence` object with computed confidence levels and structured data sources, rather than freeform text justification.

@@ -15,6 +15,7 @@ describe('FacultyService', () => {
   let em: {
     findOne: jest.Mock;
     find: jest.Mock;
+    count: jest.Mock;
     getConnection: jest.Mock;
   };
   let scopeResolver: { ResolveDepartmentIds: jest.Mock };
@@ -57,6 +58,7 @@ describe('FacultyService', () => {
     em = {
       findOne: jest.fn(),
       find: jest.fn(),
+      count: jest.fn(),
       getConnection: jest.fn().mockReturnValue({ execute: executeMock }),
     };
 
@@ -417,6 +419,66 @@ describe('FacultyService', () => {
       const result = await service.ListFaculty(baseQuery);
 
       expect(result.data[0].profilePicture).toBe('http://pic.jpg');
+    });
+  });
+
+  describe('GetSubmissionCount', () => {
+    const facultyId = 'faculty-1';
+
+    it('should return count 0 when user and semester exist but no submissions', async () => {
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce({ id: facultyId });
+      em.count.mockResolvedValue(0);
+
+      const result = await service.GetSubmissionCount(facultyId, semesterId);
+
+      expect(result).toEqual({ count: 0 });
+    });
+
+    it('should return correct count when submissions exist', async () => {
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce({ id: facultyId });
+      em.count.mockResolvedValue(5);
+
+      const result = await service.GetSubmissionCount(facultyId, semesterId);
+
+      expect(result).toEqual({ count: 5 });
+    });
+
+    it('should throw NotFoundException when semester does not exist', async () => {
+      em.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: facultyId });
+
+      await expect(
+        service.GetSubmissionCount(facultyId, semesterId),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw NotFoundException when user does not exist', async () => {
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce(null);
+
+      await expect(
+        service.GetSubmissionCount(facultyId, semesterId),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should call em.count with correct filter shape', async () => {
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce({ id: facultyId });
+      em.count.mockResolvedValue(3);
+
+      await service.GetSubmissionCount(facultyId, semesterId);
+
+      expect(em.count).toHaveBeenCalledWith(expect.any(Function), {
+        faculty: facultyId,
+        semester: semesterId,
+      });
     });
   });
 });

@@ -244,10 +244,11 @@ When explicit filter params (`departmentId`, `programId`) are provided, they are
 
 ### Modules
 
-| Module             | Endpoints                                              | Purpose                                        |
-| ------------------ | ------------------------------------------------------ | ---------------------------------------------- |
-| `FacultyModule`    | `GET /faculty`                                         | Paginated faculty list with course assignments |
-| `CurriculumModule` | `GET /curriculum/departments`, `/programs`, `/courses` | Institutional hierarchy for filter dropdowns   |
+| Module             | Endpoints                                              | Purpose                                            |
+| ------------------ | ------------------------------------------------------ | -------------------------------------------------- |
+| `FacultyModule`    | `GET /faculty`                                         | Paginated faculty list with course assignments     |
+| `FacultyModule`    | `GET /faculty/:facultyId/submission-count`             | Submission count for a faculty member per semester |
+| `CurriculumModule` | `GET /curriculum/departments`, `/programs`, `/courses` | Institutional hierarchy for filter dropdowns       |
 
 Both modules import `CommonModule` (for `ScopeResolverService`) and `DataLoaderModule` (for `CurrentUserInterceptor` → `UserLoader`).
 

@@ -51,6 +51,9 @@ classDiagram
         ChatKitModule
         QuestionnaireModule
         AnalysisModule
+        DimensionsModule
+        FacultyModule
+        CurriculumModule
     }
 
     AppModule --> InfrastructureModules : "imports"
@@ -62,6 +65,8 @@ classDiagram
     EnrollmentsModule --> MoodleModule : "uses MoodleService"
     QuestionnaireModule --> CommonModule : "uses UnitOfWork"
     AnalysisModule --> BullModule : "uses BullMQ queues"
+    FacultyModule --> CommonModule : "uses ScopeResolverService"
+    CurriculumModule --> CommonModule : "uses ScopeResolverService"
 
     class AnalysisModule {
         +AnalysisService
@@ -210,7 +215,45 @@ The `HealthModule` uses `@nestjs/terminus` to provide structured health checks a
 
 Returns HTTP 200 with `status: 'ok'` when healthy, HTTP 503 with `status: 'error'` and per-indicator details when unhealthy.
 
-## 9. Startup & Initialization Flow
+## 9. Scoped Query Pattern (Faculty & Curriculum)
+
+The `FacultyModule` and `CurriculumModule` use a shared role-based scoping pattern for administrative queries. This ensures deans only see data within their assigned departments while super admins see everything.
+
+### Scope Resolution Chain
+
+```
+Request → JwtAuthGuard → RolesGuard → CurrentUserInterceptor → CLS Store → ScopeResolverService
+```
+
+1. `@UseJwtGuard(SUPER_ADMIN, DEAN)` validates JWT and checks role membership via `RolesGuard`
+2. `CurrentUserInterceptor` loads the full `User` entity via `UserLoader` and stores it in CLS (`CurrentUserService.set()`)
+3. `ScopeResolverService.ResolveDepartmentIds(semesterId)` reads the user from CLS and returns:
+   - `null` — unrestricted (super admin)
+   - `string[]` — department UUIDs the dean is assigned to for that semester
+
+### Filter Validation Cascade
+
+When explicit filter params (`departmentId`, `programId`) are provided, they are validated against the resolved scope:
+
+| Scenario                              | Result            |
+| ------------------------------------- | ----------------- |
+| `departmentId` outside scope          | `403 Forbidden`   |
+| `programId` not found                 | `404 Not Found`   |
+| `programId` department outside scope  | `403 Forbidden`   |
+| `departmentId` + `programId` mismatch | `400 Bad Request` |
+
+### Modules
+
+| Module             | Endpoints                                              | Purpose                                        |
+| ------------------ | ------------------------------------------------------ | ---------------------------------------------- |
+| `FacultyModule`    | `GET /faculty`                                         | Paginated faculty list with course assignments |
+| `CurriculumModule` | `GET /curriculum/departments`, `/programs`, `/courses` | Institutional hierarchy for filter dropdowns   |
+
+Both modules import `CommonModule` (for `ScopeResolverService`) and `DataLoaderModule` (for `CurrentUserInterceptor` → `UserLoader`).
+
+The `CurriculumModule` endpoints return flat arrays (no pagination) since result sets are small within a dean's scope. All three endpoints require `semesterId`; the courses endpoint additionally requires at least one of `programId` or `departmentId` to prevent unbounded queries.
+
+## 10. Startup & Initialization Flow
 
 The application enforces a strict initialization sequence in `InitializeDatabase` before it begins accepting traffic. This ensures that the database schema and required infrastructure state are always synchronized with the code.
 

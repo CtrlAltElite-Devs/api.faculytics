@@ -126,6 +126,21 @@ Recommendations were originally designed as an external HTTP worker (like sentim
 - **Structured output:** Uses OpenAI's `zodResponseFormat` for type-safe responses — the LLM returns JSON validated against the `llmRecommendationsResponseSchema` (category, headline, description, actionPlan, priority, topicReference).
 - **Trade-off:** Recommendation generation now runs in the API process, consuming memory and an OpenAI API call slot. Acceptable because one call per pipeline run is negligible load, and the alternative (an HTTP worker with replicated DB queries) adds complexity without benefit.
 
+## 21. CLS-Based Scope Resolution
+
+Role-based scoping uses NestJS CLS (Continuation-Local Storage) via `nestjs-cls` to propagate the authenticated user through the request lifecycle without passing it as a parameter.
+
+- **Flow:** `CurrentUserInterceptor` loads the user into CLS, then `ScopeResolverService` reads it via `CurrentUserService.getOrFail()`. Services never receive the user directly — they call `ScopeResolverService.ResolveDepartmentIds(semesterId)` which returns `null` (unrestricted) or `string[]` (restricted department IDs).
+- **Rationale:** Avoids threading the user through every controller → service method signature. The interceptor + CLS pattern is a single integration point that all scoped modules reuse.
+- **Trade-off:** CLS adds an implicit dependency that isn't visible in constructor injection. Mitigated by the `getOrFail()` method which throws immediately if the user isn't set.
+
+## 22. Curriculum Endpoints Without Pagination
+
+The `CurriculumModule` returns flat arrays instead of paginated responses for departments, programs, and courses.
+
+- **Rationale:** Result sets are inherently small within a dean's scope (1-3 departments, 5-15 programs, 20-60 courses). Super admins see more but still manageable for a single university. Pagination would add DTO and service complexity for no practical benefit.
+- **Trade-off:** If the system scales to multi-university, super admin result sets could grow. Acceptable risk — pagination can be added later without breaking the API contract (response would change from `T[]` to `{ data: T[], meta: ... }`).
+
 ## 20. Confidence-Scored Supporting Evidence
 
 Each recommendation includes a `supportingEvidence` object with computed confidence levels and structured data sources, rather than freeform text justification.

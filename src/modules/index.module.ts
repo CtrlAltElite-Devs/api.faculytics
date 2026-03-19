@@ -18,6 +18,7 @@ import { QuestionnaireModule } from './questionnaires/questionnaires.module';
 import { AnalysisModule } from './analysis/analysis.module';
 import { DimensionsModule } from './dimensions/dimensions.module';
 import { FacultyModule } from './faculty/faculty.module';
+import { CurriculumModule } from './curriculum/curriculum.module';
 import { LoggerModule } from 'nestjs-pino';
 import { ClsModule } from 'nestjs-cls';
 import { v4 } from 'uuid';
@@ -32,6 +33,7 @@ export const ApplicationModules = [
   AnalysisModule,
   DimensionsModule,
   FacultyModule,
+  CurriculumModule,
 ];
 
 export const InfrastructureModules = [

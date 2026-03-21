@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QueueName } from 'src/configurations/common/queue-names';
 
 // --- Evidence Schemas ---
 
@@ -71,7 +72,7 @@ export type LlmRecommendationsResponse = z.infer<
 export const recommendationsJobSchema = z.object({
   jobId: z.string().uuid(),
   version: z.string(),
-  type: z.literal('recommendations'),
+  type: z.literal(QueueName.RECOMMENDATIONS),
   metadata: z.object({
     pipelineId: z.string(),
     runId: z.string(),

@@ -16,4 +16,9 @@ export const serverEnvSchema = z.object({
     .optional()
     .transform((val) => val === 'true')
     .default(false),
+  DISABLE_SYNC_CATEGORY_ON_STARTUP: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true')
+    .default(false),
 });

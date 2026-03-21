@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { BaseAnalysisProcessor } from './base.processor';
 import { AnalysisJobMessage } from '../dto/analysis-job-message.dto';
 import { AnalysisResultMessage } from '../dto/analysis-result-message.dto';
+import { QueueName } from 'src/configurations/common/queue-names';
 
 class TestProcessor extends BaseAnalysisProcessor {
   protected readonly logger = new Logger('TestProcessor');
@@ -26,12 +27,12 @@ const createMockJob = (
 ): Job<AnalysisJobMessage> =>
   ({
     id: 's1--sentiment',
-    queueName: 'sentiment',
+    queueName: QueueName.SENTIMENT,
     attemptsMade: 1,
     data: {
       jobId: '550e8400-e29b-41d4-a716-446655440000',
       version: '1.0',
-      type: 'sentiment',
+      type: QueueName.SENTIMENT,
       text: 'The professor was helpful',
       metadata: { submissionId: 's1', facultyId: 'f1', versionId: 'v1' },
       publishedAt: '2026-03-12T00:00:00.000Z',

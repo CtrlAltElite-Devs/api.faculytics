@@ -9,6 +9,7 @@ import { env } from 'src/configurations/env';
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { BatchAnalysisResultMessage } from '../dto/batch-analysis-result-message.dto';
 import { Job } from 'bullmq';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { RunStatus } from '../enums';
 
 const createMockBatchJob = (
@@ -16,13 +17,13 @@ const createMockBatchJob = (
 ): Job<BatchAnalysisJobMessage> =>
   ({
     id: 'pipeline1--sentiment',
-    queueName: 'sentiment',
+    queueName: QueueName.SENTIMENT,
     attemptsMade: 1,
     opts: { attempts: 3 },
     data: {
       jobId: '550e8400-e29b-41d4-a716-446655440000',
       version: '1.0',
-      type: 'sentiment',
+      type: QueueName.SENTIMENT,
       items: [
         { submissionId: 's1', text: 'Great professor' },
         { submissionId: 's2', text: 'Too fast' },

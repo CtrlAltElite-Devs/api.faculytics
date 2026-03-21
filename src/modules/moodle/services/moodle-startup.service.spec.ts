@@ -69,6 +69,44 @@ describe('MoodleStartupService', () => {
     jest.restoreAllMocks();
   });
 
+  describe('when DISABLE_SYNC_CATEGORY_ON_STARTUP is true', () => {
+    beforeEach(() => {
+      Object.defineProperty(env, 'DISABLE_SYNC_CATEGORY_ON_STARTUP', {
+        value: true,
+        configurable: true,
+      });
+      Object.defineProperty(env, 'SYNC_ON_STARTUP', {
+        value: true,
+        configurable: true,
+      });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(env, 'DISABLE_SYNC_CATEGORY_ON_STARTUP', {
+        value: false,
+        configurable: true,
+      });
+    });
+
+    it('should skip category sync and proceed to courses and enrollments', async () => {
+      await service.RunStartupSync();
+
+      expect(
+        categorySyncService.SyncAndRebuildHierarchy,
+      ).not.toHaveBeenCalled();
+      expect(courseSyncService.SyncAllPrograms).toHaveBeenCalled();
+      expect(enrollmentSyncService.SyncAllCourses).toHaveBeenCalled();
+    });
+
+    it('should register category as skipped', async () => {
+      await service.RunStartupSync();
+
+      expect(registrySpy).toHaveBeenCalledWith('CategorySync', {
+        status: 'skipped',
+      });
+    });
+  });
+
   describe('when SYNC_ON_STARTUP is false', () => {
     beforeEach(() => {
       Object.defineProperty(env, 'SYNC_ON_STARTUP', {

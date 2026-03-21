@@ -25,11 +25,18 @@ export class MoodleStartupService {
   ) {}
 
   async RunStartupSync(): Promise<void> {
-    // Phase 1: Categories (always runs — required for courses/enrollments)
-    const categoryResult = await this.RunPhase('CategorySync', () =>
-      this.categorySyncService.SyncAndRebuildHierarchy(),
-    );
-    StartupJobRegistry.record('CategorySync', categoryResult);
+    // Phase 1: Categories
+    let categoryResult: JobRecordType;
+
+    if (env.DISABLE_SYNC_CATEGORY_ON_STARTUP) {
+      categoryResult = { status: 'skipped' };
+      StartupJobRegistry.record('CategorySync', categoryResult);
+    } else {
+      categoryResult = await this.RunPhase('CategorySync', () =>
+        this.categorySyncService.SyncAndRebuildHierarchy(),
+      );
+      StartupJobRegistry.record('CategorySync', categoryResult);
+    }
 
     if (!env.SYNC_ON_STARTUP) {
       StartupJobRegistry.record('CourseSync', { status: 'skipped' });

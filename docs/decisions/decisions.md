@@ -156,3 +156,21 @@ Each recommendation includes a `supportingEvidence` object with computed confide
 - **Confidence computation:** Based on comment count thresholds and sentiment agreement ratio. HIGH requires ≥ 10 comments and ≥ 70% sentiment agreement; MEDIUM requires ≥ 5 comments; below that is LOW.
 - **Typed sources:** Evidence uses a discriminated union (`TopicSource | DimensionScoresSource`) stored as JSONB on `RecommendedAction`. This preserves the raw data the LLM used, enabling the frontend to render topic-specific sentiment breakdowns, dimension score charts, and sample quotes.
 - **Trade-off:** More complex entity schema (headline/description/actionPlan instead of a single `actionText`). Justified because the frontend needs structured data to render recommendation cards with actionable detail.
+
+## 24. RunPod Async Polling Fallback
+
+RunPod's `/runsync` endpoint has a ~30-second timeout. If a worker (e.g., topic modeling) takes longer, RunPod returns `{"id":"...","status":"IN_QUEUE"}` instead of the result. `RunPodBatchProcessor.unwrapResponse()` now detects `IN_QUEUE` / `IN_PROGRESS` responses and polls `/status/{jobId}` every 5 seconds until the job completes or the processor's HTTP timeout is reached.
+
+- **Rationale:** Topic modeling routinely exceeds 30 seconds for larger corpora. Without polling, these jobs would exhaust all retry attempts and fail the pipeline.
+- **Trade-off:** Polling keeps the BullMQ worker occupied during the wait. Acceptable because topic model concurrency is 1 and the alternative (switching to RunPod's webhook callback model) would add infrastructure complexity.
+
+## 25. Lenient Worker Response Validation
+
+Worker response schemas (`batchAnalysisResultSchema`, `analysisResultSchema`) were tightened during initial development but relaxed based on production integration:
+
+- `jobId` made optional — workers don't echo back the API-assigned job ID.
+- `completedAt` accepts timezone offsets (`z.string().datetime({ offset: true })`) in addition to UTC `Z` suffix — real workers may use either format.
+- OpenAI structured output schemas use `.nullable().optional()` instead of `.optional()` alone — OpenAI's API requires all fields to be present in the JSON and uses `null` for absent values.
+
+- **Rationale:** Strict schemas caught legitimate responses as validation errors, causing pipeline failures in production. The relaxed schemas accept all valid ISO 8601 datetimes and don't require workers to implement API-internal concepts like `jobId`.
+- **Trade-off:** Slightly looser contracts. Mitigated by type-specific schemas (sentiment, topic model) still enforcing strict validation on domain fields.

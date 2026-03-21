@@ -722,7 +722,7 @@ export class PipelineOrchestratorService {
     await em.flush();
 
     await this.sentimentQueue.add('sentiment', envelope, {
-      jobId: `${pipeline.id}:sentiment`,
+      jobId: `${pipeline.id}--sentiment`,
       attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
       backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
     });
@@ -822,7 +822,7 @@ export class PipelineOrchestratorService {
     };
 
     await this.topicModelQueue.add('topic-model', payload, {
-      jobId: `${pipeline.id}:topic-model`,
+      jobId: `${pipeline.id}--topic-model`,
       attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
       backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
     });
@@ -892,7 +892,7 @@ export class PipelineOrchestratorService {
     await em.flush();
 
     await this.recommendationsQueue.add('recommendations', payload, {
-      jobId: `${pipeline.id}:recommendations`,
+      jobId: `${pipeline.id}--recommendations`,
       attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
       backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
     });
@@ -922,13 +922,10 @@ export class PipelineOrchestratorService {
     if (pipeline.status === PipelineStatus.AWAITING_CONFIRMATION) {
       return { status: 'pending' };
     }
-    if (pipeline.status === PipelineStatus.FAILED) {
-      return { status: 'failed' };
-    }
     if (pipeline.status === PipelineStatus.CANCELLED) {
       return { status: 'skipped' };
     }
-    // Past embedding check (sentiment, topic modeling, recommendations, completed)
+    // Past embedding check (sentiment, topic modeling, recommendations, completed, or failed later)
     return { status: 'completed' };
   }
 }

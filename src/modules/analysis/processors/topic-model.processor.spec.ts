@@ -8,18 +8,19 @@ import { env } from 'src/configurations/env';
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { BatchAnalysisResultMessage } from '../dto/batch-analysis-result-message.dto';
 import { Job } from 'bullmq';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { RunStatus } from '../enums';
 
 const createMockJob = (): Job<BatchAnalysisJobMessage> =>
   ({
     id: 'p1--topic-model',
-    queueName: 'topic-model',
+    queueName: QueueName.TOPIC_MODEL,
     attemptsMade: 1,
     opts: { attempts: 3 },
     data: {
       jobId: '550e8400-e29b-41d4-a716-446655440000',
       version: '1.0',
-      type: 'topic-model',
+      type: QueueName.TOPIC_MODEL,
       items: [
         { submissionId: 's1', text: 'Too fast' },
         { submissionId: 's2', text: 'Great pace' },

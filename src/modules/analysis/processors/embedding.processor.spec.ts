@@ -6,16 +6,17 @@ import { env } from 'src/configurations/env';
 import { AnalysisJobMessage } from '../dto/analysis-job-message.dto';
 import { AnalysisResultMessage } from '../dto/analysis-result-message.dto';
 import { Job } from 'bullmq';
+import { QueueName } from 'src/configurations/common/queue-names';
 
 const createMockJob = (): Job<AnalysisJobMessage> =>
   ({
     id: 's1:embedding',
-    queueName: 'embedding',
+    queueName: QueueName.EMBEDDING,
     attemptsMade: 1,
     data: {
       jobId: '550e8400-e29b-41d4-a716-446655440000',
       version: '1.0',
-      type: 'embedding',
+      type: QueueName.EMBEDDING,
       text: 'Great professor',
       metadata: { submissionId: 's1', facultyId: 'f1', versionId: 'v1' },
       publishedAt: '2026-03-12T00:00:00.000Z',

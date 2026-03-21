@@ -25,7 +25,7 @@ const createMockBatchJob = (
   overrides?: Partial<Job<BatchAnalysisJobMessage>>,
 ): Job<BatchAnalysisJobMessage> =>
   ({
-    id: 'p1:sentiment',
+    id: 'p1--sentiment',
     queueName: 'sentiment',
     attemptsMade: 1,
     data: {
@@ -152,7 +152,7 @@ describe('BaseBatchProcessor', () => {
       processor.onFailed(job, error);
 
       expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('p1:sentiment'),
+        expect.stringContaining('p1--sentiment'),
       );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining('test error'),

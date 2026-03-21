@@ -115,6 +115,18 @@
 | `error`                      | string       | On failure | Error message                         |
 | `completedAt`                | ISO datetime | Yes        | Processing completion timestamp       |
 
+## RunPod Envelope
+
+When deployed on RunPod, the request and response are wrapped by `RunPodBatchProcessor`:
+
+- **Request:** Sent as `{ "input": <request body above> }` to the RunPod `/runsync` endpoint.
+- **Response:** RunPod returns `{ "output": <response body above> }` on completion. Topic modeling routinely exceeds the `/runsync` timeout (~30s), so RunPod returns `{"id":"...","status":"IN_QUEUE"}` and the processor polls `/status/{id}` every 5 seconds until done (up to `BULLMQ_TOPIC_MODEL_HTTP_TIMEOUT_MS`, default 300s).
+- **Auth:** `Authorization: Bearer <RUNPOD_API_KEY>` header is added when `RUNPOD_API_KEY` is configured.
+
+## `completedAt` Format
+
+Accepts any valid ISO 8601 datetime with timezone: both `2026-03-13T10:35:00.000Z` and `2026-03-13T10:35:00.000+00:00` are valid.
+
 ## Notes
 
 - Based on `CtrlAltElite-Devs/topic-modeling.faculytics` (BERTopic + LaBSE + UMAP + HDBSCAN)

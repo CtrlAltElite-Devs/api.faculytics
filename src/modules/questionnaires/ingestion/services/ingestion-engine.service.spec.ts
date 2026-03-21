@@ -100,7 +100,7 @@ describe('IngestionEngine', () => {
 
     expect(result.successes).toBe(1);
     expect(result.dryRun).toBe(true);
-    expect(result.records[0].internalId).toBe('sub-1');
+    expect(result.records[0].internalId).toBeUndefined();
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockAdapter.close).toHaveBeenCalled();
   });

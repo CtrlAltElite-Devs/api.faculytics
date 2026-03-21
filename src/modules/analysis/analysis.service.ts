@@ -56,7 +56,7 @@ export class AnalysisService {
   ): Promise<string> {
     const queue = this.getQueue(type);
     const jobId = v4();
-    const deterministicId = `${metadata.submissionId}:${type}`;
+    const deterministicId = `${metadata.submissionId}--${type}`;
 
     const envelope: AnalysisJobMessage = {
       jobId,
@@ -108,7 +108,7 @@ export class AnalysisService {
       this.getQueue(job.type); // validate type
 
       const jobId = v4();
-      const deterministicId = `${job.metadata.submissionId}:${job.type}`;
+      const deterministicId = `${job.metadata.submissionId}--${job.type}`;
 
       const envelope: AnalysisJobMessage = {
         jobId,

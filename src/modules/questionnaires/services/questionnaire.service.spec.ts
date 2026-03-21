@@ -112,6 +112,8 @@ describe('QuestionnaireService', () => {
             flush: jest.fn(),
             findOneOrFail: jest.fn(),
             findOne: jest.fn(),
+            find: jest.fn(),
+            nativeDelete: jest.fn(),
             upsert: jest.fn(),
             create: jest
               .fn()
@@ -968,6 +970,57 @@ describe('QuestionnaireService', () => {
       await expect(service.DeleteDraft('d1')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('WipeSubmissions', () => {
+    it('should throw NotFoundException if version not found', async () => {
+      versionRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.WipeSubmissions('v1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should return deletedCount 0 when no submissions exist', async () => {
+      versionRepo.findOne.mockResolvedValue({ id: 'v1' } as any);
+      (em.find as jest.Mock).mockResolvedValue([]);
+
+      const result = await service.WipeSubmissions('v1');
+
+      expect(result).toEqual({ deletedCount: 0 });
+      expect(em.nativeDelete).not.toHaveBeenCalled();
+    });
+
+    it('should delete children then submissions and return count', async () => {
+      versionRepo.findOne.mockResolvedValue({ id: 'v1' } as any);
+      const submissions = [{ id: 's1' }, { id: 's2' }, { id: 's3' }];
+      (em.find as jest.Mock).mockResolvedValue(submissions);
+
+      const result = await service.WipeSubmissions('v1');
+
+      expect(result).toEqual({ deletedCount: 3 });
+
+      const ids = ['s1', 's2', 's3'];
+      const calls = (em.nativeDelete as jest.Mock).mock.calls;
+      expect(calls).toHaveLength(5);
+      expect(calls[0]).toEqual([
+        expect.anything(),
+        { submission: { $in: ids } },
+      ]);
+      expect(calls[1]).toEqual([
+        expect.anything(),
+        { submission: { $in: ids } },
+      ]);
+      expect(calls[2]).toEqual([
+        expect.anything(),
+        { submission: { $in: ids } },
+      ]);
+      expect(calls[3]).toEqual([
+        expect.anything(),
+        { submission: { $in: ids } },
+      ]);
+      expect(calls[4]).toEqual([expect.anything(), { id: { $in: ids } }]);
     });
   });
 });

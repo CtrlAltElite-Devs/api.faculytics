@@ -25,20 +25,20 @@ export class RawSubmissionData {
   @IsString()
   externalId: string;
 
-  @ApiProperty({ description: 'The Moodle user ID of the respondent' })
-  @IsNumber()
-  moodleUserId: number;
+  @ApiProperty({ description: 'The username of the respondent' })
+  @IsString()
+  username: string;
 
   @ApiProperty({
     description:
-      'The Moodle user ID of the faculty. Future: make optional if derivable from course.',
+      'The username of the faculty. Future: make optional if derivable from course.',
   })
-  @IsNumber()
-  moodleFacultyId: number;
+  @IsString()
+  facultyUsername: string;
 
-  @ApiProperty({ description: 'The Moodle course ID' })
-  @IsNumber()
-  courseId: number;
+  @ApiProperty({ description: 'The course shortname' })
+  @IsString()
+  courseShortname: string;
 
   @ApiProperty({ type: [RawAnswerData], description: 'List of raw answers' })
   @IsArray()
@@ -46,6 +46,14 @@ export class RawSubmissionData {
   @ValidateNested({ each: true })
   @Type(() => RawAnswerData)
   answers: RawAnswerData[];
+
+  @ApiProperty({
+    required: false,
+    description: 'Optional qualitative comment',
+  })
+  @IsOptional()
+  @IsString()
+  qualitativeComment?: string;
 
   @ApiProperty({
     required: false,

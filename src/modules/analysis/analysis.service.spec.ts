@@ -76,7 +76,7 @@ describe('AnalysisService', () => {
       });
       expect(envelope.jobId).toBeDefined();
       expect(envelope.publishedAt).toBeDefined();
-      expect(opts.jobId).toBe('s1:sentiment');
+      expect(opts.jobId).toBe('s1--sentiment');
     });
 
     it('should add a job to the embedding queue', async () => {
@@ -85,7 +85,7 @@ describe('AnalysisService', () => {
       expect(embeddingQueue.add).toHaveBeenCalledTimes(1);
       const call = embeddingQueue.add.mock.calls[0] as unknown[];
       const opts = call[2] as Record<string, unknown>;
-      expect(opts.jobId).toBe('s1:embedding');
+      expect(opts.jobId).toBe('s1--embedding');
     });
 
     it('should use deterministic job ID based on submissionId and type', async () => {
@@ -93,7 +93,7 @@ describe('AnalysisService', () => {
 
       const call = sentimentQueue.add.mock.calls[0] as unknown[];
       const opts = call[2] as Record<string, unknown>;
-      expect(opts.jobId).toBe('s1:sentiment');
+      expect(opts.jobId).toBe('s1--sentiment');
     });
 
     it('should throw BadRequestException for unknown analysis type', async () => {
@@ -153,9 +153,9 @@ describe('AnalysisService', () => {
       expect(bulkArgs).toHaveLength(2);
       expect(bulkArgs[0].name).toBe('sentiment');
       expect(bulkArgs[0].data.text).toBe('text1');
-      expect(bulkArgs[0].opts.jobId).toBe('s1:sentiment');
+      expect(bulkArgs[0].opts.jobId).toBe('s1--sentiment');
       expect(bulkArgs[1].data.text).toBe('text2');
-      expect(bulkArgs[1].opts.jobId).toBe('s2:sentiment');
+      expect(bulkArgs[1].opts.jobId).toBe('s2--sentiment');
     });
 
     it('should return empty array for empty input', async () => {

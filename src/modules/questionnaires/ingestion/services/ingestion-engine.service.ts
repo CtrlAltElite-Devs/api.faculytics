@@ -99,9 +99,9 @@ export class IngestionEngine {
                 throw new Error('No data found in record.');
               }
 
-              const mappingResult = await this.mapper.map(
-                record.data,
-                versionId,
+              const mappingResult = await this.withTimeout(
+                this.mapper.map(record.data, versionId),
+                30000,
               );
               if (!mappingResult.success) {
                 throw new Error(mappingResult.error);
@@ -117,7 +117,9 @@ export class IngestionEngine {
               );
 
               recordResult.success = true;
-              recordResult.internalId = submission.id;
+              if (!config.dryRun) {
+                recordResult.internalId = submission.id;
+              }
               successes++;
             });
           } catch (e: unknown) {
@@ -174,8 +176,12 @@ export class IngestionEngine {
       let submission: QuestionnaireSubmission | undefined;
       try {
         await em.transactional(async () => {
-          submission =
-            await this.questionnaireService.submitQuestionnaire(mapped);
+          submission = await this.questionnaireService.submitQuestionnaire(
+            mapped,
+            {
+              skipAnalysis: true,
+            },
+          );
           throw new DryRunRollbackError();
         });
       } catch (e: unknown) {
@@ -186,7 +192,9 @@ export class IngestionEngine {
       return submission!;
     }
 
-    return this.questionnaireService.submitQuestionnaire(mapped);
+    return this.questionnaireService.submitQuestionnaire(mapped, {
+      skipAnalysis: false,
+    });
   }
 
   private async withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

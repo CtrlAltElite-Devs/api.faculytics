@@ -13,7 +13,7 @@ This document describes the high-level components, technology stack, and module 
 
 ## 2. Technology Stack
 
-- **Backend Framework:** [NestJS](https://nestjs.com/) (v10+)
+- **Backend Framework:** [NestJS](https://nestjs.com/) (v11)
 - **Database ORM:** [MikroORM](https://mikro-orm.io/) with PostgreSQL
 - **Authentication:** Passport.js (JWT and Refresh Token strategies)
 - **External API:** Moodle Web Services (REST)
@@ -62,6 +62,7 @@ classDiagram
     AuthModule --> MoodleModule : "uses MoodleService"
     AuthModule --> CommonModule : "uses CustomJwtService"
     MoodleModule --> CommonModule : "uses UnitOfWork"
+    MoodleModule --> BullModule : "uses BullMQ queue"
     EnrollmentsModule --> MoodleModule : "uses MoodleService"
     QuestionnaireModule --> CommonModule : "uses UnitOfWork"
     AnalysisModule --> BullModule : "uses BullMQ queues"
@@ -87,6 +88,10 @@ classDiagram
         +MoodleCategorySyncService
         +MoodleCourseSyncService
         +EnrollmentSyncService
+        +MoodleSyncProcessor
+        +MoodleSyncScheduler
+        +MoodleStartupService
+        +MoodleSyncController
     }
 
     class AuthModule {
@@ -121,16 +126,26 @@ Authentication uses a priority-based strategy pattern (`src/modules/auth/strateg
 
 Priority ranges: `0-99` core auth, `100-199` external providers, `200+` fallbacks. To add a new provider, implement `LoginStrategy` and register it under the `LOGIN_STRATEGIES` injection token.
 
-## 5. Cron Jobs
+## 5. Moodle Sync Pipeline
 
-Background jobs extend `BaseJob` and register in `StartupJobRegistry`. All jobs are in `src/crons/jobs/`.
+Institutional sync (categories, courses, enrollments) uses a BullMQ-based composite job instead of individual cron jobs. See [Institutional Sync Workflow](../workflows/institutional-sync.md) for the full flow.
 
-| Job                      | Schedule       | Purpose                                                               |
-| ------------------------ | -------------- | --------------------------------------------------------------------- |
-| `CategorySyncJob`        | Startup + cron | Syncs Moodle categories to local hierarchy                            |
-| `CourseSyncJob`          | Startup + cron | Syncs Moodle courses                                                  |
-| `EnrollmentSyncJob`      | Startup + cron | Syncs user-course enrollments and roles; invalidates enrollment cache |
-| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days                               |
+| Component              | Purpose                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `MoodleStartupService` | Blocking startup orchestrator — categories always, courses/enrollments gated by env |
+| `MoodleSyncProcessor`  | BullMQ processor — runs categories → courses → enrollments in sequence              |
+| `MoodleSyncScheduler`  | Hourly `@Cron` that enqueues a composite sync job (fixed `jobId` for deduplication) |
+| `MoodleSyncController` | `POST /moodle/sync` (manual trigger), `GET /moodle/sync/status` (queue state)       |
+
+Phase dependency: if categories fail, courses and enrollments are skipped. If courses fail, enrollments are skipped.
+
+### Cron Jobs
+
+The only remaining cron job using the `BaseJob` pattern is in `src/crons/jobs/`:
+
+| Job                      | Schedule       | Purpose                                 |
+| ------------------------ | -------------- | --------------------------------------- |
+| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days |
 
 ## 6. Moodle Connectivity & Error Handling
 
@@ -181,14 +196,15 @@ Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMP
 
 ### Queue Architecture
 
-Four BullMQ queues with independent concurrency:
+Five BullMQ queues with independent concurrency. Queue names are centralized in `src/configurations/common/queue-names.ts`.
 
-| Queue             | Processor                  | Concurrency Default |
-| ----------------- | -------------------------- | ------------------- |
-| `sentiment`       | `SentimentProcessor`       | 3                   |
-| `embedding`       | `EmbeddingProcessor`       | 3                   |
-| `topic-model`     | `TopicModelProcessor`      | 1                   |
-| `recommendations` | `RecommendationsProcessor` | 1                   |
+| Queue             | Processor                  | Concurrency Default | Module         |
+| ----------------- | -------------------------- | ------------------- | -------------- |
+| `moodle-sync`     | `MoodleSyncProcessor`      | 1                   | MoodleModule   |
+| `sentiment`       | `SentimentProcessor`       | 3                   | AnalysisModule |
+| `embedding`       | `EmbeddingProcessor`       | 3                   | AnalysisModule |
+| `topic-model`     | `TopicModelProcessor`      | 1                   | AnalysisModule |
+| `recommendations` | `RecommendationsProcessor` | 1                   | AnalysisModule |
 
 ### REST Endpoints
 

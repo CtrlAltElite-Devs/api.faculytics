@@ -12,7 +12,7 @@ Leveraging MikroORM's `EntityManager` to ensure transactional integrity during c
 
 ## 3. Base Job Pattern
 
-All background jobs extend `BaseJob` to provide consistent logging, startup execution logic, and error handling. This standardization simplifies monitoring and debugging of scheduled tasks.
+Non-sync background jobs extend `BaseJob` to provide consistent logging, startup execution logic, and error handling. Currently only `RefreshTokenCleanupJob` uses this pattern — the Moodle sync jobs were migrated to BullMQ (see Decision #26).
 
 ## 4. Questionnaire Leaf-Weight Rule
 
@@ -174,3 +174,27 @@ Worker response schemas (`batchAnalysisResultSchema`, `analysisResultSchema`) we
 
 - **Rationale:** Strict schemas caught legitimate responses as validation errors, causing pipeline failures in production. The relaxed schemas accept all valid ISO 8601 datetimes and don't require workers to implement API-internal concepts like `jobId`.
 - **Trade-off:** Slightly looser contracts. Mitigated by type-specific schemas (sentiment, topic model) still enforcing strict validation on domain fields.
+
+## 26. BullMQ-Based Moodle Sync Pipeline
+
+The three independent Moodle sync cron jobs (`CategorySyncJob`, `CourseSyncJob`, `EnrollmentSyncJob`) were unified into a single BullMQ composite job (`MoodleSyncProcessor`) with a phase dependency chain.
+
+- **Rationale:** Independent cron jobs couldn't enforce ordering dependencies (enrollments depend on courses, which depend on category hierarchy). BullMQ's `concurrency: 1` eliminates overlap guards (`isRunning` flags), fixed `jobId` handles deduplication across multiple instances, and the queue enables manual trigger via `POST /moodle/sync` without env var toggles and restarts.
+- **Startup stays blocking:** `MoodleStartupService` calls sync services directly (not via BullMQ) because the app must have data before accepting HTTP traffic. The processor handles cron and manual triggers.
+- **Phase abort:** If category sync fails, downstream phases are skipped rather than running against stale hierarchy data.
+- **Trade-off:** Sync jobs now depend on Redis being available. The old `BaseJob` cron pattern worked with just the scheduler. Acceptable because Redis is already required for caching and analysis queues.
+
+## 27. 3-Phase Enrollment Sync Architecture
+
+Enrollment sync was restructured from per-course sequential processing into three distinct phases: concurrent HTTP fetch, batch user upsert, sequential enrollment upsert.
+
+- **Rationale:** The original approach (parallel per-course enrollment sync with `pLimit`) caused deadlocks because the same User rows were upserted by multiple concurrent transactions. The 3-phase architecture separates HTTP I/O (parallel, no DB), User upsert (single batch, no concurrency), and Enrollment upsert (sequential per course, no overlap).
+- **`upsertMany` with fallback:** User batch upsert uses `em.fork()` (not `runInTransaction`) so that if `upsertMany` fails at the DB level (e.g., `userName` unique constraint), the fallback uses a fresh `em.fork()` — avoiding the PostgreSQL aborted-transaction problem where all subsequent statements fail.
+- **Trade-off:** Users and enrollments are in separate transactions (no course-level atomicity). A crash mid-Phase-3 leaves partially synced enrollments. Acceptable because sync is idempotent — the next run fixes any inconsistency.
+
+## 28. Centralized Queue Name Constants
+
+All BullMQ queue name strings (`'sentiment'`, `'embedding'`, `'moodle-sync'`, etc.) are centralized in `src/configurations/common/queue-names.ts` as a `QueueName` const object.
+
+- **Rationale:** Queue names appeared as string literals in `@Processor()` decorators, `@InjectQueue()` injections, `BullModule.registerQueue()` calls, `queue.add()` invocations, and test `getQueueToken()` calls — a single typo would cause silent runtime failures (unmatched processor, dead queue). Constants provide compile-time safety and single-source-of-truth.
+- **Trade-off:** Minor verbosity (`QueueName.SENTIMENT` vs `'sentiment'`). Acceptable for the safety guarantee.

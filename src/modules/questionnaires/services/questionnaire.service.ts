@@ -46,6 +46,7 @@ import { UserRole } from '../../auth/roles.enum';
 import { CacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-namespaces';
 import { AnalysisService } from '../../analysis/analysis.service';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { CurrentUserService } from '../../common/cls/current-user.service';
 import { env } from 'src/configurations/env';
 import { cleanText } from '../utils/clean-text';
@@ -617,7 +618,7 @@ export class QuestionnaireService {
     ) {
       try {
         await this.analysisService.EnqueueJob(
-          'embedding',
+          QueueName.EMBEDDING,
           submission.cleanedComment,
           {
             submissionId: submission.id,

@@ -1,21 +1,23 @@
 # Faculytics API
 
-Faculytics is an analytics platform designed to integrate seamlessly with Moodle. This repository contains the backend API built with NestJS.
+Faculytics is an analytics platform designed to integrate seamlessly with Moodle LMS. This repository contains the backend API built with NestJS.
 
 ## Tech Stack
 
-- **Framework:** [NestJS](https://nestjs.com/)
+- **Framework:** [NestJS](https://nestjs.com/) v11
 - **ORM:** [MikroORM](https://mikro-orm.io/) with PostgreSQL
 - **Validation:** [Zod](https://zod.dev/) & [class-validator](https://github.com/typestack/class-validator)
-- **Caching:** [Redis](https://redis.io/) (optional, falls back to in-memory)
+- **Authentication:** [Passport.js](http://www.passportjs.org/) (JWT + Moodle token strategies)
+- **Job Queue:** [BullMQ](https://docs.bullmq.io/) on Redis
+- **Caching:** Redis via `@keyv/redis`
 - **Documentation:** [Swagger/OpenAPI](https://swagger.io/)
 
 ## Prerequisites
 
 - **Node.js:** v22.x or later
 - **PostgreSQL:** A running instance of PostgreSQL
-- **Moodle:** A Moodle instance with **Mobile Web Services** enabled.
-- **Redis (optional):** A Redis instance for distributed caching
+- **Redis:** Required for caching and job queues
+- **Moodle:** A Moodle instance with **Mobile Web Services** enabled
 
 ## Getting Started
 
@@ -42,21 +44,24 @@ cp .env.sample .env
 | `MOODLE_MASTER_KEY` | Moodle web services master key                                        |
 | `JWT_SECRET`        | Secret for signing access tokens                                      |
 | `REFRESH_SECRET`    | Secret for signing refresh tokens                                     |
+| `REDIS_URL`         | Redis connection URL (e.g., `redis://localhost:6379`)                 |
 | `CORS_ORIGINS`      | JSON array of allowed origins (e.g., `["http://localhost:4100"]`)     |
-| `OPENAI_API_KEY`    | OpenAI API key (for ChatKit module)                                   |
+| `OPENAI_API_KEY`    | OpenAI API key (for ChatKit and recommendation engine)                |
 
 **Optional Variables:**
 
-| Variable               | Default       | Description                                           |
-| ---------------------- | ------------- | ----------------------------------------------------- |
-| `PORT`                 | `5200`        | Server port                                           |
-| `NODE_ENV`             | `development` | `development` \| `production` \| `test`               |
-| `OPENAPI_MODE`         | `false`       | Set to `"true"` to enable Swagger docs                |
-| `SUPER_ADMIN_USERNAME` | `superadmin`  | Default super admin username                          |
-| `SUPER_ADMIN_PASSWORD` | `password123` | Default super admin password                          |
-| `REDIS_URL`            | —             | Redis connection URL (e.g., `redis://localhost:6379`) |
-| `REDIS_KEY_PREFIX`     | `faculytics:` | Key namespace prefix                                  |
-| `REDIS_CACHE_TTL`      | `60`          | Default cache TTL in seconds                          |
+| Variable                           | Default       | Description                                         |
+| ---------------------------------- | ------------- | --------------------------------------------------- |
+| `PORT`                             | `5200`        | Server port                                         |
+| `NODE_ENV`                         | `development` | `development` \| `production` \| `test`             |
+| `OPENAPI_MODE`                     | `false`       | Set to `"true"` to enable Swagger docs              |
+| `SUPER_ADMIN_USERNAME`             | `superadmin`  | Default super admin username                        |
+| `SUPER_ADMIN_PASSWORD`             | `password123` | Default super admin password                        |
+| `SYNC_ON_STARTUP`                  | `false`       | Run course and enrollment sync on startup           |
+| `DISABLE_SYNC_CATEGORY_ON_STARTUP` | `false`       | Skip category sync on startup (faster dev restarts) |
+| `MOODLE_SYNC_CONCURRENCY`          | `3`           | Max concurrent Moodle HTTP calls during sync (1-20) |
+
+See `.env.sample` for the full list including BullMQ and analysis worker options.
 
 ### 3. Database Initialization
 
@@ -75,36 +80,17 @@ npx mikro-orm migration:up
 npx mikro-orm migration:list
 ```
 
-### 4. Redis Setup (Optional)
-
-The API supports an optional Redis caching layer. Without Redis, the app uses an in-memory cache automatically.
-
-**Option A: Local Redis with Docker**
+### 4. Local Development with Docker
 
 ```bash
-# Start a Redis container
-docker run -d --name faculytics-redis -p 6379:6379 redis:7-alpine
-
-# Verify it's running
-docker exec faculytics-redis redis-cli ping
-# Should return: PONG
+# Start Redis + mock analysis worker
+docker compose up
 ```
 
-Then add to your `.env`:
+This starts:
 
-```
-REDIS_URL=redis://localhost:6379
-```
-
-**Option B: Redis Cloud**
-
-1. Create a free database at [Redis Cloud](https://redis.io/cloud/)
-2. Copy the connection URL from the dashboard
-3. Add to your `.env`:
-
-```
-REDIS_URL=redis://default:<password>@<host>:<port>
-```
+- **Redis** on port 6379 (required for caching and BullMQ job queues)
+- **Mock worker** on port 3001 (simulates analysis worker responses for local dev)
 
 ## Running the Project
 

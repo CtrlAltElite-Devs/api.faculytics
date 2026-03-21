@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getQueueToken } from '@nestjs/bullmq';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { PipelineOrchestratorService } from './pipeline-orchestrator.service';
 import { TopicLabelService } from './topic-label.service';
 import { AnalysisService } from '../analysis.service';
@@ -64,10 +65,16 @@ describe('PipelineOrchestratorService', () => {
           provide: TopicLabelService,
           useValue: { generateLabels: jest.fn().mockResolvedValue(undefined) },
         },
-        { provide: getQueueToken('sentiment'), useValue: sentimentQueue },
-        { provide: getQueueToken('topic-model'), useValue: topicModelQueue },
         {
-          provide: getQueueToken('recommendations'),
+          provide: getQueueToken(QueueName.SENTIMENT),
+          useValue: sentimentQueue,
+        },
+        {
+          provide: getQueueToken(QueueName.TOPIC_MODEL),
+          useValue: topicModelQueue,
+        },
+        {
+          provide: getQueueToken(QueueName.RECOMMENDATIONS),
           useValue: recommendationsQueue,
         },
       ],

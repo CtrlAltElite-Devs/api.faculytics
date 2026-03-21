@@ -24,6 +24,9 @@ import {
   Program,
   Campus,
   Enrollment,
+  TopicAssignment,
+  SentimentResult,
+  SubmissionEmbedding,
 } from '../../../entities/index.entity';
 import {
   QuestionnaireStatus,
@@ -356,15 +359,18 @@ export class QuestionnaireService {
     return activeVersion;
   }
 
-  async submitQuestionnaire(data: {
-    versionId: string;
-    respondentId: string;
-    facultyId: string;
-    semesterId: string;
-    courseId?: string;
-    answers: Record<string, number>; // questionId -> numericValue
-    qualitativeComment?: string;
-  }) {
+  async submitQuestionnaire(
+    data: {
+      versionId: string;
+      respondentId: string;
+      facultyId: string;
+      semesterId: string;
+      courseId?: string;
+      answers: Record<string, number>; // questionId -> numericValue
+      qualitativeComment?: string;
+    },
+    options?: { skipAnalysis?: boolean },
+  ) {
     const version = await this.versionRepo.findOne(data.versionId, {
       populate: ['questionnaire'],
     });
@@ -471,7 +477,7 @@ export class QuestionnaireService {
 
     // 3. Answer Validation
     const schema = version.schemaSnapshot;
-    const questions = this.getAllQuestions(schema);
+    const questions = this.GetAllQuestions(schema);
     const maxScore = schema.meta.maxScore > 0 ? schema.meta.maxScore : 5;
     const providedAnswerKeys = new Set(Object.keys(data.answers)); // F9: Optimization
 
@@ -604,7 +610,11 @@ export class QuestionnaireService {
     }
 
     // Fire-and-forget embedding dispatch (uses cleaned text for alignment with topic modeling)
-    if (submission.cleanedComment && env.EMBEDDINGS_WORKER_URL) {
+    if (
+      !options?.skipAnalysis &&
+      submission.cleanedComment &&
+      env.EMBEDDINGS_WORKER_URL
+    ) {
       try {
         await this.analysisService.EnqueueJob(
           'embedding',
@@ -626,7 +636,7 @@ export class QuestionnaireService {
   }
 
   // F6: Iterative traversal to avoid stack overflow
-  private getAllQuestions(schema: QuestionnaireSchemaSnapshot): QuestionNode[] {
+  GetAllQuestions(schema: QuestionnaireSchemaSnapshot): QuestionNode[] {
     const questions: QuestionNode[] = [];
     const stack: SectionNode[] = [...schema.sections];
 
@@ -807,5 +817,48 @@ export class QuestionnaireService {
 
     draft.SoftDelete();
     await this.em.flush();
+  }
+
+  async WipeSubmissions(versionId: string): Promise<{ deletedCount: number }> {
+    const version = await this.versionRepo.findOne(versionId);
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${versionId} not found.`,
+      );
+    }
+
+    const submissions = await this.em.find(
+      QuestionnaireSubmission,
+      { questionnaireVersion: versionId },
+      { fields: ['id'], filters: false },
+    );
+
+    if (submissions.length === 0) {
+      return { deletedCount: 0 };
+    }
+
+    const ids = submissions.map((s) => s.id);
+
+    await this.em.nativeDelete(TopicAssignment, {
+      submission: { $in: ids },
+    });
+    await this.em.nativeDelete(SentimentResult, {
+      submission: { $in: ids },
+    });
+    await this.em.nativeDelete(SubmissionEmbedding, {
+      submission: { $in: ids },
+    });
+    await this.em.nativeDelete(QuestionnaireAnswer, {
+      submission: { $in: ids },
+    });
+    await this.em.nativeDelete(QuestionnaireSubmission, {
+      id: { $in: ids },
+    });
+
+    this.logger.warn(
+      `Wiped ${ids.length} submissions and all child records for version ${versionId}`,
+    );
+
+    return { deletedCount: ids.length };
   }
 }

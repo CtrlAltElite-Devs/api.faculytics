@@ -13,7 +13,7 @@ import { RunStatus } from '../enums';
 
 const createMockJob = (): Job<RecommendationsJobMessage> =>
   ({
-    id: 'p1:recommendations',
+    id: 'p1--recommendations',
     queueName: 'recommendations',
     attemptsMade: 1,
     opts: { attempts: 3 },

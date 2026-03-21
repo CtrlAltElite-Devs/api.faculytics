@@ -105,9 +105,9 @@ flowchart TD
 
 ## Deduplication
 
-Pipeline jobs use deterministic IDs: `${pipelineId}:${type}`. If the same pipeline + analysis type is enqueued twice, BullMQ silently rejects the duplicate.
+Pipeline jobs use deterministic IDs: `${pipelineId}--${type}`. Ad-hoc jobs use: `${submissionId}--${type}`. If the same pipeline/submission + analysis type is enqueued twice, BullMQ silently rejects the duplicate.
 
-Ad-hoc jobs use: `${submissionId}:${type}`.
+> **Note:** BullMQ does not allow `:` in custom job IDs. The `--` separator is used instead.
 
 ## Resilience
 

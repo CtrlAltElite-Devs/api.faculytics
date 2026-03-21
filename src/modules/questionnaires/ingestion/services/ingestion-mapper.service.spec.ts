@@ -36,22 +36,23 @@ describe('IngestionMapperService', () => {
     const mockFaculty = { id: 'faculty-1' } as Partial<User>;
     const mockCourse = {
       id: 'course-1',
-      shortname: 'C1',
+      shortname: 'CS101',
       program: { department: { semester: { id: 'sem-1' } } },
     } as Partial<Course>;
 
-    loader.loadUser.mockImplementation((id) => {
-      if (id === 101) return Promise.resolve(mockUser as User);
-      if (id === 201) return Promise.resolve(mockFaculty as User);
+    loader.loadUser.mockImplementation((username) => {
+      if (username === 'student001') return Promise.resolve(mockUser as User);
+      if (username === 'faculty001')
+        return Promise.resolve(mockFaculty as User);
       return Promise.resolve(null);
     });
     loader.loadCourse.mockResolvedValue(mockCourse as Course);
 
     const rawData: RawSubmissionData = {
       externalId: 'ext-1',
-      moodleUserId: 101,
-      moodleFacultyId: 201,
-      courseId: 301,
+      username: 'student001',
+      facultyUsername: 'faculty001',
+      courseShortname: 'CS101',
       answers: [{ questionId: 'q1', value: 5 }],
     };
 
@@ -73,13 +74,15 @@ describe('IngestionMapperService', () => {
     loader.loadUser.mockResolvedValue(null);
     const rawData: RawSubmissionData = {
       externalId: 'ext-1',
-      moodleUserId: 101,
-      moodleFacultyId: 201,
-      courseId: 301,
+      username: 'student001',
+      facultyUsername: 'faculty001',
+      courseShortname: 'CS101',
       answers: [],
     };
     const result = await service.map(rawData, 'v1');
     expect(result.success).toBe(false);
-    expect(result.error).toBe('Respondent with Moodle ID 101 not found.');
+    expect(result.error).toBe(
+      'Respondent with username "student001" not found.',
+    );
   });
 });

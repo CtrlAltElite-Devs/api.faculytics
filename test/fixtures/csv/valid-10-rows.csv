@@ -1,0 +1,11 @@
+externalId,username,facultyUsername,courseShortname,a3f1b2c4-d5e6-7f8a-9b0c-1d2e3f4a5b6c,b7e2d9f1-c3a4-5b6d-7e8f-9a0b1c2d3e4f,c1d2e3f4-a5b6-7c8d-9e0f-1a2b3c4d5e6f,d4e5f6a7-b8c9-0d1e-2f3a-4b5c6d7e8f9a,comment
+sub_001,student001,faculty001,CS101,4,5,3,4,clear explanations
+sub_002,student002,faculty001,CS101,5,4,4,5,very engaging lectures
+sub_003,student003,faculty001,CS102,3,3,2,3,needs more examples
+sub_004,student004,faculty001,CS102,4,4,5,4,
+sub_005,student005,faculty002,CS201,5,5,5,5,excellent teaching style
+sub_006,student006,faculty002,CS201,2,3,3,2,too fast paced
+sub_007,student007,faculty002,CS202,4,4,4,4,good overall
+sub_008,student008,faculty003,CS202,3,2,3,3,could improve pacing
+sub_009,student009,faculty003,CS301,5,5,4,5,best professor this semester
+sub_010,student010,faculty003,CS301,4,3,4,4,

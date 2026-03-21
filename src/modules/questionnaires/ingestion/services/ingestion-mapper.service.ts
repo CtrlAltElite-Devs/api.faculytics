@@ -28,27 +28,27 @@ export class IngestionMapperService {
     versionId: string,
   ): Promise<MappingResult> {
     const [respondent, faculty, course] = await Promise.all([
-      this.loader.loadUser(data.moodleUserId),
-      this.loader.loadUser(data.moodleFacultyId),
-      this.loader.loadCourse(data.courseId),
+      this.loader.loadUser(data.username),
+      this.loader.loadUser(data.facultyUsername),
+      this.loader.loadCourse(data.courseShortname),
     ]);
 
     if (!respondent) {
       return {
         success: false,
-        error: `Respondent with Moodle ID ${data.moodleUserId} not found.`,
+        error: `Respondent with username "${data.username}" not found.`,
       };
     }
     if (!faculty) {
       return {
         success: false,
-        error: `Faculty with Moodle ID ${data.moodleFacultyId} not found.`,
+        error: `Faculty with username "${data.facultyUsername}" not found.`,
       };
     }
     if (!course) {
       return {
         success: false,
-        error: `Course with Moodle ID ${data.courseId} not found.`,
+        error: `Course with shortname "${data.courseShortname}" not found.`,
       };
     }
 
@@ -74,6 +74,7 @@ export class IngestionMapperService {
         semesterId,
         courseId: course.id,
         answers,
+        qualitativeComment: data.qualitativeComment,
         externalId: data.externalId,
       },
     };

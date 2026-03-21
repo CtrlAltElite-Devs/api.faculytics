@@ -25,7 +25,7 @@ const createMockJob = (
   overrides?: Partial<Job<AnalysisJobMessage>>,
 ): Job<AnalysisJobMessage> =>
   ({
-    id: 's1:sentiment',
+    id: 's1--sentiment',
     queueName: 'sentiment',
     attemptsMade: 1,
     data: {
@@ -146,7 +146,7 @@ describe('BaseAnalysisProcessor', () => {
       processor.onFailed(job, error);
 
       expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('s1:sentiment'),
+        expect.stringContaining('s1--sentiment'),
       );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining('test error'),

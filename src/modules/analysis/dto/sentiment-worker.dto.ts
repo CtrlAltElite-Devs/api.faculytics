@@ -35,7 +35,7 @@ export const sentimentWorkerResponseSchema = z.object({
   status: z.enum(['completed', 'failed']),
   results: z.array(sentimentResultItemSchema).optional(),
   error: z.string().optional(),
-  completedAt: z.string().datetime(),
+  completedAt: z.string().datetime({ offset: true }),
 });
 
 export type SentimentWorkerResponse = z.infer<

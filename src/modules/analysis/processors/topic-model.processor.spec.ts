@@ -12,7 +12,7 @@ import { RunStatus } from '../enums';
 
 const createMockJob = (): Job<BatchAnalysisJobMessage> =>
   ({
-    id: 'p1:topic-model',
+    id: 'p1--topic-model',
     queueName: 'topic-model',
     attemptsMade: 1,
     opts: { attempts: 3 },

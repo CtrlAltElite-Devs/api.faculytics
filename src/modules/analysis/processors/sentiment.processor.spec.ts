@@ -15,7 +15,7 @@ const createMockBatchJob = (
   overrides?: Partial<BatchAnalysisJobMessage>,
 ): Job<BatchAnalysisJobMessage> =>
   ({
-    id: 'pipeline1:sentiment',
+    id: 'pipeline1--sentiment',
     queueName: 'sentiment',
     attemptsMade: 1,
     opts: { attempts: 3 },

@@ -59,7 +59,7 @@ export const topicModelWorkerResponseSchema = z.object({
     .optional(),
   outlierCount: z.number().int().optional(),
   error: z.string().optional(),
-  completedAt: z.string().datetime(),
+  completedAt: z.string().datetime({ offset: true }),
 });
 
 export type TopicModelWorkerResponse = z.infer<

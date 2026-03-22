@@ -427,7 +427,7 @@ export class QuestionnaireService {
 
       // F1: Safe hierarchy traversal
       const courseSemesterId = course.program?.department?.semester?.id;
-      if (!courseSemesterId || courseSemesterId !== data.semesterId) {
+      if (courseSemesterId && courseSemesterId !== data.semesterId) {
         throw new BadRequestException(
           `Course ${course.shortname} does not belong to the provided semester context.`,
         );
@@ -524,8 +524,8 @@ export class QuestionnaireService {
     let campus: Campus | null = null;
 
     if (course) {
-      program = course.program;
-      department = program?.department || null; // Safe navigation
+      program = course.program ?? faculty.program ?? null;
+      department = program?.department ?? faculty.department ?? null;
     } else {
       department = faculty.department || null;
       program = faculty.program || null;
@@ -744,7 +744,7 @@ export class QuestionnaireService {
 
       // Validate course belongs to semester
       const courseSemesterId = course.program?.department?.semester?.id;
-      if (!courseSemesterId || courseSemesterId !== data.semesterId) {
+      if (courseSemesterId && courseSemesterId !== data.semesterId) {
         throw new BadRequestException(
           `Course does not belong to the provided semester context.`,
         );

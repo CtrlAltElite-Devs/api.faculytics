@@ -352,10 +352,10 @@ export class QuestionnaireService {
       );
     }
 
-    const activeVersion = await this.versionRepo.findOne({
-      questionnaire,
-      isActive: true,
-    });
+    const activeVersion = await this.versionRepo.findOne(
+      { questionnaire, isActive: true },
+      { populate: ['questionnaire'] },
+    );
 
     return activeVersion;
   }

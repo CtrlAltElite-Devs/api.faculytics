@@ -139,11 +139,15 @@ export class MoodleCategorySyncService {
       const campus = campusMap.get(parentCategory.moodleCategoryId);
       if (!campus) throw new Error('Missing campus in map');
 
+      const { label, academicYear } = this.parseSemesterCode(cat.name);
+
       const data = tx.create(
         Semester,
         {
           moodleCategoryId: cat.moodleCategoryId,
           code: cat.name,
+          label,
+          academicYear,
           description: this.stripHtml(cat.description),
           campus,
         },
@@ -152,7 +156,14 @@ export class MoodleCategorySyncService {
 
       const semester = await tx.upsert(Semester, data, {
         onConflictFields: ['moodleCategoryId'],
-        onConflictMergeFields: ['code', 'description', 'campus', 'updatedAt'],
+        onConflictMergeFields: [
+          'code',
+          'label',
+          'academicYear',
+          'description',
+          'campus',
+          'updatedAt',
+        ],
       });
       semesterMap.set(cat.moodleCategoryId, semester);
     }
@@ -228,6 +239,24 @@ export class MoodleCategorySyncService {
         onConflictMergeFields: ['code', 'name', 'department', 'updatedAt'],
       });
     }
+  }
+
+  /**
+   * Parses a semester code like "S22526" into label and academic year.
+   * Format: S{semester}{YY1}{YY2} → Semester {semester}, 20{YY1}-20{YY2}
+   */
+  private parseSemesterCode(code: string): {
+    label: string | undefined;
+    academicYear: string | undefined;
+  } {
+    const match = code.match(/^S(\d)(\d{2})(\d{2})$/);
+    if (!match) return { label: undefined, academicYear: undefined };
+
+    const [, semester, startYear, endYear] = match;
+    return {
+      label: `Semester ${semester}`,
+      academicYear: `20${startYear}-20${endYear}`,
+    };
   }
 
   private stripHtml(text?: string): string | undefined {

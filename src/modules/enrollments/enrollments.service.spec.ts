@@ -65,6 +65,16 @@ describe('EnrollmentsService', () => {
           shortname: 'CS101',
           fullname: 'Intro to CS',
           courseImage: 'https://example.com/course.jpg',
+          program: {
+            department: {
+              semester: {
+                id: 'sem-1',
+                code: 'S12526',
+                label: '1st Semester',
+                academicYear: '2025-2026',
+              },
+            },
+          },
         },
       },
     ];
@@ -94,6 +104,12 @@ describe('EnrollmentsService', () => {
       employeeNumber: 'EMP001',
       profilePicture: 'https://example.com/pic.jpg',
     });
+    expect(result.data[0].semester).toEqual({
+      id: 'sem-1',
+      code: 'S12526',
+      label: '1st Semester',
+      academicYear: '2025-2026',
+    });
     expect(result.meta.totalItems).toBe(1);
     expect(result.meta.totalPages).toBe(1);
     // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -118,6 +134,16 @@ describe('EnrollmentsService', () => {
           shortname: 'CS101',
           fullname: 'Intro to CS',
           courseImage: null,
+          program: {
+            department: {
+              semester: {
+                id: 'sem-1',
+                code: 'S12526',
+                label: '1st Semester',
+                academicYear: '2025-2026',
+              },
+            },
+          },
         },
       },
     ];
@@ -128,6 +154,30 @@ describe('EnrollmentsService', () => {
     const result = await service.getMyEnrollments(1, 10);
 
     expect(result.data[0].faculty).toBeNull();
+  });
+
+  it('should return null semester when hierarchy is incomplete', async () => {
+    const mockEnrollments = [
+      {
+        id: 'e1',
+        role: 'student',
+        course: {
+          id: 'c1',
+          moodleCourseId: 101,
+          shortname: 'CS101',
+          fullname: 'Intro to CS',
+          courseImage: null,
+          program: undefined,
+        },
+      },
+    ];
+
+    (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
+    (em.find as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.getMyEnrollments(1, 10);
+
+    expect(result.data[0].semester).toBeNull();
   });
 
   it('should not query faculty when no enrollments exist', async () => {

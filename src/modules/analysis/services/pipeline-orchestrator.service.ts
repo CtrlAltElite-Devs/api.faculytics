@@ -81,6 +81,8 @@ export class PipelineOrchestratorService {
     @InjectQueue(QueueName.TOPIC_MODEL) private readonly topicModelQueue: Queue,
     @InjectQueue(QueueName.RECOMMENDATIONS)
     private readonly recommendationsQueue: Queue,
+    @InjectQueue(QueueName.ANALYTICS_REFRESH)
+    private readonly analyticsRefreshQueue: Queue,
   ) {}
 
   async CreatePipeline(
@@ -413,6 +415,24 @@ export class PipelineOrchestratorService {
     await fork.flush();
 
     this.logger.log(`Pipeline ${pipelineId} completed`);
+
+    // Best-effort: enqueue analytics refresh (decoupled from pipeline lifecycle)
+    try {
+      await this.analyticsRefreshQueue.add(
+        QueueName.ANALYTICS_REFRESH,
+        { pipelineId },
+        {
+          jobId: `${pipelineId}--analytics-refresh`,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+        },
+      );
+      this.logger.log(`Enqueued analytics refresh for pipeline ${pipelineId}`);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to enqueue analytics refresh for pipeline ${pipelineId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   async GetPipelineStatus(pipelineId: string): Promise<PipelineStatusResponse> {

@@ -198,3 +198,19 @@ All BullMQ queue name strings (`'sentiment'`, `'embedding'`, `'moodle-sync'`, et
 
 - **Rationale:** Queue names appeared as string literals in `@Processor()` decorators, `@InjectQueue()` injections, `BullModule.registerQueue()` calls, `queue.add()` invocations, and test `getQueueToken()` calls — a single typo would cause silent runtime failures (unmatched processor, dead queue). Constants provide compile-time safety and single-source-of-truth.
 - **Trade-off:** Minor verbosity (`QueueName.SENTIMENT` vs `'sentiment'`). Acceptable for the safety guarantee.
+
+## 29. Materialized Views for Analytics Dashboards
+
+Faculty performance dashboards use PostgreSQL materialized views (`mv_faculty_semester_stats`, `mv_faculty_trends`) instead of live aggregation queries.
+
+- **Rationale:** Dashboard queries aggregate across submissions, sentiment results, topic assignments, and multiple pipeline runs. Live queries would require complex multi-table joins with `LATERAL` subqueries and window functions on every page load. Materialized views pre-compute these once and serve reads in constant time.
+- **Refresh strategy:** Views are refreshed asynchronously via a BullMQ job (`analytics-refresh`) triggered after each analysis pipeline completes. `REFRESH CONCURRENTLY` is used so reads are never blocked during refresh. A `system_config` row tracks `analytics_last_refreshed_at` for frontend staleness display.
+- **Dependency ordering:** `mv_faculty_trends` depends on `mv_faculty_semester_stats` (it reads from the stats view for linear regression). The refresh processor always refreshes stats first, then trends.
+- **Trade-off:** Data is eventually consistent — dashboards may show stale results until the refresh job completes after a pipeline run. Acceptable because analysis pipelines run infrequently and the refresh is fast (seconds).
+
+## 30. Semester Code Parsing for Display Labels
+
+The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.
+
+- **Rationale:** Moodle's category naming convention encodes the semester number and academic year range in a compact code. Parsing at sync time avoids duplicating the regex in every consumer (frontend, analytics views, reports).
+- **Trade-off:** The parser is tightly coupled to the `S{semester}{startYear}{endYear}` convention. If the naming scheme changes, the regex must be updated. Semesters that don't match the pattern get `null` for both fields — no data loss, just no enrichment.

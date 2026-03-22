@@ -24,6 +24,9 @@ import {
   Program,
   Campus,
   Enrollment,
+  TopicAssignment,
+  SentimentResult,
+  SubmissionEmbedding,
 } from '../../../entities/index.entity';
 import {
   QuestionnaireStatus,
@@ -43,6 +46,7 @@ import { UserRole } from '../../auth/roles.enum';
 import { CacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-namespaces';
 import { AnalysisService } from '../../analysis/analysis.service';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { CurrentUserService } from '../../common/cls/current-user.service';
 import { env } from 'src/configurations/env';
 import { cleanText } from '../utils/clean-text';
@@ -348,23 +352,26 @@ export class QuestionnaireService {
       );
     }
 
-    const activeVersion = await this.versionRepo.findOne({
-      questionnaire,
-      isActive: true,
-    });
+    const activeVersion = await this.versionRepo.findOne(
+      { questionnaire, isActive: true },
+      { populate: ['questionnaire'] },
+    );
 
     return activeVersion;
   }
 
-  async submitQuestionnaire(data: {
-    versionId: string;
-    respondentId: string;
-    facultyId: string;
-    semesterId: string;
-    courseId?: string;
-    answers: Record<string, number>; // questionId -> numericValue
-    qualitativeComment?: string;
-  }) {
+  async submitQuestionnaire(
+    data: {
+      versionId: string;
+      respondentId: string;
+      facultyId: string;
+      semesterId: string;
+      courseId?: string;
+      answers: Record<string, number>; // questionId -> numericValue
+      qualitativeComment?: string;
+    },
+    options?: { skipAnalysis?: boolean },
+  ) {
     const version = await this.versionRepo.findOne(data.versionId, {
       populate: ['questionnaire'],
     });
@@ -420,7 +427,7 @@ export class QuestionnaireService {
 
       // F1: Safe hierarchy traversal
       const courseSemesterId = course.program?.department?.semester?.id;
-      if (!courseSemesterId || courseSemesterId !== data.semesterId) {
+      if (courseSemesterId && courseSemesterId !== data.semesterId) {
         throw new BadRequestException(
           `Course ${course.shortname} does not belong to the provided semester context.`,
         );
@@ -471,7 +478,7 @@ export class QuestionnaireService {
 
     // 3. Answer Validation
     const schema = version.schemaSnapshot;
-    const questions = this.getAllQuestions(schema);
+    const questions = this.GetAllQuestions(schema);
     const maxScore = schema.meta.maxScore > 0 ? schema.meta.maxScore : 5;
     const providedAnswerKeys = new Set(Object.keys(data.answers)); // F9: Optimization
 
@@ -517,8 +524,8 @@ export class QuestionnaireService {
     let campus: Campus | null = null;
 
     if (course) {
-      program = course.program;
-      department = program?.department || null; // Safe navigation
+      program = course.program ?? faculty.program ?? null;
+      department = program?.department ?? faculty.department ?? null;
     } else {
       department = faculty.department || null;
       program = faculty.program || null;
@@ -604,10 +611,14 @@ export class QuestionnaireService {
     }
 
     // Fire-and-forget embedding dispatch (uses cleaned text for alignment with topic modeling)
-    if (submission.cleanedComment && env.EMBEDDINGS_WORKER_URL) {
+    if (
+      !options?.skipAnalysis &&
+      submission.cleanedComment &&
+      env.EMBEDDINGS_WORKER_URL
+    ) {
       try {
         await this.analysisService.EnqueueJob(
-          'embedding',
+          QueueName.EMBEDDING,
           submission.cleanedComment,
           {
             submissionId: submission.id,
@@ -626,7 +637,7 @@ export class QuestionnaireService {
   }
 
   // F6: Iterative traversal to avoid stack overflow
-  private getAllQuestions(schema: QuestionnaireSchemaSnapshot): QuestionNode[] {
+  GetAllQuestions(schema: QuestionnaireSchemaSnapshot): QuestionNode[] {
     const questions: QuestionNode[] = [];
     const stack: SectionNode[] = [...schema.sections];
 
@@ -733,16 +744,29 @@ export class QuestionnaireService {
 
       // Validate course belongs to semester
       const courseSemesterId = course.program?.department?.semester?.id;
-      if (!courseSemesterId || courseSemesterId !== data.semesterId) {
+      if (courseSemesterId && courseSemesterId !== data.semesterId) {
         throw new BadRequestException(
           `Course does not belong to the provided semester context.`,
         );
       }
     }
 
-    // Upsert draft using unique constraint
-    try {
-      const draft = await this.em.upsert(QuestionnaireDraft, {
+    // Find existing draft or create a new one
+    // Manual find/create pattern used instead of em.upsert because MikroORM's
+    // upsert does not support partial unique indexes (WHERE clause conditions).
+    let draft = await this.draftRepo.findOne({
+      respondent,
+      questionnaireVersion: version,
+      faculty,
+      semester,
+      ...(course ? { course } : {}),
+    });
+
+    if (draft) {
+      draft.answers = data.answers;
+      draft.qualitativeComment = data.qualitativeComment;
+    } else {
+      draft = this.draftRepo.create({
         respondent,
         questionnaireVersion: version,
         faculty,
@@ -751,17 +775,35 @@ export class QuestionnaireService {
         answers: data.answers,
         qualitativeComment: data.qualitativeComment,
       });
-
-      return draft;
-    } catch (error) {
-      // Handle unique constraint violations gracefully
-      if (error instanceof UniqueConstraintViolationException) {
-        throw new ConflictException(
-          'A draft already exists for this context. Please try again.',
-        );
-      }
-      throw error;
     }
+
+    await this.em.flush();
+    return draft;
+  }
+
+  async CheckSubmission(query: {
+    versionId: string;
+    facultyId: string;
+    semesterId: string;
+    courseId?: string;
+  }): Promise<{ submitted: boolean; submittedAt?: Date }> {
+    const respondentId = this.currentUserService.getOrFail().id;
+    const submission = await this.submissionRepo.findOne(
+      {
+        respondent: respondentId,
+        questionnaireVersion: query.versionId,
+        faculty: query.facultyId,
+        semester: query.semesterId,
+        course: query.courseId || null,
+      },
+      { fields: ['id', 'submittedAt'] },
+    );
+
+    if (submission) {
+      return { submitted: true, submittedAt: submission.submittedAt };
+    }
+
+    return { submitted: false };
   }
 
   async GetDraft(query: {
@@ -807,5 +849,48 @@ export class QuestionnaireService {
 
     draft.SoftDelete();
     await this.em.flush();
+  }
+
+  async WipeSubmissions(versionId: string): Promise<{ deletedCount: number }> {
+    const version = await this.versionRepo.findOne(versionId);
+    if (!version) {
+      throw new NotFoundException(
+        `Questionnaire version with ID ${versionId} not found.`,
+      );
+    }
+
+    const submissions = await this.em.find(
+      QuestionnaireSubmission,
+      { questionnaireVersion: versionId },
+      { fields: ['id'], filters: false },
+    );
+
+    if (submissions.length === 0) {
+      return { deletedCount: 0 };
+    }
+
+    const ids = submissions.map((s) => s.id);
+
+    await this.em.nativeDelete(TopicAssignment, {
+      submission: { $in: ids },
+    });
+    await this.em.nativeDelete(SentimentResult, {
+      submission: { $in: ids },
+    });
+    await this.em.nativeDelete(SubmissionEmbedding, {
+      submission: { $in: ids },
+    });
+    await this.em.nativeDelete(QuestionnaireAnswer, {
+      submission: { $in: ids },
+    });
+    await this.em.nativeDelete(QuestionnaireSubmission, {
+      id: { $in: ids },
+    });
+
+    this.logger.warn(
+      `Wiped ${ids.length} submissions and all child records for version ${versionId}`,
+    );
+
+    return { deletedCount: ids.length };
   }
 }

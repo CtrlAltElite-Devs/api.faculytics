@@ -9,10 +9,12 @@ import { User } from 'src/entities/user.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { Program } from 'src/entities/program.entity';
 import { Semester } from 'src/entities/semester.entity';
+import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
 import { ListFacultyQueryDto } from '../dto/requests/list-faculty-query.dto';
 import { FacultyListResponseDto } from '../dto/responses/faculty-list.response.dto';
 import { FacultyCardResponseDto } from '../dto/responses/faculty-card.response.dto';
+import { SubmissionCountResponseDto } from '../dto/responses/submission-count.response.dto';
 import { Course } from 'src/entities/course.entity';
 import { FilterQuery } from '@mikro-orm/core';
 
@@ -167,6 +169,33 @@ export class FacultyService {
         currentPage: page,
       },
     };
+  }
+
+  async GetSubmissionCount(
+    facultyId: string,
+    semesterId: string,
+  ): Promise<SubmissionCountResponseDto> {
+    const [semester, user] = await Promise.all([
+      this.em.findOne(Semester, { id: semesterId }),
+      this.em.findOne(User, { id: facultyId }),
+    ]);
+
+    if (!semester) {
+      throw new NotFoundException(
+        `Semester with id '${semesterId}' not found.`,
+      );
+    }
+
+    if (!user) {
+      throw new NotFoundException(`Faculty with id '${facultyId}' not found.`);
+    }
+
+    const count = await this.em.count(QuestionnaireSubmission, {
+      faculty: facultyId,
+      semester: semesterId,
+    });
+
+    return { count };
   }
 
   private BuildEnrollmentFilter(

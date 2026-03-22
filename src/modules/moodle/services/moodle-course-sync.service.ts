@@ -1,5 +1,6 @@
 import { EntityManager } from '@mikro-orm/core';
 import { Injectable, Logger } from '@nestjs/common';
+import pLimit from 'p-limit';
 import { env } from 'src/configurations/env';
 import { Program } from 'src/entities/program.entity';
 import { Course } from 'src/entities/course.entity';
@@ -16,20 +17,26 @@ export class MoodleCourseSyncService {
     private readonly unitOfWork: UnitOfWork,
   ) {}
 
-  async syncAllPrograms(): Promise<void> {
+  async SyncAllPrograms(): Promise<void> {
     const em = this.em.fork();
     const programs = await em.find(Program, {});
+    const limit = pLimit(env.MOODLE_SYNC_CONCURRENCY);
 
-    for (const program of programs) {
-      try {
-        await this.syncProgramCourses(program);
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(
-          `Failed to sync courses for program ${program.code}: ${message}`,
-        );
-      }
-    }
+    await Promise.all(
+      programs.map((program) =>
+        limit(async () => {
+          try {
+            await this.syncProgramCourses(program);
+          } catch (error: unknown) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            this.logger.error(
+              `Failed to sync courses for program ${program.code}: ${message}`,
+            );
+          }
+        }),
+      ),
+    );
   }
 
   private async syncProgramCourses(program: Program) {

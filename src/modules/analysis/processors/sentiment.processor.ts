@@ -3,6 +3,7 @@ import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { env } from 'src/configurations/env';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { SentimentRun } from 'src/entities/sentiment-run.entity';
 import { SentimentResult } from 'src/entities/sentiment-result.entity';
 import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
@@ -13,7 +14,7 @@ import { sentimentResultItemSchema } from '../dto/sentiment-worker.dto';
 import { RunPodBatchProcessor } from './runpod-batch.processor';
 import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.service';
 
-@Processor('sentiment', {
+@Processor(QueueName.SENTIMENT, {
   concurrency: env.BULLMQ_SENTIMENT_CONCURRENCY,
   stalledInterval: env.BULLMQ_STALLED_INTERVAL_MS,
   maxStalledCount: env.BULLMQ_MAX_STALLED_COUNT,

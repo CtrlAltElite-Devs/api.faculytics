@@ -37,7 +37,7 @@ export class EnrollmentsService {
       Enrollment,
       { user: userId, isActive: true },
       {
-        populate: ['course'],
+        populate: ['course.program.department.semester'],
         limit,
         offset: (page - 1) * limit,
         orderBy: { timeModified: 'DESC' },
@@ -48,18 +48,29 @@ export class EnrollmentsService {
     const facultyMap = await this.getFacultyByCourseIds(courseIds);
 
     return {
-      data: enrollments.map((e) => ({
-        id: e.id,
-        role: e.role,
-        course: {
-          id: e.course.id,
-          moodleCourseId: e.course.moodleCourseId,
-          shortname: e.course.shortname,
-          fullname: e.course.fullname,
-          courseImage: e.course.courseImage ?? undefined,
-        },
-        faculty: facultyMap.get(e.course.id) ?? null,
-      })),
+      data: enrollments.map((e) => {
+        const semester = e.course.program?.department?.semester;
+        return {
+          id: e.id,
+          role: e.role,
+          course: {
+            id: e.course.id,
+            moodleCourseId: e.course.moodleCourseId,
+            shortname: e.course.shortname,
+            fullname: e.course.fullname,
+            courseImage: e.course.courseImage ?? undefined,
+          },
+          faculty: facultyMap.get(e.course.id) ?? null,
+          semester: semester
+            ? {
+                id: semester.id,
+                code: semester.code,
+                label: semester.label,
+                academicYear: semester.academicYear,
+              }
+            : null,
+        };
+      }),
       meta: {
         totalItems,
         itemCount: enrollments.length,

@@ -99,11 +99,12 @@ BatchAnalysisJobMessage {
 
 // Inbound: Worker HTTP response → validated by processor
 BatchAnalysisResultMessage {
+  jobId?: string;       // Optional — workers don't echo this back
   version: string;
   status: "completed" | "failed";
   results?: Array<Record<string, unknown>>;  // Type-specific items
   error?: string;
-  completedAt: string;
+  completedAt: string;  // ISO 8601 (accepts UTC 'Z' and timezone offsets)
 }
 ```
 
@@ -210,15 +211,16 @@ BaseBatchProcessor          ← HTTP dispatch, Zod validation, retry
 - **Auth header:** `Authorization: Bearer <RUNPOD_API_KEY>` (when configured)
 - **Request wrapping:** `{ input: <job data> }` envelope for `/runsync`
 - **Response unwrapping:** Extracts `body.output`, throws on `status: "FAILED"`
+- **Async job polling:** When RunPod returns `IN_QUEUE` or `IN_PROGRESS` (i.e., the job exceeds the `/runsync` timeout), the processor automatically polls the `/status/{jobId}` endpoint every 5 seconds until the job completes, fails, or the processor's HTTP timeout is reached. The status URL is derived from the worker URL by replacing `/runsync` or `/run` with `/status/{id}`.
 
 `BaseBatchProcessor` provides extension points for subclasses:
 
-| Method                 | Default                          | Override Purpose                              |
-| ---------------------- | -------------------------------- | --------------------------------------------- |
-| `buildHeaders()`       | `Content-Type: application/json` | Add auth headers                              |
-| `wrapBody(data)`       | Pass-through                     | RunPod `{ input: ... }` wrapping              |
-| `unwrapResponse(body)` | Pass-through                     | RunPod `{ output: ... }` unwrapping           |
-| `getHttpTimeoutMs()`   | `BULLMQ_HTTP_TIMEOUT_MS`         | Per-processor timeout (topic model uses 300s) |
+| Method                 | Default                          | Override Purpose                                    |
+| ---------------------- | -------------------------------- | --------------------------------------------------- |
+| `buildHeaders()`       | `Content-Type: application/json` | Add auth headers                                    |
+| `wrapBody(data)`       | Pass-through                     | RunPod `{ input: ... }` wrapping                    |
+| `unwrapResponse(body)` | Pass-through (async)             | RunPod `{ output: ... }` unwrapping + async polling |
+| `getHttpTimeoutMs()`   | `BULLMQ_HTTP_TIMEOUT_MS`         | Per-processor timeout (topic model uses 300s)       |
 
 ## 11. Topic Labeling
 

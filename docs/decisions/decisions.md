@@ -12,7 +12,7 @@ Leveraging MikroORM's `EntityManager` to ensure transactional integrity during c
 
 ## 3. Base Job Pattern
 
-All background jobs extend `BaseJob` to provide consistent logging, startup execution logic, and error handling. This standardization simplifies monitoring and debugging of scheduled tasks.
+Non-sync background jobs extend `BaseJob` to provide consistent logging, startup execution logic, and error handling. Currently only `RefreshTokenCleanupJob` uses this pattern — the Moodle sync jobs were migrated to BullMQ (see Decision #26).
 
 ## 4. Questionnaire Leaf-Weight Rule
 
@@ -126,6 +126,29 @@ Recommendations were originally designed as an external HTTP worker (like sentim
 - **Structured output:** Uses OpenAI's `zodResponseFormat` for type-safe responses — the LLM returns JSON validated against the `llmRecommendationsResponseSchema` (category, headline, description, actionPlan, priority, topicReference).
 - **Trade-off:** Recommendation generation now runs in the API process, consuming memory and an OpenAI API call slot. Acceptable because one call per pipeline run is negligible load, and the alternative (an HTTP worker with replicated DB queries) adds complexity without benefit.
 
+## 21. CLS-Based Scope Resolution
+
+Role-based scoping uses NestJS CLS (Continuation-Local Storage) via `nestjs-cls` to propagate the authenticated user through the request lifecycle without passing it as a parameter.
+
+- **Flow:** `CurrentUserInterceptor` loads the user into CLS, then `ScopeResolverService` reads it via `CurrentUserService.getOrFail()`. Services never receive the user directly — they call `ScopeResolverService.ResolveDepartmentIds(semesterId)` which returns `null` (unrestricted) or `string[]` (restricted department IDs).
+- **Rationale:** Avoids threading the user through every controller → service method signature. The interceptor + CLS pattern is a single integration point that all scoped modules reuse.
+- **Trade-off:** CLS adds an implicit dependency that isn't visible in constructor injection. Mitigated by the `getOrFail()` method which throws immediately if the user isn't set.
+
+## 22. Curriculum Endpoints Without Pagination
+
+The `CurriculumModule` returns flat arrays instead of paginated responses for departments, programs, and courses.
+
+- **Rationale:** Result sets are inherently small within a dean's scope (1-3 departments, 5-15 programs, 20-60 courses). Super admins see more but still manageable for a single university. Pagination would add DTO and service complexity for no practical benefit.
+- **Trade-off:** If the system scales to multi-university, super admin result sets could grow. Acceptable risk — pagination can be added later without breaking the API contract (response would change from `T[]` to `{ data: T[], meta: ... }`).
+
+## 23. Per-Card Submission Count over Bulk Endpoint
+
+Faculty card submission counts use a per-card `GET /faculty/:facultyId/submission-count?semesterId=X` endpoint instead of a bulk endpoint that returns counts for all faculty at once.
+
+- **Rationale:** Simpler contract (no array parsing/validation), individually cacheable, matches the React component-per-card pattern where TanStack Query handles parallel fetches with deduplication. Realistic page sizes (10-20 faculty) won't cause performance issues.
+- **Scope enforcement deferred:** The endpoint uses role-only guards (`DEAN`, `SUPER_ADMIN`) without re-deriving department scope. Faculty IDs are already scoped by the `GET /faculty` list endpoint. The data exposed is a bare count (not PII). Full department-level scope enforcement is deferred to a future bulk endpoint where it integrates naturally.
+- **Trade-off:** N+1 request pattern per page. Acceptable because TanStack Query parallelizes and deduplicates, and a bulk endpoint can be added later if this becomes a bottleneck.
+
 ## 20. Confidence-Scored Supporting Evidence
 
 Each recommendation includes a `supportingEvidence` object with computed confidence levels and structured data sources, rather than freeform text justification.
@@ -133,3 +156,61 @@ Each recommendation includes a `supportingEvidence` object with computed confide
 - **Confidence computation:** Based on comment count thresholds and sentiment agreement ratio. HIGH requires ≥ 10 comments and ≥ 70% sentiment agreement; MEDIUM requires ≥ 5 comments; below that is LOW.
 - **Typed sources:** Evidence uses a discriminated union (`TopicSource | DimensionScoresSource`) stored as JSONB on `RecommendedAction`. This preserves the raw data the LLM used, enabling the frontend to render topic-specific sentiment breakdowns, dimension score charts, and sample quotes.
 - **Trade-off:** More complex entity schema (headline/description/actionPlan instead of a single `actionText`). Justified because the frontend needs structured data to render recommendation cards with actionable detail.
+
+## 24. RunPod Async Polling Fallback
+
+RunPod's `/runsync` endpoint has a ~30-second timeout. If a worker (e.g., topic modeling) takes longer, RunPod returns `{"id":"...","status":"IN_QUEUE"}` instead of the result. `RunPodBatchProcessor.unwrapResponse()` now detects `IN_QUEUE` / `IN_PROGRESS` responses and polls `/status/{jobId}` every 5 seconds until the job completes or the processor's HTTP timeout is reached.
+
+- **Rationale:** Topic modeling routinely exceeds 30 seconds for larger corpora. Without polling, these jobs would exhaust all retry attempts and fail the pipeline.
+- **Trade-off:** Polling keeps the BullMQ worker occupied during the wait. Acceptable because topic model concurrency is 1 and the alternative (switching to RunPod's webhook callback model) would add infrastructure complexity.
+
+## 25. Lenient Worker Response Validation
+
+Worker response schemas (`batchAnalysisResultSchema`, `analysisResultSchema`) were tightened during initial development but relaxed based on production integration:
+
+- `jobId` made optional — workers don't echo back the API-assigned job ID.
+- `completedAt` accepts timezone offsets (`z.string().datetime({ offset: true })`) in addition to UTC `Z` suffix — real workers may use either format.
+- OpenAI structured output schemas use `.nullable().optional()` instead of `.optional()` alone — OpenAI's API requires all fields to be present in the JSON and uses `null` for absent values.
+
+- **Rationale:** Strict schemas caught legitimate responses as validation errors, causing pipeline failures in production. The relaxed schemas accept all valid ISO 8601 datetimes and don't require workers to implement API-internal concepts like `jobId`.
+- **Trade-off:** Slightly looser contracts. Mitigated by type-specific schemas (sentiment, topic model) still enforcing strict validation on domain fields.
+
+## 26. BullMQ-Based Moodle Sync Pipeline
+
+The three independent Moodle sync cron jobs (`CategorySyncJob`, `CourseSyncJob`, `EnrollmentSyncJob`) were unified into a single BullMQ composite job (`MoodleSyncProcessor`) with a phase dependency chain.
+
+- **Rationale:** Independent cron jobs couldn't enforce ordering dependencies (enrollments depend on courses, which depend on category hierarchy). BullMQ's `concurrency: 1` eliminates overlap guards (`isRunning` flags), fixed `jobId` handles deduplication across multiple instances, and the queue enables manual trigger via `POST /moodle/sync` without env var toggles and restarts.
+- **Startup stays blocking:** `MoodleStartupService` calls sync services directly (not via BullMQ) because the app must have data before accepting HTTP traffic. The processor handles cron and manual triggers.
+- **Phase abort:** If category sync fails, downstream phases are skipped rather than running against stale hierarchy data.
+- **Trade-off:** Sync jobs now depend on Redis being available. The old `BaseJob` cron pattern worked with just the scheduler. Acceptable because Redis is already required for caching and analysis queues.
+
+## 27. 3-Phase Enrollment Sync Architecture
+
+Enrollment sync was restructured from per-course sequential processing into three distinct phases: concurrent HTTP fetch, batch user upsert, sequential enrollment upsert.
+
+- **Rationale:** The original approach (parallel per-course enrollment sync with `pLimit`) caused deadlocks because the same User rows were upserted by multiple concurrent transactions. The 3-phase architecture separates HTTP I/O (parallel, no DB), User upsert (single batch, no concurrency), and Enrollment upsert (sequential per course, no overlap).
+- **`upsertMany` with fallback:** User batch upsert uses `em.fork()` (not `runInTransaction`) so that if `upsertMany` fails at the DB level (e.g., `userName` unique constraint), the fallback uses a fresh `em.fork()` — avoiding the PostgreSQL aborted-transaction problem where all subsequent statements fail.
+- **Trade-off:** Users and enrollments are in separate transactions (no course-level atomicity). A crash mid-Phase-3 leaves partially synced enrollments. Acceptable because sync is idempotent — the next run fixes any inconsistency.
+
+## 28. Centralized Queue Name Constants
+
+All BullMQ queue name strings (`'sentiment'`, `'embedding'`, `'moodle-sync'`, etc.) are centralized in `src/configurations/common/queue-names.ts` as a `QueueName` const object.
+
+- **Rationale:** Queue names appeared as string literals in `@Processor()` decorators, `@InjectQueue()` injections, `BullModule.registerQueue()` calls, `queue.add()` invocations, and test `getQueueToken()` calls — a single typo would cause silent runtime failures (unmatched processor, dead queue). Constants provide compile-time safety and single-source-of-truth.
+- **Trade-off:** Minor verbosity (`QueueName.SENTIMENT` vs `'sentiment'`). Acceptable for the safety guarantee.
+
+## 29. Materialized Views for Analytics Dashboards
+
+Faculty performance dashboards use PostgreSQL materialized views (`mv_faculty_semester_stats`, `mv_faculty_trends`) instead of live aggregation queries.
+
+- **Rationale:** Dashboard queries aggregate across submissions, sentiment results, topic assignments, and multiple pipeline runs. Live queries would require complex multi-table joins with `LATERAL` subqueries and window functions on every page load. Materialized views pre-compute these once and serve reads in constant time.
+- **Refresh strategy:** Views are refreshed asynchronously via a BullMQ job (`analytics-refresh`) triggered after each analysis pipeline completes. `REFRESH CONCURRENTLY` is used so reads are never blocked during refresh. A `system_config` row tracks `analytics_last_refreshed_at` for frontend staleness display.
+- **Dependency ordering:** `mv_faculty_trends` depends on `mv_faculty_semester_stats` (it reads from the stats view for linear regression). The refresh processor always refreshes stats first, then trends.
+- **Trade-off:** Data is eventually consistent — dashboards may show stale results until the refresh job completes after a pipeline run. Acceptable because analysis pipelines run infrequently and the refresh is fast (seconds).
+
+## 30. Semester Code Parsing for Display Labels
+
+The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.
+
+- **Rationale:** Moodle's category naming convention encodes the semester number and academic year range in a compact code. Parsing at sync time avoids duplicating the regex in every consumer (frontend, analytics views, reports).
+- **Trade-off:** The parser is tightly coupled to the `S{semester}{startYear}{endYear}` convention. If the naming scheme changes, the regex must be updated. Semesters that don't match the pattern get `null` for both fields — no data loss, just no enrichment.

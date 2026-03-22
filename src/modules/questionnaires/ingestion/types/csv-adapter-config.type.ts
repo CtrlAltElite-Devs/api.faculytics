@@ -5,4 +5,5 @@ export interface CSVAdapterConfig extends SourceConfiguration {
   quote?: string;
   escape?: string;
   separator?: string;
+  questionIds?: string[];
 }

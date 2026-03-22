@@ -4,12 +4,10 @@ import {
   InfrastructureModules,
 } from './modules/index.module';
 import { AllCronJobs } from './crons/index.jobs';
-import { CategorySyncJob } from './crons/jobs/category-jobs/category-sync.job';
-import { CourseSyncJob } from './crons/jobs/course-jobs/course-sync.job';
-import { EnrollmentSyncJob } from './crons/jobs/enrollment-jobs/enrollment-sync.job';
 import { StartupJobRegistry } from './crons/startup-job-registry';
 import { env } from './configurations/env';
 import { CommonModule } from './modules/common/common.module';
+import { MoodleStartupService } from './modules/moodle/services/moodle-startup.service';
 
 @Module({
   // CommonModule imported directly so cron job providers can inject RefreshTokenRepository
@@ -17,19 +15,11 @@ import { CommonModule } from './modules/common/common.module';
   providers: [...AllCronJobs],
 })
 export default class AppModule implements OnApplicationBootstrap {
-  constructor(
-    private readonly categorySyncJob: CategorySyncJob,
-    private readonly courseSyncJob: CourseSyncJob,
-    private readonly enrollmentSyncJob: EnrollmentSyncJob,
-  ) {}
+  constructor(private readonly moodleStartupService: MoodleStartupService) {}
 
   async onApplicationBootstrap() {
     if (env.OPENAPI_MODE) return;
-    await this.categorySyncJob.executeStartup();
-    if (env.SYNC_ON_STARTUP) {
-      await this.courseSyncJob.executeStartup();
-      await this.enrollmentSyncJob.executeStartup();
-    }
+    await this.moodleStartupService.RunStartupSync();
     StartupJobRegistry.printSummary();
   }
 }

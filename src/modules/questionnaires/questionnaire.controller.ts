@@ -35,6 +35,8 @@ import { IngestCsvRequestDto } from './dto/requests/ingest-csv-request.dto';
 import { QuestionnaireVersionsResponse } from './dto/responses/questionnaire-version-response.dto';
 import { QuestionnaireVersionDetailResponse } from './dto/responses/questionnaire-version-detail-response.dto';
 import { DraftResponse } from './dto/responses/draft-response.dto';
+import { CheckSubmissionQuery } from './dto/requests/check-submission-query.dto';
+import { CheckSubmissionResponse } from './dto/responses/check-submission-response.dto';
 import { IngestionResultDto } from './ingestion/dto/ingestion-result.dto';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
@@ -173,6 +175,23 @@ export class QuestionnaireController {
       { schema: data.schema, title: data.title },
     );
     return QuestionnaireVersionDetailResponse.Map(version);
+  }
+
+  @Get('submissions/check')
+  @UseJwtGuard()
+  @UseInterceptors(CurrentUserInterceptor)
+  @ApiOperation({
+    summary: 'Check if the current user already submitted an evaluation',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Submission status for the given context',
+    type: CheckSubmissionResponse,
+  })
+  async checkSubmission(
+    @Query() query: CheckSubmissionQuery,
+  ): Promise<CheckSubmissionResponse> {
+    return this.questionnaireService.CheckSubmission(query);
   }
 
   @Post('submissions')

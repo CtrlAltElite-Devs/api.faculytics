@@ -751,9 +751,22 @@ export class QuestionnaireService {
       }
     }
 
-    // Upsert draft using unique constraint
-    try {
-      const draft = await this.em.upsert(QuestionnaireDraft, {
+    // Find existing draft or create a new one
+    // Manual find/create pattern used instead of em.upsert because MikroORM's
+    // upsert does not support partial unique indexes (WHERE clause conditions).
+    let draft = await this.draftRepo.findOne({
+      respondent,
+      questionnaireVersion: version,
+      faculty,
+      semester,
+      ...(course ? { course } : {}),
+    });
+
+    if (draft) {
+      draft.answers = data.answers;
+      draft.qualitativeComment = data.qualitativeComment;
+    } else {
+      draft = this.draftRepo.create({
         respondent,
         questionnaireVersion: version,
         faculty,
@@ -762,17 +775,10 @@ export class QuestionnaireService {
         answers: data.answers,
         qualitativeComment: data.qualitativeComment,
       });
-
-      return draft;
-    } catch (error) {
-      // Handle unique constraint violations gracefully
-      if (error instanceof UniqueConstraintViolationException) {
-        throw new ConflictException(
-          'A draft already exists for this context. Please try again.',
-        );
-      }
-      throw error;
     }
+
+    await this.em.flush();
+    return draft;
   }
 
   async CheckSubmission(query: {

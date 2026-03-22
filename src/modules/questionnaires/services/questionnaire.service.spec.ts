@@ -655,20 +655,49 @@ describe('QuestionnaireService', () => {
         course: mockCourse,
       };
 
-      (em.upsert as jest.Mock).mockResolvedValue(mockDraft);
+      draftRepo.findOne.mockResolvedValue(null);
+      draftRepo.create.mockReturnValue(mockDraft as any);
 
       const result = await service.SaveOrUpdateDraft(mockDraftData);
 
       expect(result).toEqual(mockDraft);
-      expect(em.upsert).toHaveBeenCalledWith(QuestionnaireDraft, {
+      expect(draftRepo.findOne).toHaveBeenCalledWith({
         respondent: mockRespondent,
         questionnaireVersion: mockVersion,
         faculty: mockFaculty,
         semester: mockSemester,
         course: mockCourse,
-        answers: mockDraftData.answers,
-        qualitativeComment: mockDraftData.qualitativeComment,
       });
+      expect(draftRepo.create).toHaveBeenCalled();
+      expect(em.flush).toHaveBeenCalled();
+    });
+
+    it('should update an existing draft', async () => {
+      versionRepo.findOne.mockResolvedValue(mockVersion as any);
+      /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+      em.findOne
+        .mockResolvedValueOnce(mockRespondent as any)
+        .mockResolvedValueOnce(mockFaculty as any)
+        .mockResolvedValueOnce(mockSemester as any)
+        .mockResolvedValueOnce(mockCourse as any);
+      /* eslint-enable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+
+      const existingDraft = {
+        id: 'd1',
+        answers: { q1: 1 },
+        qualitativeComment: 'Old comment',
+      };
+
+      draftRepo.findOne.mockResolvedValue(existingDraft as any);
+
+      await service.SaveOrUpdateDraft(mockDraftData);
+
+      expect(existingDraft.answers).toEqual(mockDraftData.answers);
+      expect(existingDraft.qualitativeComment).toBe(
+        mockDraftData.qualitativeComment,
+      );
+      expect(draftRepo.create).not.toHaveBeenCalled();
+      expect(em.flush).toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if version not found', async () => {
@@ -733,11 +762,18 @@ describe('QuestionnaireService', () => {
         course: null,
       };
 
-      (em.upsert as jest.Mock).mockResolvedValue(mockDraft);
+      draftRepo.findOne.mockResolvedValue(null);
+      draftRepo.create.mockReturnValue(mockDraft as any);
 
       const result = await service.SaveOrUpdateDraft(dataWithoutCourse);
 
       expect(result.course).toBeNull();
+      expect(draftRepo.findOne).toHaveBeenCalledWith({
+        respondent: mockRespondent,
+        questionnaireVersion: mockVersion,
+        faculty: mockFaculty,
+        semester: mockSemester,
+      });
     });
   });
 

@@ -31,6 +31,7 @@ import { RecommendationGenerationService } from './services/recommendation-gener
       { name: QueueName.EMBEDDING },
       { name: QueueName.TOPIC_MODEL },
       { name: QueueName.RECOMMENDATIONS },
+      { name: QueueName.ANALYTICS_REFRESH },
     ),
     MikroOrmModule.forFeature([
       AnalysisPipeline,

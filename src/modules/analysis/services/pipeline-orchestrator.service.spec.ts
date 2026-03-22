@@ -17,6 +17,7 @@ describe('PipelineOrchestratorService', () => {
   let sentimentQueue: { add: jest.Mock };
   let topicModelQueue: { add: jest.Mock };
   let recommendationsQueue: { add: jest.Mock };
+  let analyticsRefreshQueue: { add: jest.Mock };
   let mockAnalysisService: { EnqueueJob: jest.Mock };
 
   const createMockQueue = () => ({
@@ -52,6 +53,7 @@ describe('PipelineOrchestratorService', () => {
     sentimentQueue = createMockQueue();
     topicModelQueue = createMockQueue();
     recommendationsQueue = createMockQueue();
+    analyticsRefreshQueue = createMockQueue();
     mockAnalysisService = {
       EnqueueJob: jest.fn().mockResolvedValue('mock-job-id'),
     };
@@ -76,6 +78,10 @@ describe('PipelineOrchestratorService', () => {
         {
           provide: getQueueToken(QueueName.RECOMMENDATIONS),
           useValue: recommendationsQueue,
+        },
+        {
+          provide: getQueueToken(QueueName.ANALYTICS_REFRESH),
+          useValue: analyticsRefreshQueue,
         },
       ],
     }).compile();
@@ -330,6 +336,44 @@ describe('PipelineOrchestratorService', () => {
       expect(pipeline.status).toBe(PipelineStatus.COMPLETED);
       expect(pipeline.completedAt).toBeDefined();
       expect(mockFork.flush).toHaveBeenCalled();
+    });
+
+    it('should enqueue analytics refresh job after recommendations complete', async () => {
+      const pipeline = {
+        id: 'p1',
+        status: PipelineStatus.GENERATING_RECOMMENDATIONS,
+        completedAt: undefined as Date | undefined,
+      };
+      mockFork.findOneOrFail.mockResolvedValue(pipeline);
+
+      await service.OnRecommendationsComplete('p1');
+
+      expect(analyticsRefreshQueue.add).toHaveBeenCalledWith(
+        'analytics-refresh',
+        { pipelineId: 'p1' },
+        expect.objectContaining({
+          jobId: 'p1--analytics-refresh',
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+        }),
+      );
+    });
+
+    it('should not fail pipeline if analytics refresh enqueue fails', async () => {
+      const pipeline = {
+        id: 'p1',
+        status: PipelineStatus.GENERATING_RECOMMENDATIONS,
+        completedAt: undefined as Date | undefined,
+      };
+      mockFork.findOneOrFail.mockResolvedValue(pipeline);
+      analyticsRefreshQueue.add.mockRejectedValueOnce(
+        new Error('Redis connection lost'),
+      );
+
+      await service.OnRecommendationsComplete('p1');
+
+      expect(pipeline.status).toBe(PipelineStatus.COMPLETED);
+      expect(pipeline.completedAt).toBeDefined();
     });
   });
 

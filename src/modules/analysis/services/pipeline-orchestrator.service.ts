@@ -10,6 +10,7 @@ import { Queue } from 'bullmq';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { v4 } from 'uuid';
 import { env } from 'src/configurations/env';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { AnalysisPipeline } from 'src/entities/analysis-pipeline.entity';
 import { SentimentRun } from 'src/entities/sentiment-run.entity';
 import { SentimentResult } from 'src/entities/sentiment-result.entity';
@@ -76,10 +77,12 @@ export class PipelineOrchestratorService {
     private readonly em: EntityManager,
     private readonly analysisService: AnalysisService,
     private readonly topicLabelService: TopicLabelService,
-    @InjectQueue('sentiment') private readonly sentimentQueue: Queue,
-    @InjectQueue('topic-model') private readonly topicModelQueue: Queue,
-    @InjectQueue('recommendations')
+    @InjectQueue(QueueName.SENTIMENT) private readonly sentimentQueue: Queue,
+    @InjectQueue(QueueName.TOPIC_MODEL) private readonly topicModelQueue: Queue,
+    @InjectQueue(QueueName.RECOMMENDATIONS)
     private readonly recommendationsQueue: Queue,
+    @InjectQueue(QueueName.ANALYTICS_REFRESH)
+    private readonly analyticsRefreshQueue: Queue,
   ) {}
 
   async CreatePipeline(
@@ -241,7 +244,7 @@ export class PipelineOrchestratorService {
       for (const sub of unembeddedSubmissions) {
         try {
           await this.analysisService.EnqueueJob(
-            'embedding',
+            QueueName.EMBEDDING,
             sub.cleanedComment!,
             { submissionId: sub.id, facultyId: '', versionId: '' },
           );
@@ -412,6 +415,24 @@ export class PipelineOrchestratorService {
     await fork.flush();
 
     this.logger.log(`Pipeline ${pipelineId} completed`);
+
+    // Best-effort: enqueue analytics refresh (decoupled from pipeline lifecycle)
+    try {
+      await this.analyticsRefreshQueue.add(
+        QueueName.ANALYTICS_REFRESH,
+        { pipelineId },
+        {
+          jobId: `${pipelineId}--analytics-refresh`,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+        },
+      );
+      this.logger.log(`Enqueued analytics refresh for pipeline ${pipelineId}`);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to enqueue analytics refresh for pipeline ${pipelineId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   async GetPipelineStatus(pipelineId: string): Promise<PipelineStatusResponse> {
@@ -704,7 +725,7 @@ export class PipelineOrchestratorService {
     const envelope: BatchAnalysisJobMessage = {
       jobId,
       version: '1.0',
-      type: 'sentiment',
+      type: QueueName.SENTIMENT,
       items: submissions.map((s) => ({
         submissionId: s.id,
         text: s.cleanedComment!,
@@ -721,8 +742,8 @@ export class PipelineOrchestratorService {
     run.jobId = jobId;
     await em.flush();
 
-    await this.sentimentQueue.add('sentiment', envelope, {
-      jobId: `${pipeline.id}:sentiment`,
+    await this.sentimentQueue.add(QueueName.SENTIMENT, envelope, {
+      jobId: `${pipeline.id}--sentiment`,
       attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
       backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
     });
@@ -808,7 +829,7 @@ export class PipelineOrchestratorService {
     const payload = {
       jobId,
       version: '1.0',
-      type: 'topic-model',
+      type: QueueName.TOPIC_MODEL,
       items: items.map((i) => ({
         submissionId: i.submissionId,
         text: i.text,
@@ -821,8 +842,8 @@ export class PipelineOrchestratorService {
       publishedAt: new Date().toISOString(),
     };
 
-    await this.topicModelQueue.add('topic-model', payload, {
-      jobId: `${pipeline.id}:topic-model`,
+    await this.topicModelQueue.add(QueueName.TOPIC_MODEL, payload, {
+      jobId: `${pipeline.id}--topic-model`,
       attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
       backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
     });
@@ -880,7 +901,7 @@ export class PipelineOrchestratorService {
     const payload: RecommendationsJobMessage = recommendationsJobSchema.parse({
       jobId,
       version: '1.0',
-      type: 'recommendations',
+      type: QueueName.RECOMMENDATIONS,
       metadata: {
         pipelineId: pipeline.id,
         runId: run.id,
@@ -891,8 +912,8 @@ export class PipelineOrchestratorService {
     run.jobId = jobId;
     await em.flush();
 
-    await this.recommendationsQueue.add('recommendations', payload, {
-      jobId: `${pipeline.id}:recommendations`,
+    await this.recommendationsQueue.add(QueueName.RECOMMENDATIONS, payload, {
+      jobId: `${pipeline.id}--recommendations`,
       attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
       backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
     });
@@ -922,13 +943,10 @@ export class PipelineOrchestratorService {
     if (pipeline.status === PipelineStatus.AWAITING_CONFIRMATION) {
       return { status: 'pending' };
     }
-    if (pipeline.status === PipelineStatus.FAILED) {
-      return { status: 'failed' };
-    }
     if (pipeline.status === PipelineStatus.CANCELLED) {
       return { status: 'skipped' };
     }
-    // Past embedding check (sentiment, topic modeling, recommendations, completed)
+    // Past embedding check (sentiment, topic modeling, recommendations, completed, or failed later)
     return { status: 'completed' };
   }
 }

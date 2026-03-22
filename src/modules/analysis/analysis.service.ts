@@ -8,6 +8,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { v4 } from 'uuid';
 import { env } from 'src/configurations/env';
+import { QueueName } from 'src/configurations/common/queue-names';
 import {
   AnalysisJobMessage,
   analysisJobSchema,
@@ -24,10 +25,10 @@ interface JobInput {
 }
 
 type SupportedQueueType =
-  | 'sentiment'
-  | 'embedding'
-  | 'topic-model'
-  | 'recommendations';
+  | typeof QueueName.SENTIMENT
+  | typeof QueueName.EMBEDDING
+  | typeof QueueName.TOPIC_MODEL
+  | typeof QueueName.RECOMMENDATIONS;
 
 @Injectable()
 export class AnalysisService {
@@ -35,17 +36,17 @@ export class AnalysisService {
   private readonly queues: Record<SupportedQueueType, Queue>;
 
   constructor(
-    @InjectQueue('sentiment') private readonly sentimentQueue: Queue,
-    @InjectQueue('embedding') private readonly embeddingQueue: Queue,
-    @InjectQueue('topic-model') private readonly topicModelQueue: Queue,
-    @InjectQueue('recommendations')
+    @InjectQueue(QueueName.SENTIMENT) private readonly sentimentQueue: Queue,
+    @InjectQueue(QueueName.EMBEDDING) private readonly embeddingQueue: Queue,
+    @InjectQueue(QueueName.TOPIC_MODEL) private readonly topicModelQueue: Queue,
+    @InjectQueue(QueueName.RECOMMENDATIONS)
     private readonly recommendationsQueue: Queue,
   ) {
     this.queues = {
-      sentiment: this.sentimentQueue,
-      embedding: this.embeddingQueue,
-      'topic-model': this.topicModelQueue,
-      recommendations: this.recommendationsQueue,
+      [QueueName.SENTIMENT]: this.sentimentQueue,
+      [QueueName.EMBEDDING]: this.embeddingQueue,
+      [QueueName.TOPIC_MODEL]: this.topicModelQueue,
+      [QueueName.RECOMMENDATIONS]: this.recommendationsQueue,
     };
   }
 
@@ -56,7 +57,7 @@ export class AnalysisService {
   ): Promise<string> {
     const queue = this.getQueue(type);
     const jobId = v4();
-    const deterministicId = `${metadata.submissionId}:${type}`;
+    const deterministicId = `${metadata.submissionId}--${type}`;
 
     const envelope: AnalysisJobMessage = {
       jobId,
@@ -108,7 +109,7 @@ export class AnalysisService {
       this.getQueue(job.type); // validate type
 
       const jobId = v4();
-      const deterministicId = `${job.metadata.submissionId}:${job.type}`;
+      const deterministicId = `${job.metadata.submissionId}--${job.type}`;
 
       const envelope: AnalysisJobMessage = {
         jobId,

@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { getQueueToken } from '@nestjs/bullmq';
 import { AnalysisService } from './analysis.service';
+import { QueueName } from 'src/configurations/common/queue-names';
 
 describe('AnalysisService', () => {
   let service: AnalysisService;
@@ -33,11 +34,20 @@ describe('AnalysisService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalysisService,
-        { provide: getQueueToken('sentiment'), useValue: sentimentQueue },
-        { provide: getQueueToken('embedding'), useValue: embeddingQueue },
-        { provide: getQueueToken('topic-model'), useValue: topicModelQueue },
         {
-          provide: getQueueToken('recommendations'),
+          provide: getQueueToken(QueueName.SENTIMENT),
+          useValue: sentimentQueue,
+        },
+        {
+          provide: getQueueToken(QueueName.EMBEDDING),
+          useValue: embeddingQueue,
+        },
+        {
+          provide: getQueueToken(QueueName.TOPIC_MODEL),
+          useValue: topicModelQueue,
+        },
+        {
+          provide: getQueueToken(QueueName.RECOMMENDATIONS),
           useValue: recommendationsQueue,
         },
       ],
@@ -53,7 +63,7 @@ describe('AnalysisService', () => {
   describe('EnqueueJob', () => {
     it('should add a job to the sentiment queue with correct envelope', async () => {
       const jobId = await service.EnqueueJob(
-        'sentiment',
+        QueueName.SENTIMENT,
         'The professor was helpful',
         metadata,
       );
@@ -67,33 +77,33 @@ describe('AnalysisService', () => {
         Record<string, unknown>,
         Record<string, unknown>,
       ];
-      expect(name).toBe('sentiment');
+      expect(name).toBe(QueueName.SENTIMENT);
       expect(envelope).toMatchObject({
         version: '1.0',
-        type: 'sentiment',
+        type: QueueName.SENTIMENT,
         text: 'The professor was helpful',
         metadata,
       });
       expect(envelope.jobId).toBeDefined();
       expect(envelope.publishedAt).toBeDefined();
-      expect(opts.jobId).toBe('s1:sentiment');
+      expect(opts.jobId).toBe('s1--sentiment');
     });
 
     it('should add a job to the embedding queue', async () => {
-      await service.EnqueueJob('embedding', 'Some text', metadata);
+      await service.EnqueueJob(QueueName.EMBEDDING, 'Some text', metadata);
 
       expect(embeddingQueue.add).toHaveBeenCalledTimes(1);
       const call = embeddingQueue.add.mock.calls[0] as unknown[];
       const opts = call[2] as Record<string, unknown>;
-      expect(opts.jobId).toBe('s1:embedding');
+      expect(opts.jobId).toBe('s1--embedding');
     });
 
     it('should use deterministic job ID based on submissionId and type', async () => {
-      await service.EnqueueJob('sentiment', 'Some text', metadata);
+      await service.EnqueueJob(QueueName.SENTIMENT, 'Some text', metadata);
 
       const call = sentimentQueue.add.mock.calls[0] as unknown[];
       const opts = call[2] as Record<string, unknown>;
-      expect(opts.jobId).toBe('s1:sentiment');
+      expect(opts.jobId).toBe('s1--sentiment');
     });
 
     it('should throw BadRequestException for unknown analysis type', async () => {
@@ -106,12 +116,12 @@ describe('AnalysisService', () => {
       sentimentQueue.add.mockRejectedValue(new Error('ECONNREFUSED'));
 
       await expect(
-        service.EnqueueJob('sentiment', 'text', metadata),
+        service.EnqueueJob(QueueName.SENTIMENT, 'text', metadata),
       ).rejects.toThrow(ServiceUnavailableException);
     });
 
     it('should include correct job options from env', async () => {
-      await service.EnqueueJob('sentiment', 'text', metadata);
+      await service.EnqueueJob(QueueName.SENTIMENT, 'text', metadata);
 
       const call = sentimentQueue.add.mock.calls[0] as unknown[];
       const opts = call[2] as {
@@ -128,12 +138,12 @@ describe('AnalysisService', () => {
     it('should group jobs by type and use addBulk', async () => {
       const jobs = [
         {
-          type: 'sentiment',
+          type: QueueName.SENTIMENT,
           text: 'text1',
           metadata: { submissionId: 's1', facultyId: 'f1', versionId: 'v1' },
         },
         {
-          type: 'sentiment',
+          type: QueueName.SENTIMENT,
           text: 'text2',
           metadata: { submissionId: 's2', facultyId: 'f1', versionId: 'v1' },
         },
@@ -151,11 +161,11 @@ describe('AnalysisService', () => {
         opts: { jobId: string };
       }>;
       expect(bulkArgs).toHaveLength(2);
-      expect(bulkArgs[0].name).toBe('sentiment');
+      expect(bulkArgs[0].name).toBe(QueueName.SENTIMENT);
       expect(bulkArgs[0].data.text).toBe('text1');
-      expect(bulkArgs[0].opts.jobId).toBe('s1:sentiment');
+      expect(bulkArgs[0].opts.jobId).toBe('s1--sentiment');
       expect(bulkArgs[1].data.text).toBe('text2');
-      expect(bulkArgs[1].opts.jobId).toBe('s2:sentiment');
+      expect(bulkArgs[1].opts.jobId).toBe('s2--sentiment');
     });
 
     it('should return empty array for empty input', async () => {
@@ -174,7 +184,7 @@ describe('AnalysisService', () => {
     it('should throw ServiceUnavailableException on connection error in batch', async () => {
       sentimentQueue.addBulk.mockRejectedValue(new Error('ECONNREFUSED'));
 
-      const jobs = [{ type: 'sentiment', text: 'text', metadata }];
+      const jobs = [{ type: QueueName.SENTIMENT, text: 'text', metadata }];
 
       await expect(service.EnqueueBatch(jobs)).rejects.toThrow(
         ServiceUnavailableException,

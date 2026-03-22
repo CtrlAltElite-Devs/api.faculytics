@@ -13,7 +13,7 @@ This document describes the high-level components, technology stack, and module 
 
 ## 2. Technology Stack
 
-- **Backend Framework:** [NestJS](https://nestjs.com/) (v10+)
+- **Backend Framework:** [NestJS](https://nestjs.com/) (v11)
 - **Database ORM:** [MikroORM](https://mikro-orm.io/) with PostgreSQL
 - **Authentication:** Passport.js (JWT and Refresh Token strategies)
 - **External API:** Moodle Web Services (REST)
@@ -51,6 +51,10 @@ classDiagram
         ChatKitModule
         QuestionnaireModule
         AnalysisModule
+        AnalyticsModule
+        DimensionsModule
+        FacultyModule
+        CurriculumModule
     }
 
     AppModule --> InfrastructureModules : "imports"
@@ -59,9 +63,14 @@ classDiagram
     AuthModule --> MoodleModule : "uses MoodleService"
     AuthModule --> CommonModule : "uses CustomJwtService"
     MoodleModule --> CommonModule : "uses UnitOfWork"
+    MoodleModule --> BullModule : "uses BullMQ queue"
     EnrollmentsModule --> MoodleModule : "uses MoodleService"
     QuestionnaireModule --> CommonModule : "uses UnitOfWork"
     AnalysisModule --> BullModule : "uses BullMQ queues"
+    AnalyticsModule --> BullModule : "uses BullMQ queue"
+    AnalyticsModule --> CommonModule : "uses ScopeResolverService"
+    FacultyModule --> CommonModule : "uses ScopeResolverService"
+    CurriculumModule --> CommonModule : "uses ScopeResolverService"
 
     class AnalysisModule {
         +AnalysisService
@@ -76,12 +85,22 @@ classDiagram
         +BaseBatchProcessor
     }
 
+    class AnalyticsModule {
+        +AnalyticsService
+        +AnalyticsController
+        +AnalyticsRefreshProcessor
+    }
+
     class MoodleModule {
         +MoodleService
         +MoodleSyncService
         +MoodleCategorySyncService
         +MoodleCourseSyncService
         +EnrollmentSyncService
+        +MoodleSyncProcessor
+        +MoodleSyncScheduler
+        +MoodleStartupService
+        +MoodleSyncController
     }
 
     class AuthModule {
@@ -116,16 +135,26 @@ Authentication uses a priority-based strategy pattern (`src/modules/auth/strateg
 
 Priority ranges: `0-99` core auth, `100-199` external providers, `200+` fallbacks. To add a new provider, implement `LoginStrategy` and register it under the `LOGIN_STRATEGIES` injection token.
 
-## 5. Cron Jobs
+## 5. Moodle Sync Pipeline
 
-Background jobs extend `BaseJob` and register in `StartupJobRegistry`. All jobs are in `src/crons/jobs/`.
+Institutional sync (categories, courses, enrollments) uses a BullMQ-based composite job instead of individual cron jobs. See [Institutional Sync Workflow](../workflows/institutional-sync.md) for the full flow.
 
-| Job                      | Schedule       | Purpose                                                               |
-| ------------------------ | -------------- | --------------------------------------------------------------------- |
-| `CategorySyncJob`        | Startup + cron | Syncs Moodle categories to local hierarchy                            |
-| `CourseSyncJob`          | Startup + cron | Syncs Moodle courses                                                  |
-| `EnrollmentSyncJob`      | Startup + cron | Syncs user-course enrollments and roles; invalidates enrollment cache |
-| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days                               |
+| Component              | Purpose                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `MoodleStartupService` | Blocking startup orchestrator — categories always, courses/enrollments gated by env |
+| `MoodleSyncProcessor`  | BullMQ processor — runs categories → courses → enrollments in sequence              |
+| `MoodleSyncScheduler`  | Hourly `@Cron` that enqueues a composite sync job (fixed `jobId` for deduplication) |
+| `MoodleSyncController` | `POST /moodle/sync` (manual trigger), `GET /moodle/sync/status` (queue state)       |
+
+Phase dependency: if categories fail, courses and enrollments are skipped. If courses fail, enrollments are skipped.
+
+### Cron Jobs
+
+The only remaining cron job using the `BaseJob` pattern is in `src/crons/jobs/`:
+
+| Job                      | Schedule       | Purpose                                 |
+| ------------------------ | -------------- | --------------------------------------- |
+| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days |
 
 ## 6. Moodle Connectivity & Error Handling
 
@@ -176,14 +205,16 @@ Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMP
 
 ### Queue Architecture
 
-Four BullMQ queues with independent concurrency:
+Six BullMQ queues with independent concurrency. Queue names are centralized in `src/configurations/common/queue-names.ts`.
 
-| Queue             | Processor                  | Concurrency Default |
-| ----------------- | -------------------------- | ------------------- |
-| `sentiment`       | `SentimentProcessor`       | 3                   |
-| `embedding`       | `EmbeddingProcessor`       | 3                   |
-| `topic-model`     | `TopicModelProcessor`      | 1                   |
-| `recommendations` | `RecommendationsProcessor` | 1                   |
+| Queue               | Processor                   | Concurrency Default | Module          |
+| ------------------- | --------------------------- | ------------------- | --------------- |
+| `moodle-sync`       | `MoodleSyncProcessor`       | 1                   | MoodleModule    |
+| `sentiment`         | `SentimentProcessor`        | 3                   | AnalysisModule  |
+| `embedding`         | `EmbeddingProcessor`        | 3                   | AnalysisModule  |
+| `topic-model`       | `TopicModelProcessor`       | 1                   | AnalysisModule  |
+| `recommendations`   | `RecommendationsProcessor`  | 1                   | AnalysisModule  |
+| `analytics-refresh` | `AnalyticsRefreshProcessor` | 1                   | AnalyticsModule |
 
 ### REST Endpoints
 
@@ -194,6 +225,16 @@ Four BullMQ queues with independent concurrency:
 | POST   | `/analysis/pipelines/:id/cancel`          | Cancel a non-terminal pipeline                        |
 | GET    | `/analysis/pipelines/:id/status`          | Get pipeline status with stage details                |
 | GET    | `/analysis/pipelines/:id/recommendations` | Get recommendations for a completed pipeline          |
+
+### Analytics Endpoints
+
+See [Analytics Module](./analytics.md) for full architecture.
+
+| Method | Path                   | Description                                       |
+| ------ | ---------------------- | ------------------------------------------------- |
+| GET    | `/analytics/overview`  | Department overview with per-faculty stats        |
+| GET    | `/analytics/attention` | Faculty flagged for review with attention flags   |
+| GET    | `/analytics/trends`    | Faculty trend data with linear regression results |
 
 **Resilience:** Exponential backoff retries, stall detection, graceful degradation when Redis is unavailable (`ServiceUnavailableException`), HTTP timeout via `AbortController`.
 
@@ -210,7 +251,46 @@ The `HealthModule` uses `@nestjs/terminus` to provide structured health checks a
 
 Returns HTTP 200 with `status: 'ok'` when healthy, HTTP 503 with `status: 'error'` and per-indicator details when unhealthy.
 
-## 9. Startup & Initialization Flow
+## 9. Scoped Query Pattern (Faculty & Curriculum)
+
+The `FacultyModule` and `CurriculumModule` use a shared role-based scoping pattern for administrative queries. This ensures deans only see data within their assigned departments while super admins see everything.
+
+### Scope Resolution Chain
+
+```
+Request → JwtAuthGuard → RolesGuard → CurrentUserInterceptor → CLS Store → ScopeResolverService
+```
+
+1. `@UseJwtGuard(SUPER_ADMIN, DEAN)` validates JWT and checks role membership via `RolesGuard`
+2. `CurrentUserInterceptor` loads the full `User` entity via `UserLoader` and stores it in CLS (`CurrentUserService.set()`)
+3. `ScopeResolverService.ResolveDepartmentIds(semesterId)` reads the user from CLS and returns:
+   - `null` — unrestricted (super admin)
+   - `string[]` — department UUIDs the dean is assigned to for that semester
+
+### Filter Validation Cascade
+
+When explicit filter params (`departmentId`, `programId`) are provided, they are validated against the resolved scope:
+
+| Scenario                              | Result            |
+| ------------------------------------- | ----------------- |
+| `departmentId` outside scope          | `403 Forbidden`   |
+| `programId` not found                 | `404 Not Found`   |
+| `programId` department outside scope  | `403 Forbidden`   |
+| `departmentId` + `programId` mismatch | `400 Bad Request` |
+
+### Modules
+
+| Module             | Endpoints                                              | Purpose                                            |
+| ------------------ | ------------------------------------------------------ | -------------------------------------------------- |
+| `FacultyModule`    | `GET /faculty`                                         | Paginated faculty list with course assignments     |
+| `FacultyModule`    | `GET /faculty/:facultyId/submission-count`             | Submission count for a faculty member per semester |
+| `CurriculumModule` | `GET /curriculum/departments`, `/programs`, `/courses` | Institutional hierarchy for filter dropdowns       |
+
+Both modules import `CommonModule` (for `ScopeResolverService`) and `DataLoaderModule` (for `CurrentUserInterceptor` → `UserLoader`).
+
+The `CurriculumModule` endpoints return flat arrays (no pagination) since result sets are small within a dean's scope. All three endpoints require `semesterId`; the courses endpoint additionally requires at least one of `programId` or `departmentId` to prevent unbounded queries.
+
+## 10. Startup & Initialization Flow
 
 The application enforces a strict initialization sequence in `InitializeDatabase` before it begins accepting traffic. This ensures that the database schema and required infrastructure state are always synchronized with the code.
 

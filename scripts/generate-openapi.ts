@@ -53,6 +53,15 @@ async function generate() {
     'OpenAPI contract generated successfully: openapi.json and openapi.yaml',
   );
 
+  // Suppress BullMQ ioredis "Connection is closed" rejections during shutdown
+  process.on('unhandledRejection', (reason) => {
+    if (reason instanceof Error && reason.message === 'Connection is closed.') {
+      return;
+    }
+    console.error('Unhandled rejection:', reason);
+    process.exit(1);
+  });
+
   await app.close();
   process.exit(0);
 }

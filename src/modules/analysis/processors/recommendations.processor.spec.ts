@@ -9,18 +9,19 @@ import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.s
 import { env } from 'src/configurations/env';
 import { type RecommendationsJobMessage } from '../dto/recommendations.dto';
 import { Job } from 'bullmq';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { RunStatus } from '../enums';
 
 const createMockJob = (): Job<RecommendationsJobMessage> =>
   ({
-    id: 'p1:recommendations',
-    queueName: 'recommendations',
+    id: 'p1--recommendations',
+    queueName: QueueName.RECOMMENDATIONS,
     attemptsMade: 1,
     opts: { attempts: 3 },
     data: {
       jobId: '550e8400-e29b-41d4-a716-446655440000',
       version: '1.0',
-      type: 'recommendations',
+      type: QueueName.RECOMMENDATIONS,
       metadata: { pipelineId: 'p1', runId: 'r1' },
       publishedAt: '2026-03-12T00:00:00.000Z',
     },

@@ -9,8 +9,8 @@ import { UserRepository } from 'src/repositories/user.repository';
 
 @Injectable({ scope: Scope.REQUEST })
 export class IngestionMappingLoader {
-  private userLoader: DataLoader<number, User | null>;
-  private courseLoader: DataLoader<number, Course | null>;
+  private userLoader: DataLoader<string, User | null>;
+  private courseLoader: DataLoader<string, Course | null>;
   private semesterLoader: DataLoader<number, Semester | null>;
 
   constructor(
@@ -21,35 +21,35 @@ export class IngestionMappingLoader {
     @InjectRepository(Semester)
     private readonly semesterRepository: EntityRepository<Semester>,
   ) {
-    this.userLoader = new DataLoader<number, User | null>(
-      async (ids: readonly number[]) => {
+    this.userLoader = new DataLoader<string, User | null>(
+      async (usernames: readonly string[]) => {
         const users = await this.userRepository.find(
           {
-            moodleUserId: { $in: [...ids] },
+            userName: { $in: [...usernames] },
           },
           {
             populate: ['campus', 'department', 'program'],
           },
         );
-        const map = new Map(users.map((u) => [u.moodleUserId, u]));
-        return ids.map((id) => map.get(id) ?? null);
+        const map = new Map(users.map((u) => [u.userName, u]));
+        return usernames.map((username) => map.get(username) ?? null);
       },
     );
 
-    this.courseLoader = new DataLoader<number, Course | null>(
-      async (ids: readonly number[]) => {
+    this.courseLoader = new DataLoader<string, Course | null>(
+      async (shortnames: readonly string[]) => {
         // PERF: Deep population of institutional context is necessary for mapping
         // but can be expensive for very diverse batches.
         const courses = await this.courseRepository.find(
           {
-            moodleCourseId: { $in: [...ids] },
+            shortname: { $in: [...shortnames] },
           },
           {
             populate: ['program.department.semester'],
           },
         );
-        const map = new Map(courses.map((c) => [c.moodleCourseId, c]));
-        return ids.map((id) => map.get(id) ?? null);
+        const map = new Map(courses.map((c) => [c.shortname, c]));
+        return shortnames.map((shortname) => map.get(shortname) ?? null);
       },
     );
 
@@ -64,12 +64,12 @@ export class IngestionMappingLoader {
     );
   }
 
-  loadUser(moodleUserId: number): Promise<User | null> {
-    return this.userLoader.load(moodleUserId);
+  loadUser(username: string): Promise<User | null> {
+    return this.userLoader.load(username);
   }
 
-  loadCourse(moodleCourseId: number): Promise<Course | null> {
-    return this.courseLoader.load(moodleCourseId);
+  loadCourse(shortname: string): Promise<Course | null> {
+    return this.courseLoader.load(shortname);
   }
 
   loadSemester(moodleCategoryId: number): Promise<Semester | null> {

@@ -3,13 +3,14 @@ import { Processor } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { env } from 'src/configurations/env';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { SubmissionEmbedding } from 'src/entities/submission-embedding.entity';
 import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
 import { AnalysisJobMessage } from '../dto/analysis-job-message.dto';
 import { AnalysisResultMessage } from '../dto/analysis-result-message.dto';
 import { BaseAnalysisProcessor } from './base.processor';
 
-@Processor('embedding', {
+@Processor(QueueName.EMBEDDING, {
   concurrency: env.EMBEDDINGS_CONCURRENCY,
   stalledInterval: env.BULLMQ_STALLED_INTERVAL_MS,
   maxStalledCount: env.BULLMQ_MAX_STALLED_COUNT,

@@ -3,6 +3,7 @@ import { Processor, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { env } from 'src/configurations/env';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { TopicModelRun } from 'src/entities/topic-model-run.entity';
 import { Topic } from 'src/entities/topic.entity';
 import { TopicAssignment } from 'src/entities/topic-assignment.entity';
@@ -15,7 +16,7 @@ import { topicModelWorkerResponseSchema } from '../dto/topic-model-worker.dto';
 import { RunPodBatchProcessor } from './runpod-batch.processor';
 import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.service';
 
-@Processor('topic-model', {
+@Processor(QueueName.TOPIC_MODEL, {
   concurrency: env.TOPIC_MODEL_CONCURRENCY,
   stalledInterval: env.BULLMQ_STALLED_INTERVAL_MS,
   maxStalledCount: env.BULLMQ_MAX_STALLED_COUNT,

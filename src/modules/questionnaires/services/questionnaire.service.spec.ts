@@ -112,6 +112,8 @@ describe('QuestionnaireService', () => {
             flush: jest.fn(),
             findOneOrFail: jest.fn(),
             findOne: jest.fn(),
+            find: jest.fn(),
+            nativeDelete: jest.fn(),
             upsert: jest.fn(),
             create: jest
               .fn()
@@ -653,20 +655,49 @@ describe('QuestionnaireService', () => {
         course: mockCourse,
       };
 
-      (em.upsert as jest.Mock).mockResolvedValue(mockDraft);
+      draftRepo.findOne.mockResolvedValue(null);
+      draftRepo.create.mockReturnValue(mockDraft as any);
 
       const result = await service.SaveOrUpdateDraft(mockDraftData);
 
       expect(result).toEqual(mockDraft);
-      expect(em.upsert).toHaveBeenCalledWith(QuestionnaireDraft, {
+      expect(draftRepo.findOne).toHaveBeenCalledWith({
         respondent: mockRespondent,
         questionnaireVersion: mockVersion,
         faculty: mockFaculty,
         semester: mockSemester,
         course: mockCourse,
-        answers: mockDraftData.answers,
-        qualitativeComment: mockDraftData.qualitativeComment,
       });
+      expect(draftRepo.create).toHaveBeenCalled();
+      expect(em.flush).toHaveBeenCalled();
+    });
+
+    it('should update an existing draft', async () => {
+      versionRepo.findOne.mockResolvedValue(mockVersion as any);
+      /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+      em.findOne
+        .mockResolvedValueOnce(mockRespondent as any)
+        .mockResolvedValueOnce(mockFaculty as any)
+        .mockResolvedValueOnce(mockSemester as any)
+        .mockResolvedValueOnce(mockCourse as any);
+      /* eslint-enable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+
+      const existingDraft = {
+        id: 'd1',
+        answers: { q1: 1 },
+        qualitativeComment: 'Old comment',
+      };
+
+      draftRepo.findOne.mockResolvedValue(existingDraft as any);
+
+      await service.SaveOrUpdateDraft(mockDraftData);
+
+      expect(existingDraft.answers).toEqual(mockDraftData.answers);
+      expect(existingDraft.qualitativeComment).toBe(
+        mockDraftData.qualitativeComment,
+      );
+      expect(draftRepo.create).not.toHaveBeenCalled();
+      expect(em.flush).toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if version not found', async () => {
@@ -731,11 +762,74 @@ describe('QuestionnaireService', () => {
         course: null,
       };
 
-      (em.upsert as jest.Mock).mockResolvedValue(mockDraft);
+      draftRepo.findOne.mockResolvedValue(null);
+      draftRepo.create.mockReturnValue(mockDraft as any);
 
       const result = await service.SaveOrUpdateDraft(dataWithoutCourse);
 
       expect(result.course).toBeNull();
+      expect(draftRepo.findOne).toHaveBeenCalledWith({
+        respondent: mockRespondent,
+        questionnaireVersion: mockVersion,
+        faculty: mockFaculty,
+        semester: mockSemester,
+      });
+    });
+  });
+
+  describe('CheckSubmission', () => {
+    const mockQuery = {
+      versionId: 'v1',
+      facultyId: FACULTY_ID,
+      semesterId: SEMESTER_ID,
+      courseId: COURSE_ID,
+    };
+
+    it('should return submitted true with submittedAt when submission exists', async () => {
+      const submittedAt = new Date('2026-03-20T10:00:00Z');
+      submissionRepo.findOne.mockResolvedValue({
+        id: 'sub1',
+        submittedAt,
+      } as any);
+
+      const result = await service.CheckSubmission(mockQuery);
+
+      expect(result).toEqual({ submitted: true, submittedAt });
+      expect(submissionRepo.findOne).toHaveBeenCalledWith(
+        {
+          respondent: RESPONDENT_ID,
+          questionnaireVersion: 'v1',
+          faculty: FACULTY_ID,
+          semester: SEMESTER_ID,
+          course: COURSE_ID,
+        },
+        { fields: ['id', 'submittedAt'] },
+      );
+    });
+
+    it('should return submitted false when no submission exists', async () => {
+      submissionRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.CheckSubmission(mockQuery);
+
+      expect(result).toEqual({ submitted: false });
+    });
+
+    it('should pass null for course when courseId is undefined', async () => {
+      submissionRepo.findOne.mockResolvedValue(null);
+
+      await service.CheckSubmission({ ...mockQuery, courseId: undefined });
+
+      expect(submissionRepo.findOne).toHaveBeenCalledWith(
+        {
+          respondent: RESPONDENT_ID,
+          questionnaireVersion: 'v1',
+          faculty: FACULTY_ID,
+          semester: SEMESTER_ID,
+          course: null,
+        },
+        { fields: ['id', 'submittedAt'] },
+      );
     });
   });
 
@@ -968,6 +1062,57 @@ describe('QuestionnaireService', () => {
       await expect(service.DeleteDraft('d1')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('WipeSubmissions', () => {
+    it('should throw NotFoundException if version not found', async () => {
+      versionRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.WipeSubmissions('v1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should return deletedCount 0 when no submissions exist', async () => {
+      versionRepo.findOne.mockResolvedValue({ id: 'v1' } as any);
+      (em.find as jest.Mock).mockResolvedValue([]);
+
+      const result = await service.WipeSubmissions('v1');
+
+      expect(result).toEqual({ deletedCount: 0 });
+      expect(em.nativeDelete).not.toHaveBeenCalled();
+    });
+
+    it('should delete children then submissions and return count', async () => {
+      versionRepo.findOne.mockResolvedValue({ id: 'v1' } as any);
+      const submissions = [{ id: 's1' }, { id: 's2' }, { id: 's3' }];
+      (em.find as jest.Mock).mockResolvedValue(submissions);
+
+      const result = await service.WipeSubmissions('v1');
+
+      expect(result).toEqual({ deletedCount: 3 });
+
+      const ids = ['s1', 's2', 's3'];
+      const calls = (em.nativeDelete as jest.Mock).mock.calls;
+      expect(calls).toHaveLength(5);
+      expect(calls[0]).toEqual([
+        expect.anything(),
+        { submission: { $in: ids } },
+      ]);
+      expect(calls[1]).toEqual([
+        expect.anything(),
+        { submission: { $in: ids } },
+      ]);
+      expect(calls[2]).toEqual([
+        expect.anything(),
+        { submission: { $in: ids } },
+      ]);
+      expect(calls[3]).toEqual([
+        expect.anything(),
+        { submission: { $in: ids } },
+      ]);
+      expect(calls[4]).toEqual([expect.anything(), { id: { $in: ids } }]);
     });
   });
 });

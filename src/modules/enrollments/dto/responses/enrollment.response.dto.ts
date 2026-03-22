@@ -1,6 +1,7 @@
 import { IsNumber, IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { FacultyShortResponseDto } from './faculty-short.response.dto';
+import { SemesterShortResponseDto } from './semester-short.response.dto';
 
 export class CourseShortResponseDto {
   @ApiProperty()
@@ -39,4 +40,7 @@ export class EnrollmentResponseDto {
 
   @ApiPropertyOptional({ type: FacultyShortResponseDto, nullable: true })
   faculty: FacultyShortResponseDto | null;
+
+  @ApiPropertyOptional({ type: SemesterShortResponseDto, nullable: true })
+  semester: SemesterShortResponseDto | null;
 }

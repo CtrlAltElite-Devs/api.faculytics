@@ -115,8 +115,11 @@ export class QuestionnaireController {
     description: 'Active version found or null if none exists',
   })
   @ApiResponse({ status: 404, description: 'Questionnaire not found' })
-  async getLatestActiveVersion(@Param('id') id: string) {
-    return this.questionnaireService.GetLatestActiveVersion(id);
+  async getLatestActiveVersion(
+    @Param('id') id: string,
+  ): Promise<QuestionnaireVersionDetailResponse | null> {
+    const version = await this.questionnaireService.GetLatestActiveVersion(id);
+    return version ? QuestionnaireVersionDetailResponse.Map(version) : null;
   }
 
   @Patch('versions/:versionId/publish')

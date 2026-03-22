@@ -16,6 +16,96 @@ import { RolesGuard } from 'src/security/guards/roles.guard';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
 import { AuthGuard } from '@nestjs/passport';
 
+describe('QuestionnaireController - checkSubmission', () => {
+  let controller: QuestionnaireController;
+  let questionnaireService: jest.Mocked<QuestionnaireService>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [QuestionnaireController],
+      providers: [
+        {
+          provide: QuestionnaireService,
+          useValue: {
+            GetVersionById: jest.fn(),
+            GetAllQuestions: jest.fn(),
+            getQuestionnaireTypes: jest.fn(),
+            getVersionsByType: jest.fn(),
+            createQuestionnaire: jest.fn(),
+            CreateVersion: jest.fn(),
+            GetLatestActiveVersion: jest.fn(),
+            PublishVersion: jest.fn(),
+            DeprecateVersion: jest.fn(),
+            UpdateDraftVersion: jest.fn(),
+            submitQuestionnaire: jest.fn(),
+            CheckSubmission: jest.fn(),
+            SaveOrUpdateDraft: jest.fn(),
+            GetDraft: jest.fn(),
+            ListMyDrafts: jest.fn(),
+            DeleteDraft: jest.fn(),
+          },
+        },
+        {
+          provide: IngestionEngine,
+          useValue: { processStream: jest.fn() },
+        },
+        {
+          provide: CSVAdapter,
+          useValue: new CSVAdapter(),
+        },
+      ],
+    })
+      .overrideGuard(AuthGuard('jwt'))
+      .useValue({ canActivate: () => true })
+      .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .overrideInterceptor(CurrentUserInterceptor)
+      .useValue({
+        intercept: (_ctx: ExecutionContext, next: CallHandler) => next.handle(),
+      })
+      .compile();
+
+    controller = module.get(QuestionnaireController);
+    questionnaireService = module.get(QuestionnaireService);
+  });
+
+  it('should return submitted true with submittedAt', async () => {
+    const submittedAt = new Date('2026-03-20T10:00:00Z');
+    questionnaireService.CheckSubmission.mockResolvedValue({
+      submitted: true,
+      submittedAt,
+    });
+
+    const query = {
+      versionId: 'v1',
+      facultyId: 'f1',
+      semesterId: 's1',
+      courseId: 'c1',
+    };
+
+    const result = await controller.checkSubmission(query);
+
+    expect(result).toEqual({ submitted: true, submittedAt });
+    expect(questionnaireService.CheckSubmission).toHaveBeenCalledWith(query);
+  });
+
+  it('should return submitted false when no submission exists', async () => {
+    questionnaireService.CheckSubmission.mockResolvedValue({
+      submitted: false,
+    });
+
+    const query = {
+      versionId: 'v1',
+      facultyId: 'f1',
+      semesterId: 's1',
+    };
+
+    const result = await controller.checkSubmission(query);
+
+    expect(result).toEqual({ submitted: false });
+  });
+});
+
 describe('QuestionnaireController - IngestCsv', () => {
   let controller: QuestionnaireController;
   let questionnaireService: jest.Mocked<QuestionnaireService>;

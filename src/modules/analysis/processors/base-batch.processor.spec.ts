@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { BaseBatchProcessor } from './base-batch.processor';
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { BatchAnalysisResultMessage } from '../dto/batch-analysis-result-message.dto';
+import { QueueName } from 'src/configurations/common/queue-names';
 
 class TestBatchProcessor extends BaseBatchProcessor {
   protected readonly logger = new Logger('TestBatchProcessor');
@@ -25,13 +26,13 @@ const createMockBatchJob = (
   overrides?: Partial<Job<BatchAnalysisJobMessage>>,
 ): Job<BatchAnalysisJobMessage> =>
   ({
-    id: 'p1:sentiment',
-    queueName: 'sentiment',
+    id: 'p1--sentiment',
+    queueName: QueueName.SENTIMENT,
     attemptsMade: 1,
     data: {
       jobId: '550e8400-e29b-41d4-a716-446655440000',
       version: '1.0',
-      type: 'sentiment',
+      type: QueueName.SENTIMENT,
       items: [
         { submissionId: 's1', text: 'Great professor' },
         { submissionId: 's2', text: 'Too fast' },
@@ -152,7 +153,7 @@ describe('BaseBatchProcessor', () => {
       processor.onFailed(job, error);
 
       expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('p1:sentiment'),
+        expect.stringContaining('p1--sentiment'),
       );
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining('test error'),

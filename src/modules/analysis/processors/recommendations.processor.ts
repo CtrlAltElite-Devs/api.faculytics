@@ -4,6 +4,7 @@ import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { env } from 'src/configurations/env';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { RecommendationRun } from 'src/entities/recommendation-run.entity';
 import { RecommendedAction } from 'src/entities/recommended-action.entity';
 import { RunStatus, ActionPriority, ActionCategory } from '../enums';
@@ -11,7 +12,7 @@ import { type RecommendationsJobMessage } from '../dto/recommendations.dto';
 import { RecommendationGenerationService } from '../services/recommendation-generation.service';
 import { PipelineOrchestratorService } from '../services/pipeline-orchestrator.service';
 
-@Processor('recommendations', {
+@Processor(QueueName.RECOMMENDATIONS, {
   concurrency: env.RECOMMENDATIONS_CONCURRENCY,
   stalledInterval: env.BULLMQ_STALLED_INTERVAL_MS,
   maxStalledCount: env.BULLMQ_MAX_STALLED_COUNT,

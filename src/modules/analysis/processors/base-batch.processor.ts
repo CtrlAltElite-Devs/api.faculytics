@@ -28,7 +28,8 @@ export abstract class BaseBatchProcessor extends WorkerHost {
   }
 
   /** Override to unwrap the response body (e.g. RunPod `body.output`). */
-  protected unwrapResponse(body: unknown): unknown {
+  // eslint-disable-next-line @typescript-eslint/require-await
+  protected async unwrapResponse(body: unknown): Promise<unknown> {
     return body;
   }
 
@@ -76,7 +77,7 @@ export abstract class BaseBatchProcessor extends WorkerHost {
     }
 
     const rawBody: unknown = await response.json();
-    const unwrapped = this.unwrapResponse(rawBody);
+    const unwrapped = await this.unwrapResponse(rawBody);
     const parseResult = batchAnalysisResultSchema.safeParse(unwrapped);
 
     if (!parseResult.success) {

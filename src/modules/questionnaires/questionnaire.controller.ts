@@ -7,10 +7,23 @@ import {
   Get,
   Delete,
   Query,
+  Res,
   UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  HttpCode,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { QuestionnaireService } from './services/questionnaire.service';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiConsumes,
+  ApiProduces,
+  ApiBody,
+} from '@nestjs/swagger';
+import type { Response } from 'express';
 import { CreateQuestionnaireRequest } from './dto/requests/create-questionnaire-request.dto';
 import { CreateVersionRequest } from './dto/requests/create-version-request.dto';
 import { UpdateVersionRequest } from './dto/requests/update-version-request.dto';
@@ -18,17 +31,45 @@ import { SubmitQuestionnaireRequest } from './dto/requests/submit-questionnaire-
 import { SaveDraftRequest } from './dto/requests/save-draft-request.dto';
 import { GetDraftRequest } from './dto/requests/get-draft-request.dto';
 import { GetVersionsByTypeParam } from './dto/requests/get-versions-by-type-request.dto';
+import { IngestCsvRequestDto } from './dto/requests/ingest-csv-request.dto';
 import { QuestionnaireVersionsResponse } from './dto/responses/questionnaire-version-response.dto';
 import { QuestionnaireVersionDetailResponse } from './dto/responses/questionnaire-version-detail-response.dto';
 import { DraftResponse } from './dto/responses/draft-response.dto';
+import { CheckSubmissionQuery } from './dto/requests/check-submission-query.dto';
+import { CheckSubmissionResponse } from './dto/responses/check-submission-response.dto';
+import { IngestionResultDto } from './ingestion/dto/ingestion-result.dto';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
+import { IngestionEngine } from './ingestion/services/ingestion-engine.service';
+import { CSVAdapter } from './ingestion/adapters/csv.adapter';
+import { CSVAdapterConfig } from './ingestion/types/csv-adapter-config.type';
+import { Readable } from 'stream';
+function csvFileFilter(
+  _req: any,
+  file: Express.Multer.File,
+  callback: (error: Error | null, acceptFile: boolean) => void,
+) {
+  if (!file.originalname.toLowerCase().endsWith('.csv')) {
+    callback(
+      new BadRequestException(
+        'Invalid file type. Only CSV files are accepted.',
+      ),
+      false,
+    );
+    return;
+  }
+  callback(null, true);
+}
 
 @ApiTags('Questionnaires')
 @Controller('questionnaires')
 export class QuestionnaireController {
-  constructor(private readonly questionnaireService: QuestionnaireService) {}
+  constructor(
+    private readonly questionnaireService: QuestionnaireService,
+    private readonly ingestionEngine: IngestionEngine,
+    private readonly csvAdapter: CSVAdapter,
+  ) {}
 
   @Get('types')
   @ApiOperation({ summary: 'List all questionnaire types' })
@@ -74,8 +115,11 @@ export class QuestionnaireController {
     description: 'Active version found or null if none exists',
   })
   @ApiResponse({ status: 404, description: 'Questionnaire not found' })
-  async getLatestActiveVersion(@Param('id') id: string) {
-    return this.questionnaireService.GetLatestActiveVersion(id);
+  async getLatestActiveVersion(
+    @Param('id') id: string,
+  ): Promise<QuestionnaireVersionDetailResponse | null> {
+    const version = await this.questionnaireService.GetLatestActiveVersion(id);
+    return version ? QuestionnaireVersionDetailResponse.Map(version) : null;
   }
 
   @Patch('versions/:versionId/publish')
@@ -136,11 +180,175 @@ export class QuestionnaireController {
     return QuestionnaireVersionDetailResponse.Map(version);
   }
 
+  @Get('submissions/check')
+  @UseJwtGuard()
+  @UseInterceptors(CurrentUserInterceptor)
+  @ApiOperation({
+    summary: 'Check if the current user already submitted an evaluation',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Submission status for the given context',
+    type: CheckSubmissionResponse,
+  })
+  async checkSubmission(
+    @Query() query: CheckSubmissionQuery,
+  ): Promise<CheckSubmissionResponse> {
+    return this.questionnaireService.CheckSubmission(query);
+  }
+
   @Post('submissions')
   @UseJwtGuard()
   @ApiOperation({ summary: 'Submit a completed questionnaire' })
   async submitQuestionnaire(@Body() data: SubmitQuestionnaireRequest) {
     return this.questionnaireService.submitQuestionnaire(data);
+  }
+
+  @Get('versions/:versionId/csv-template')
+  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.DEAN)
+  @ApiOperation({
+    summary: 'Download CSV template for a questionnaire version',
+  })
+  @ApiProduces('text/csv')
+  @ApiResponse({ status: 200, description: 'CSV template file' })
+  @ApiResponse({ status: 400, description: 'Version is not active' })
+  @ApiResponse({ status: 404, description: 'Version not found' })
+  async GetCsvTemplate(
+    @Param('versionId') versionId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const version = await this.questionnaireService.GetVersionById(versionId);
+
+    if (!version.isActive) {
+      throw new BadRequestException(
+        `Questionnaire version ${versionId} is not active.`,
+      );
+    }
+
+    const questions = this.questionnaireService.GetAllQuestions(
+      version.schemaSnapshot,
+    );
+    const questionIds = questions.map((q) => q.id);
+    const maxScore = version.schemaSnapshot.meta.maxScore;
+
+    const headers = [
+      'externalId',
+      'username',
+      'facultyUsername',
+      'courseShortname',
+      ...questionIds,
+      'comment',
+    ];
+
+    const exampleValues = [
+      'example_001',
+      'student001',
+      'faculty001',
+      'CS101',
+      ...questionIds.map(() => String(Math.ceil(Math.random() * maxScore))),
+      'optional comment',
+    ];
+
+    const csv = [headers.join(','), exampleValues.join(',')].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="template-${versionId}.csv"`,
+    );
+    res.send(csv);
+  }
+
+  @Post('ingest')
+  @HttpCode(200)
+  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.DEAN)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      fileFilter: csvFileFilter,
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiOperation({ summary: 'Ingest questionnaire submissions from CSV' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file', 'versionId'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        versionId: { type: 'string', format: 'uuid' },
+        dryRun: { type: 'boolean', default: false },
+        delimiter: { type: 'string', maxLength: 1 },
+        maxErrors: { type: 'integer', minimum: 1 },
+        maxRecords: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 5000,
+          default: 500,
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Ingestion result',
+    type: IngestionResultDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid file or parameters' })
+  @ApiResponse({
+    status: 404,
+    description: 'Version not found or not active',
+  })
+  async IngestCsv(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: IngestCsvRequestDto,
+  ): Promise<IngestionResultDto> {
+    if (!file) {
+      throw new BadRequestException('No file uploaded.');
+    }
+
+    const version = await this.questionnaireService.GetVersionById(
+      dto.versionId,
+    );
+
+    if (!version.isActive) {
+      throw new BadRequestException(
+        `Questionnaire version ${dto.versionId} is not active.`,
+      );
+    }
+
+    const questions = this.questionnaireService.GetAllQuestions(
+      version.schemaSnapshot,
+    );
+    const questionIds = questions.map((q) => q.id);
+
+    const readable = Readable.from(file.buffer);
+    const config: CSVAdapterConfig = {
+      dryRun: dto.dryRun ?? false,
+      delimiter: dto.delimiter,
+      maxErrors: dto.maxErrors,
+      maxRecords: dto.maxRecords ?? 500,
+      questionIds,
+    };
+
+    return this.ingestionEngine.processStream(
+      this.csvAdapter,
+      readable,
+      config,
+      version.id,
+    );
+  }
+
+  @Delete('versions/:versionId/submissions')
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Wipe all submissions for a version' })
+  @ApiResponse({
+    status: 200,
+    description: 'Submissions wiped successfully',
+  })
+  @ApiResponse({ status: 404, description: 'Version not found' })
+  async wipeSubmissions(@Param('versionId') versionId: string) {
+    return this.questionnaireService.WipeSubmissions(versionId);
   }
 
   @Post('drafts')

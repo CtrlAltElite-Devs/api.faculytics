@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { QueueName } from 'src/configurations/common/queue-names';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import {
   AnalysisPipeline,
@@ -26,10 +27,11 @@ import { RecommendationGenerationService } from './services/recommendation-gener
 @Module({
   imports: [
     BullModule.registerQueue(
-      { name: 'sentiment' },
-      { name: 'embedding' },
-      { name: 'topic-model' },
-      { name: 'recommendations' },
+      { name: QueueName.SENTIMENT },
+      { name: QueueName.EMBEDDING },
+      { name: QueueName.TOPIC_MODEL },
+      { name: QueueName.RECOMMENDATIONS },
+      { name: QueueName.ANALYTICS_REFRESH },
     ),
     MikroOrmModule.forFeature([
       AnalysisPipeline,

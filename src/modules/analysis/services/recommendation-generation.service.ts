@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import OpenAI from 'openai';
 import { zodResponseFormat } from 'openai/helpers/zod';
-import { EntityManager } from '@mikro-orm/postgresql';
+import { EntityManager, raw } from '@mikro-orm/postgresql';
 import { env } from 'src/configurations/env';
 import { AnalysisPipeline } from 'src/entities/analysis-pipeline.entity';
 import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
@@ -174,7 +174,7 @@ export class RecommendationGenerationService {
 
       const results = await fork
         .createQueryBuilder(QuestionnaireAnswer, 'a')
-        .select(['a.dimension_code', 'avg(a.numeric_value) as avg_score'])
+        .select(['a.dimension_code', raw('avg(a.numeric_value) as avg_score')])
         .where({ submission: { $in: submissionIds } })
         .groupBy('a.dimension_code')
         .execute();

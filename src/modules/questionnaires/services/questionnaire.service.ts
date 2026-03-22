@@ -775,6 +775,31 @@ export class QuestionnaireService {
     }
   }
 
+  async CheckSubmission(query: {
+    versionId: string;
+    facultyId: string;
+    semesterId: string;
+    courseId?: string;
+  }): Promise<{ submitted: boolean; submittedAt?: Date }> {
+    const respondentId = this.currentUserService.getOrFail().id;
+    const submission = await this.submissionRepo.findOne(
+      {
+        respondent: respondentId,
+        questionnaireVersion: query.versionId,
+        faculty: query.facultyId,
+        semester: query.semesterId,
+        course: query.courseId || null,
+      },
+      { fields: ['id', 'submittedAt'] },
+    );
+
+    if (submission) {
+      return { submitted: true, submittedAt: submission.submittedAt };
+    }
+
+    return { submitted: false };
+  }
+
   async GetDraft(query: {
     versionId: string;
     facultyId: string;

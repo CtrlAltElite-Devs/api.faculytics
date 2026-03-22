@@ -741,6 +741,62 @@ describe('QuestionnaireService', () => {
     });
   });
 
+  describe('CheckSubmission', () => {
+    const mockQuery = {
+      versionId: 'v1',
+      facultyId: FACULTY_ID,
+      semesterId: SEMESTER_ID,
+      courseId: COURSE_ID,
+    };
+
+    it('should return submitted true with submittedAt when submission exists', async () => {
+      const submittedAt = new Date('2026-03-20T10:00:00Z');
+      submissionRepo.findOne.mockResolvedValue({
+        id: 'sub1',
+        submittedAt,
+      } as any);
+
+      const result = await service.CheckSubmission(mockQuery);
+
+      expect(result).toEqual({ submitted: true, submittedAt });
+      expect(submissionRepo.findOne).toHaveBeenCalledWith(
+        {
+          respondent: RESPONDENT_ID,
+          questionnaireVersion: 'v1',
+          faculty: FACULTY_ID,
+          semester: SEMESTER_ID,
+          course: COURSE_ID,
+        },
+        { fields: ['id', 'submittedAt'] },
+      );
+    });
+
+    it('should return submitted false when no submission exists', async () => {
+      submissionRepo.findOne.mockResolvedValue(null);
+
+      const result = await service.CheckSubmission(mockQuery);
+
+      expect(result).toEqual({ submitted: false });
+    });
+
+    it('should pass null for course when courseId is undefined', async () => {
+      submissionRepo.findOne.mockResolvedValue(null);
+
+      await service.CheckSubmission({ ...mockQuery, courseId: undefined });
+
+      expect(submissionRepo.findOne).toHaveBeenCalledWith(
+        {
+          respondent: RESPONDENT_ID,
+          questionnaireVersion: 'v1',
+          faculty: FACULTY_ID,
+          semester: SEMESTER_ID,
+          course: null,
+        },
+        { fields: ['id', 'submittedAt'] },
+      );
+    });
+  });
+
   describe('GetDraft', () => {
     const mockQuery = {
       versionId: 'v1',

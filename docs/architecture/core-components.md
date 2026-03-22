@@ -51,6 +51,7 @@ classDiagram
         ChatKitModule
         QuestionnaireModule
         AnalysisModule
+        AnalyticsModule
         DimensionsModule
         FacultyModule
         CurriculumModule
@@ -66,6 +67,8 @@ classDiagram
     EnrollmentsModule --> MoodleModule : "uses MoodleService"
     QuestionnaireModule --> CommonModule : "uses UnitOfWork"
     AnalysisModule --> BullModule : "uses BullMQ queues"
+    AnalyticsModule --> BullModule : "uses BullMQ queue"
+    AnalyticsModule --> CommonModule : "uses ScopeResolverService"
     FacultyModule --> CommonModule : "uses ScopeResolverService"
     CurriculumModule --> CommonModule : "uses ScopeResolverService"
 
@@ -80,6 +83,12 @@ classDiagram
         +RecommendationsProcessor
         +EmbeddingProcessor
         +BaseBatchProcessor
+    }
+
+    class AnalyticsModule {
+        +AnalyticsService
+        +AnalyticsController
+        +AnalyticsRefreshProcessor
     }
 
     class MoodleModule {
@@ -196,15 +205,16 @@ Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMP
 
 ### Queue Architecture
 
-Five BullMQ queues with independent concurrency. Queue names are centralized in `src/configurations/common/queue-names.ts`.
+Six BullMQ queues with independent concurrency. Queue names are centralized in `src/configurations/common/queue-names.ts`.
 
-| Queue             | Processor                  | Concurrency Default | Module         |
-| ----------------- | -------------------------- | ------------------- | -------------- |
-| `moodle-sync`     | `MoodleSyncProcessor`      | 1                   | MoodleModule   |
-| `sentiment`       | `SentimentProcessor`       | 3                   | AnalysisModule |
-| `embedding`       | `EmbeddingProcessor`       | 3                   | AnalysisModule |
-| `topic-model`     | `TopicModelProcessor`      | 1                   | AnalysisModule |
-| `recommendations` | `RecommendationsProcessor` | 1                   | AnalysisModule |
+| Queue               | Processor                   | Concurrency Default | Module          |
+| ------------------- | --------------------------- | ------------------- | --------------- |
+| `moodle-sync`       | `MoodleSyncProcessor`       | 1                   | MoodleModule    |
+| `sentiment`         | `SentimentProcessor`        | 3                   | AnalysisModule  |
+| `embedding`         | `EmbeddingProcessor`        | 3                   | AnalysisModule  |
+| `topic-model`       | `TopicModelProcessor`       | 1                   | AnalysisModule  |
+| `recommendations`   | `RecommendationsProcessor`  | 1                   | AnalysisModule  |
+| `analytics-refresh` | `AnalyticsRefreshProcessor` | 1                   | AnalyticsModule |
 
 ### REST Endpoints
 
@@ -215,6 +225,16 @@ Five BullMQ queues with independent concurrency. Queue names are centralized in 
 | POST   | `/analysis/pipelines/:id/cancel`          | Cancel a non-terminal pipeline                        |
 | GET    | `/analysis/pipelines/:id/status`          | Get pipeline status with stage details                |
 | GET    | `/analysis/pipelines/:id/recommendations` | Get recommendations for a completed pipeline          |
+
+### Analytics Endpoints
+
+See [Analytics Module](./analytics.md) for full architecture.
+
+| Method | Path                   | Description                                       |
+| ------ | ---------------------- | ------------------------------------------------- |
+| GET    | `/analytics/overview`  | Department overview with per-faculty stats        |
+| GET    | `/analytics/attention` | Faculty flagged for review with attention flags   |
+| GET    | `/analytics/trends`    | Faculty trend data with linear regression results |
 
 **Resilience:** Exponential backoff retries, stall detection, graceful degradation when Redis is unavailable (`ServiceUnavailableException`), HTTP timeout via `AbortController`.
 

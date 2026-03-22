@@ -127,6 +127,8 @@ Returns the latest `RecommendationRun` for the pipeline with all actions. If the
 
 Pipeline status moves to `COMPLETED` with `completedAt` timestamp.
 
+After marking the pipeline complete, the orchestrator enqueues a best-effort `analytics-refresh` job. This refreshes the `mv_faculty_semester_stats` and `mv_faculty_trends` materialized views so dashboard queries reflect the latest analysis results. The refresh is decoupled from the pipeline — if it fails, the pipeline status is unaffected. See [Analytics Module](../architecture/analytics.md) for details.
+
 ## Error Handling
 
 - **Stage failure:** Any processor can call `OnStageFailed()`, which sets pipeline status to `FAILED` with an error message identifying the stage.

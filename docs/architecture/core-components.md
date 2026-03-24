@@ -261,11 +261,15 @@ The `FacultyModule` and `CurriculumModule` use a shared role-based scoping patte
 Request → JwtAuthGuard → RolesGuard → CurrentUserInterceptor → CLS Store → ScopeResolverService
 ```
 
-1. `@UseJwtGuard(SUPER_ADMIN, DEAN)` validates JWT and checks role membership via `RolesGuard`
+1. `@UseJwtGuard(SUPER_ADMIN, DEAN, CHAIRPERSON)` validates JWT and checks role membership via `RolesGuard`
 2. `CurrentUserInterceptor` loads the full `User` entity via `UserLoader` and stores it in CLS (`CurrentUserService.set()`)
 3. `ScopeResolverService.ResolveDepartmentIds(semesterId)` reads the user from CLS and returns:
    - `null` — unrestricted (super admin)
    - `string[]` — department UUIDs the dean is assigned to for that semester
+   - `string[]` — department UUIDs derived from the chairperson's program assignments
+4. `ScopeResolverService.ResolveProgramIds(semesterId)` provides program-level granularity:
+   - `null` — unrestricted (super admin, dean)
+   - `string[]` — program UUIDs the chairperson is assigned to
 
 ### Filter Validation Cascade
 

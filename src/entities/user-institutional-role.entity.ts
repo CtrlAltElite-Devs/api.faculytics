@@ -3,6 +3,11 @@ import { CustomBaseEntity } from './base.entity';
 import { User } from './user.entity';
 import { MoodleCategory } from './moodle-category.entity';
 
+export enum InstitutionalRoleSource {
+  AUTO = 'auto',
+  MANUAL = 'manual',
+}
+
 @Entity()
 @Unique({ properties: ['user', 'moodleCategory', 'role'] })
 export class UserInstitutionalRole extends CustomBaseEntity {
@@ -10,8 +15,11 @@ export class UserInstitutionalRole extends CustomBaseEntity {
   user!: User;
 
   @Property()
-  role!: string; // UserRole.DEAN
+  role!: string;
 
   @ManyToOne(() => MoodleCategory)
   moodleCategory!: MoodleCategory;
+
+  @Property({ default: InstitutionalRoleSource.AUTO })
+  source!: string;
 }

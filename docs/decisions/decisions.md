@@ -218,6 +218,15 @@ Moodle course groups (e.g., BSCS-4A) are mapped to a local `Section` entity to r
 - **Naming:** The entity is called `Section` (domain language) rather than `MoodleGroup` (Moodle language), following the convention of `Course` (not `MoodleCourse`) and `Program` (not `MoodleCategory`).
 - **Trade-off:** Students with multiple groups in one course get assigned to the first group only (`groups[0]`). This matches the institutional use case (one section per student per course). Multi-group scenarios are not supported in the initial implementation.
 
+## 32. Institutional Role Source Field (Auto vs Manual)
+
+The `UserInstitutionalRole` entity gains a `source` field (`auto` | `manual`) to distinguish between roles detected during login hydration and roles assigned by an administrator.
+
+- **Problem:** The Moodle REST API cannot distinguish between a Dean (Manager at depth 3) and a Chairperson (manager-archetype role at depth 4) — both grant the same `moodle/category:manage` capability, and category-level role assignments are not exposed in course-context API responses.
+- **Solution:** Auto-detection defaults to `CHAIRPERSON` at program level (depth 4) for any user with the capability. `DEAN` at department level (depth 3) is assigned manually via an admin endpoint (`POST /admin/institutional-roles`). Hydration only manages `source=auto` roles, leaving `source=manual` roles untouched across logins.
+- **Cleanup:** When a manual DEAN exists at a department, any CHAIRPERSON roles at child programs are automatically removed during hydration to prevent redundant roles.
+- **Trade-off:** Deans require a one-time manual promotion by an admin. This is accepted because Deans are fewer in number and the Moodle API provides no reliable way to auto-detect the distinction.
+
 ## 30. Semester Code Parsing for Display Labels
 
 The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.

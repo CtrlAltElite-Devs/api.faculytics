@@ -7,7 +7,10 @@ import { Section } from 'src/entities/section.entity';
 import { env } from 'src/configurations/env';
 import { EntityManager } from '@mikro-orm/core';
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
-import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
+import {
+  UserInstitutionalRole,
+  InstitutionalRoleSource,
+} from 'src/entities/user-institutional-role.entity';
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
 import {
@@ -230,7 +233,7 @@ export class MoodleUserHydrationService {
         });
       }
 
-      // 3. Resolve Institutional Roles (e.g. Dean)
+      // 3. Resolve Institutional Roles (Dean, Chairperson)
       await this.resolveInstitutionalRoles(
         user,
         remoteCourses,
@@ -265,40 +268,29 @@ export class MoodleUserHydrationService {
       `Resolving institutional roles for user ${user.userName}...`,
     );
 
-    // Map target categories (e.g. Departments at Depth 3) to representative courses
-    const targetCategoryMap = new Map<number, number>();
+    // Step 1: Map program-level (depth 4) categories to representative courses
+    const programCourseMap = new Map<number, number>();
+    const programToDeptMap = new Map<number, number>();
 
     for (const course of remoteCourses) {
       const directCategory = await tx.findOne(MoodleCategory, {
         moodleCategoryId: course.category,
       });
+      if (!directCategory || directCategory.depth !== 4) continue;
 
-      if (!directCategory) continue;
-
-      let targetCategory: MoodleCategory | null = null;
-
-      if (directCategory.depth === 4) {
-        // Program level -> go up to Department
-        targetCategory = await tx.findOne(MoodleCategory, {
-          moodleCategoryId: directCategory.parentMoodleCategoryId,
-        });
-      } else if (directCategory.depth === 3) {
-        // Already at Department level
-        targetCategory = directCategory;
+      if (!programCourseMap.has(directCategory.moodleCategoryId)) {
+        programCourseMap.set(directCategory.moodleCategoryId, course.id);
       }
-
-      if (targetCategory && targetCategory.depth === 3) {
-        if (!targetCategoryMap.has(targetCategory.moodleCategoryId)) {
-          targetCategoryMap.set(targetCategory.moodleCategoryId, course.id);
-        }
-      }
+      programToDeptMap.set(
+        directCategory.moodleCategoryId,
+        directCategory.parentMoodleCategoryId,
+      );
     }
 
-    const processedCategoryIds = Array.from(targetCategoryMap.keys());
-    const deanCategoryIds: number[] = [];
+    // Step 2: Check moodle/category:manage per program → CHAIRPERSON
+    const detectedPrograms = new Set<number>();
 
-    // Check capability for each representative course of the target categories
-    for (const [categoryId, courseId] of targetCategoryMap) {
+    for (const [programCatId, courseId] of programCourseMap) {
       try {
         const usersWithCapability =
           await this.moodleService.GetUsersWithCapability({
@@ -307,55 +299,124 @@ export class MoodleUserHydrationService {
             capability: 'moodle/category:manage',
           });
 
-        const isDean = usersWithCapability.some(
-          (u) => u.id === user.moodleUserId,
-        );
-
-        if (isDean) {
-          deanCategoryIds.push(categoryId);
+        if (usersWithCapability.some((u) => u.id === user.moodleUserId)) {
+          detectedPrograms.add(programCatId);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(
-          `Failed to check capability for category ${categoryId} via course ${courseId}: ${message}`,
+          `Failed to check capability for program ${programCatId} via course ${courseId}: ${message}`,
         );
       }
     }
 
-    // Sync roles
-    for (const categoryId of processedCategoryIds) {
+    // Step 3: Clean up redundant CHAIRPERSON roles where a manual DEAN covers the parent dept
+    const allExistingRoles = await tx.find(
+      UserInstitutionalRole,
+      { user },
+      { populate: ['moodleCategory'] },
+    );
+
+    const deanDeptIds = new Set(
+      allExistingRoles
+        .filter(
+          (ir) =>
+            ir.role === (UserRole.DEAN as string) &&
+            ir.source === (InstitutionalRoleSource.MANUAL as string),
+        )
+        .map((ir) => ir.moodleCategory.moodleCategoryId),
+    );
+
+    for (const existing of allExistingRoles) {
+      if (existing.role !== (UserRole.CHAIRPERSON as string)) continue;
+      const parentDeptId = programToDeptMap.get(
+        existing.moodleCategory.moodleCategoryId,
+      );
+      const deptId =
+        parentDeptId ??
+        (
+          await tx.findOne(MoodleCategory, {
+            moodleCategoryId: existing.moodleCategory.moodleCategoryId,
+          })
+        )?.parentMoodleCategoryId;
+
+      if (deptId && deanDeptIds.has(deptId)) {
+        tx.remove(existing);
+      }
+    }
+
+    // Step 4: Sync auto-detected roles (only manage source='auto', never touch 'manual')
+    await tx.flush(); // Persist removals from step 3
+
+    const existingAutoRoles = await tx.find(
+      UserInstitutionalRole,
+      { user, source: InstitutionalRoleSource.AUTO },
+      { populate: ['moodleCategory'] },
+    );
+
+    const existingAutoKeys = new Set(
+      existingAutoRoles.map(
+        (ir) => `${ir.role}:${ir.moodleCategory.moodleCategoryId}`,
+      ),
+    );
+
+    const detectedKeys = new Set(
+      [...detectedPrograms].map((catId) => `${UserRole.CHAIRPERSON}:${catId}`),
+    );
+
+    // Remove stale auto roles
+    for (const existing of existingAutoRoles) {
+      const key = `${existing.role}:${existing.moodleCategory.moodleCategoryId}`;
+      if (!detectedKeys.has(key)) {
+        tx.remove(existing);
+      }
+    }
+
+    // Upsert detected CHAIRPERSON roles (skip if manual role already covers it)
+    const existingManualRoles = await tx.find(
+      UserInstitutionalRole,
+      { user, source: InstitutionalRoleSource.MANUAL },
+      { populate: ['moodleCategory'] },
+    );
+    // Categories with any manual role (program-level)
+    const manualCategoryIds = new Set(
+      existingManualRoles.map((ir) => ir.moodleCategory.moodleCategoryId),
+    );
+    // Department categories with a manual DEAN (parent-level)
+    const manualDeanDeptIds = new Set(
+      existingManualRoles
+        .filter((ir) => ir.role === (UserRole.DEAN as string))
+        .map((ir) => ir.moodleCategory.moodleCategoryId),
+    );
+
+    for (const programCatId of detectedPrograms) {
+      const key = `${UserRole.CHAIRPERSON}:${programCatId}`;
+      if (existingAutoKeys.has(key)) continue;
+      // Skip if a manual role already exists at this program category
+      if (manualCategoryIds.has(programCatId)) continue;
+      // Skip if a manual DEAN exists at the parent department (DEAN subsumes CHAIRPERSON)
+      const parentDeptId = programToDeptMap.get(programCatId);
+      if (parentDeptId && manualDeanDeptIds.has(parentDeptId)) continue;
+
       const moodleCategory = await tx.findOneOrFail(MoodleCategory, {
-        moodleCategoryId: categoryId,
+        moodleCategoryId: programCatId,
       });
 
-      const isDean = deanCategoryIds.includes(categoryId);
-
-      if (isDean) {
-        const roleData = tx.create(
-          UserInstitutionalRole,
-          {
-            user,
-            role: UserRole.DEAN,
-            moodleCategory,
-          },
-          { managed: false },
-        );
-
-        await tx.upsert(UserInstitutionalRole, roleData, {
-          onConflictFields: ['user', 'moodleCategory', 'role'],
-          onConflictMergeFields: ['updatedAt'],
-        });
-      } else {
-        // Remove dean role if it exists for this category
-        const existingRole = await tx.findOne(UserInstitutionalRole, {
+      const roleData = tx.create(
+        UserInstitutionalRole,
+        {
           user,
+          role: UserRole.CHAIRPERSON,
           moodleCategory,
-          role: UserRole.DEAN,
-        });
-        if (existingRole) {
-          tx.remove(existingRole);
-        }
-      }
+          source: InstitutionalRoleSource.AUTO,
+        },
+        { managed: false },
+      );
+
+      await tx.upsert(UserInstitutionalRole, roleData, {
+        onConflictFields: ['user', 'moodleCategory', 'role'],
+        onConflictMergeFields: ['updatedAt'],
+      });
     }
   }
 }

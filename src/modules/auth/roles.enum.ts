@@ -2,6 +2,7 @@ export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   ADMIN = 'ADMIN',
   DEAN = 'DEAN',
+  CHAIRPERSON = 'CHAIRPERSON',
   FACULTY = 'FACULTY',
   STUDENT = 'STUDENT',
 }
@@ -11,4 +12,5 @@ export const MoodleRoleMapping: Record<string, UserRole> = {
   teacher: UserRole.FACULTY,
   student: UserRole.STUDENT,
   manager: UserRole.DEAN, // Institutional mapping
+  chairperson: UserRole.CHAIRPERSON, // Institutional mapping
 };

@@ -26,6 +26,16 @@ export class CourseShortResponseDto {
   courseImage?: string;
 }
 
+export class SectionShortResponseDto {
+  @ApiProperty()
+  @IsString()
+  id: string;
+
+  @ApiProperty()
+  @IsString()
+  name: string;
+}
+
 export class EnrollmentResponseDto {
   @ApiProperty()
   @IsString()
@@ -43,4 +53,7 @@ export class EnrollmentResponseDto {
 
   @ApiPropertyOptional({ type: SemesterShortResponseDto, nullable: true })
   semester: SemesterShortResponseDto | null;
+
+  @ApiPropertyOptional({ type: SectionShortResponseDto, nullable: true })
+  section: SectionShortResponseDto | null;
 }

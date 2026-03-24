@@ -208,6 +208,16 @@ Faculty performance dashboards use PostgreSQL materialized views (`mv_faculty_se
 - **Dependency ordering:** `mv_faculty_trends` depends on `mv_faculty_semester_stats` (it reads from the stats view for linear regression). The refresh processor always refreshes stats first, then trends.
 - **Trade-off:** Data is eventually consistent — dashboards may show stale results until the refresh job completes after a pipeline run. Acceptable because analysis pipelines run infrequently and the refresh is fast (seconds).
 
+## 31. Moodle Groups as Institutional Sections
+
+Moodle course groups (e.g., BSCS-4A) are mapped to a local `Section` entity to represent institutional sections — year-level and section subdivisions of students within a course.
+
+- **Design:** `Section` is a new entity with `moodleGroupId` (unique), `name`, `description`, and a `course` FK. `Enrollment` gains a nullable `section` FK. The unique constraint `(user, course)` on Enrollment is unchanged — section is optional metadata.
+- **Sync integration:** The `core_enrol_get_enrolled_users` API already returns a `groups` array per user. The enrollment sync extracts groups, upserts Section entities, and assigns the first group to each enrollment. No additional API calls are needed for batch sync.
+- **Hydration integration:** The login hydration service makes two additional parallel API calls per course (`core_group_get_course_groups`, `core_group_get_course_user_groups`) alongside the existing role fetch. Sections are upserted and assigned within the same transaction.
+- **Naming:** The entity is called `Section` (domain language) rather than `MoodleGroup` (Moodle language), following the convention of `Course` (not `MoodleCourse`) and `Program` (not `MoodleCategory`).
+- **Trade-off:** Students with multiple groups in one course get assigned to the first group only (`groups[0]`). This matches the institutional use case (one section per student per course). Multi-group scenarios are not supported in the initial implementation.
+
 ## 30. Semester Code Parsing for Display Labels
 
 The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.

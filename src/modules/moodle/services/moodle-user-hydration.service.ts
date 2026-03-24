@@ -3,13 +3,18 @@ import { User } from 'src/entities/user.entity';
 import { Program } from 'src/entities/program.entity';
 import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
+import { Section } from 'src/entities/section.entity';
 import { env } from 'src/configurations/env';
 import { EntityManager } from '@mikro-orm/core';
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
 import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
-import { MoodleCourse } from '../lib/moodle.types';
+import {
+  MoodleCourse,
+  MoodleCourseGroup,
+  MoodleCourseUserGroupsResponse,
+} from '../lib/moodle.types';
 import { UserRole } from 'src/modules/auth/roles.enum';
 
 @Injectable()
@@ -45,30 +50,72 @@ export class MoodleUserHydrationService {
       throw error;
     }
 
-    // Fetch roles in parallel using the master key to ensure we get the full profile
-    const rolesPerCourse = await Promise.all(
+    // Fetch roles and groups in parallel using the master key
+    const courseContexts = await Promise.all(
       remoteCourses.map(async (rc) => {
-        try {
-          const profiles = await this.moodleService.GetCourseUserProfiles({
-            token: env.MOODLE_MASTER_KEY,
-            userId: moodleUserId,
-            courseId: rc.id,
-          });
-          return {
-            courseId: rc.id,
-            role: this.moodleService.ExtractRole(profiles[0]),
-          };
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          this.logger.error(
-            `Failed to fetch role for course ${rc.id}: ${message}`,
-          );
-          return { courseId: rc.id, role: 'student' };
-        }
+        const [roleResult, groupsResult, userGroupsResult] = await Promise.all([
+          this.moodleService
+            .GetCourseUserProfiles({
+              token: env.MOODLE_MASTER_KEY,
+              userId: moodleUserId,
+              courseId: rc.id,
+            })
+            .catch((error) => {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              this.logger.error(
+                `Failed to fetch role for course ${rc.id}: ${message}`,
+              );
+              return null;
+            }),
+          this.moodleService
+            .GetCourseGroups({
+              token: env.MOODLE_MASTER_KEY,
+              courseId: rc.id,
+            })
+            .catch((error) => {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              this.logger.warn(
+                `Failed to fetch groups for course ${rc.id}: ${message}`,
+              );
+              return [] as MoodleCourseGroup[];
+            }),
+          this.moodleService
+            .GetCourseUserGroups({
+              token: env.MOODLE_MASTER_KEY,
+              courseId: rc.id,
+              userId: moodleUserId,
+            })
+            .catch((error): MoodleCourseUserGroupsResponse => {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              this.logger.warn(
+                `Failed to fetch user groups for course ${rc.id}: ${message}`,
+              );
+              return { groups: [] };
+            }),
+        ]);
+
+        return {
+          courseId: rc.id,
+          role: roleResult
+            ? this.moodleService.ExtractRole(roleResult[0])
+            : 'student',
+          courseGroups: groupsResult,
+          userGroupIds: new Set(
+            (userGroupsResult.groups ?? []).map((g) => g.id),
+          ),
+        };
       }),
     );
-    const roleMap = new Map(rolesPerCourse.map((r) => [r.courseId, r.role]));
+    const roleMap = new Map(courseContexts.map((c) => [c.courseId, c.role]));
+    const courseGroupsMap = new Map(
+      courseContexts.map((c) => [c.courseId, c.courseGroups]),
+    );
+    const userGroupIdsMap = new Map(
+      courseContexts.map((c) => [c.courseId, c.userGroupIds]),
+    );
 
     await this.unitOfWork.runInTransaction(async (tx) => {
       const user = await tx.findOneOrFail(User, { moodleUserId });
@@ -128,7 +175,35 @@ export class MoodleUserHydrationService {
           ],
         });
 
-        // 2. Upsert Enrollment
+        // 2. Upsert Sections for this course
+        const courseGroups = courseGroupsMap.get(remoteCourse.id) ?? [];
+        const userGroupIds = userGroupIdsMap.get(remoteCourse.id);
+        let userSection: Section | null = null;
+
+        for (const group of courseGroups) {
+          const sectionData = tx.create(
+            Section,
+            {
+              moodleGroupId: group.id,
+              name: group.name,
+              description: group.description || undefined,
+              course,
+            },
+            { managed: false },
+          );
+
+          const section = await tx.upsert(Section, sectionData, {
+            onConflictFields: ['moodleGroupId'],
+            onConflictMergeFields: ['name', 'description', 'updatedAt'],
+          });
+
+          // Check if this user belongs to this group
+          if (userGroupIds?.has(group.id) && !userSection) {
+            userSection = section;
+          }
+        }
+
+        // 3. Upsert Enrollment with section
         const role = roleMap.get(remoteCourse.id) ?? 'student';
         const enrollmentData = tx.create(
           Enrollment,
@@ -136,6 +211,7 @@ export class MoodleUserHydrationService {
             user,
             course,
             role,
+            section: userSection,
             isActive: true,
             timeModified: new Date(),
           },
@@ -146,6 +222,7 @@ export class MoodleUserHydrationService {
           onConflictFields: ['user', 'course'],
           onConflictMergeFields: [
             'role',
+            'section',
             'isActive',
             'timeModified',
             'updatedAt',

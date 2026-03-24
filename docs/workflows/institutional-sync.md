@@ -35,13 +35,18 @@ Can be skipped at startup via `DISABLE_SYNC_CATEGORY_ON_STARTUP=true` for faster
 
 Syncs courses for all programs concurrently using `pLimit(MOODLE_SYNC_CONCURRENCY)`. Each program's courses are synced in an independent transaction. Failed programs don't abort others.
 
-### Phase 3: Enrollment Sync
+### Phase 3: Enrollment & Section Sync
 
 Uses a 3-phase architecture to avoid deadlocks from overlapping user rows:
 
-1. **Concurrent HTTP fetch** — `pLimit`-gated parallel calls to Moodle per course
+1. **Concurrent HTTP fetch** — `pLimit`-gated parallel calls to Moodle per course (the `core_enrol_get_enrolled_users` response includes a `groups` array per user)
 2. **Batch user upsert** — Deduplicated `upsertMany` in a single operation (with individual fallback)
-3. **Sequential enrollment upsert** — Per-course enrollment sync with soft-deactivation of missing enrollments
+3. **Sequential per-course enrollment upsert** — For each course:
+   - Extracts unique groups from the enrolled users' `groups` data and upserts `Section` entities
+   - Upserts enrollments with the resolved `section` FK (first group the student belongs to)
+   - Soft-deactivates missing enrollments
+
+No additional Moodle API calls are needed for sections — group data is already returned by the enrolled users endpoint.
 
 ## Endpoints
 

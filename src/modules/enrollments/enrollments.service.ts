@@ -37,7 +37,7 @@ export class EnrollmentsService {
       Enrollment,
       { user: userId, isActive: true },
       {
-        populate: ['course.program.department.semester'],
+        populate: ['course.program.department.semester', 'section'],
         limit,
         offset: (page - 1) * limit,
         orderBy: { timeModified: 'DESC' },
@@ -68,6 +68,9 @@ export class EnrollmentsService {
                 label: semester.label,
                 academicYear: semester.academicYear,
               }
+            : null,
+          section: e.section
+            ? { id: e.section.id, name: e.section.name }
             : null,
         };
       }),

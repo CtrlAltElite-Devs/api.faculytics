@@ -8,6 +8,22 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+export class MoodleEnrolledUserGroup {
+  @IsNumber()
+  id: number;
+
+  @IsString()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsNumber()
+  descriptionformat?: number;
+}
+
 export class MoodleEnrolledUserCustomField {
   @IsString()
   name: string;
@@ -187,4 +203,10 @@ export class MoodleEnrolledUser {
   @ValidateNested({ each: true })
   @Type(() => MoodleEnrolledUserCourse)
   enrolledcourses?: MoodleEnrolledUserCourse[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MoodleEnrolledUserGroup)
+  groups?: MoodleEnrolledUserGroup[];
 }

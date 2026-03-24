@@ -20,6 +20,7 @@ export enum QuestionnaireStatus {
 export enum RespondentRole {
   STUDENT = 'STUDENT',
   DEAN = 'DEAN',
+  CHAIRPERSON = 'CHAIRPERSON',
 }
 
 export enum EnrollmentRole {

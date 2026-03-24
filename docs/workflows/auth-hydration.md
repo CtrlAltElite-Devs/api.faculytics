@@ -61,8 +61,10 @@ sequenceDiagram
 
     Note over MoodleUserHydrationService: Upsert Sections + assign to Enrollments
 
-    Note over MoodleUserHydrationService: Resolve Institutional Authorities (Deans)
+    Note over MoodleUserHydrationService: Resolve Institutional Roles (Chairperson auto-detection)
     MoodleUserHydrationService->>MoodleService: GetUsersWithCapability(withcapability=moodle/category:manage)
+    Note over MoodleUserHydrationService: Capability at program (depth 4) → CHAIRPERSON (source=auto)
+    Note over MoodleUserHydrationService: Manual DEAN roles (source=manual) are preserved, not overwritten
 
     MoodleUserHydrationService-->>MoodleLoginStrategy: Complete
     MoodleLoginStrategy-->>AuthService: LoginStrategyResult (user + moodleToken)
@@ -70,11 +72,34 @@ sequenceDiagram
     AuthController-->>Client: 200 OK (Tokens)
 ```
 
-## Institutional Authority Resolution (Dean Mapping)
+## Institutional Role Resolution
 
-The system automatically detects if a user has management authorities over specific categories (Campuses, Departments, or Programs).
+The system detects institutional management roles from Moodle category capabilities. Roles have a `source` field (`auto` or `manual`) that determines whether hydration can manage them.
 
-1.  **Capability Check:** For each unique category a user is enrolled in, the system picks a representative course.
-2.  **Moodle Verification:** It queries Moodle to see if the current user has the `moodle/category:manage` capability in that context.
-3.  **Role Persistence:** If found, a `UserInstitutionalRole` (e.g., 'dean') is recorded for that specific category.
-4.  **Global Role Propagation:** The user's global `roles` array is updated to include 'dean' if any institutional authority is detected.
+### Auto-Detection (CHAIRPERSON)
+
+1. For each enrolled course in a program category (depth 4), check `moodle/category:manage` capability.
+2. If the user has the capability, assign `CHAIRPERSON` at that program (`source=auto`).
+3. Auto-detected roles are re-evaluated on every login — stale ones are removed.
+4. If a manual `DEAN` exists at the parent department, the auto CHAIRPERSON is skipped (DEAN subsumes it).
+
+### Manual Assignment (DEAN)
+
+DEAN roles are assigned by a `SUPER_ADMIN` via `POST /admin/institutional-roles`:
+
+```json
+{ "userId": "<uuid>", "role": "DEAN", "moodleCategoryId": 8 }
+```
+
+Manual roles (`source=manual`) are never modified by the hydration process. They persist across logins until explicitly removed via `DELETE /admin/institutional-roles`.
+
+### Role Hierarchy
+
+| Depth | Category Level | Role        | Source | Scope                      |
+| ----- | -------------- | ----------- | ------ | -------------------------- |
+| 3     | Department     | DEAN        | manual | All programs in department |
+| 4     | Program        | CHAIRPERSON | auto   | Specific program only      |
+
+### Global Role Propagation
+
+After institutional role resolution, the user's `roles` array is derived from both enrollment roles (via `MoodleRoleMapping`) and institutional roles. A user can have multiple roles (e.g., `[FACULTY, DEAN]` or `[FACULTY, CHAIRPERSON]`).

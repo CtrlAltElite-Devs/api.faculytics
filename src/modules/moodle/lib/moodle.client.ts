@@ -6,6 +6,8 @@ import {
   MoodleCourse,
   MoodleEnrolledUser,
   MoodleCategoryResponse,
+  MoodleCourseGroup,
+  MoodleCourseUserGroupsResponse,
 } from './moodle.types';
 import { MoodleUserProfile } from '../dto/responses/user-profile.response.dto';
 
@@ -195,6 +197,28 @@ export class MoodleClient {
   async getCategories(): Promise<MoodleCategoryResponse[]> {
     return await this.call<MoodleCategoryResponse[]>(
       MoodleWebServiceFunction.GET_COURSE_CATEGORIES,
+    );
+  }
+
+  async getCourseGroups(courseId: number): Promise<MoodleCourseGroup[]> {
+    return await this.call<MoodleCourseGroup[]>(
+      MoodleWebServiceFunction.GET_COURSE_GROUPS,
+      {
+        courseid: courseId.toString(),
+      },
+    );
+  }
+
+  async getCourseUserGroups(
+    courseId: number,
+    userId: number,
+  ): Promise<MoodleCourseUserGroupsResponse> {
+    return await this.call<MoodleCourseUserGroupsResponse>(
+      MoodleWebServiceFunction.GET_COURSE_USER_GROUPS,
+      {
+        courseid: courseId.toString(),
+        userid: userId.toString(),
+      },
     );
   }
 

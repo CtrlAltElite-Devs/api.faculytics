@@ -26,6 +26,7 @@ import { SentimentRun } from './sentiment-run.entity';
 import { SubmissionEmbedding } from './submission-embedding.entity';
 import { Topic } from './topic.entity';
 import { TopicAssignment } from './topic-assignment.entity';
+import { Section } from './section.entity';
 import { TopicModelRun } from './topic-model-run.entity';
 
 export {
@@ -46,6 +47,7 @@ export {
   Program,
   Semester,
   Enrollment,
+  Section,
   RefreshToken,
   UserInstitutionalRole,
   SystemConfig,
@@ -73,6 +75,7 @@ export const entities = [
   Program,
   Semester,
   Enrollment,
+  Section,
   Dimension,
   Questionnaire,
   QuestionnaireVersion,

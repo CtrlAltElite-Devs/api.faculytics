@@ -14,6 +14,7 @@ import { Program } from 'src/entities/program.entity';
 import { EnrollmentSyncService } from './services/moodle-enrollment-sync.service';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { Course } from 'src/entities/course.entity';
+import { Section } from 'src/entities/section.entity';
 import { MoodleCourseSyncService } from './services/moodle-course-sync.service';
 import { MoodleUserHydrationService } from './services/moodle-user-hydration.service';
 import { MoodleSyncProcessor } from './processors/moodle-sync.processor';
@@ -32,6 +33,7 @@ import { MoodleSyncController } from './controllers/moodle-sync.controller';
       Program,
       Enrollment,
       Course,
+      Section,
     ]),
     CommonModule,
   ],

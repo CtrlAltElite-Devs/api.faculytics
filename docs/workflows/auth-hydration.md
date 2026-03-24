@@ -53,9 +53,13 @@ sequenceDiagram
     MoodleUserHydrationService->>UserRepository: Upsert(SiteInfo)
     MoodleLoginStrategy->>MoodleUserHydrationService: hydrateUserCourses(moodleUserId, moodleToken)
 
-    Note over MoodleUserHydrationService: Sync Courses & Enrollments
+    Note over MoodleUserHydrationService: Sync Courses, Enrollments & Sections
     MoodleUserHydrationService->>MoodleService: GetEnrolledCourses(token, userId)
     MoodleUserHydrationService->>MoodleService: GetCourseUserProfiles (Parallel roles)
+    MoodleUserHydrationService->>MoodleService: GetCourseGroups (Parallel per course)
+    MoodleUserHydrationService->>MoodleService: GetCourseUserGroups (Parallel per course)
+
+    Note over MoodleUserHydrationService: Upsert Sections + assign to Enrollments
 
     Note over MoodleUserHydrationService: Resolve Institutional Authorities (Deans)
     MoodleUserHydrationService->>MoodleService: GetUsersWithCapability(withcapability=moodle/category:manage)

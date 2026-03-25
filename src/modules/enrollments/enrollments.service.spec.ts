@@ -92,7 +92,10 @@ describe('EnrollmentsService', () => {
     ];
 
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
-    (em.find as jest.Mock).mockResolvedValue(mockFacultyEnrollments);
+    // Promise.all order: getFacultyByCourseIds first, getSubmissionStatusByCourseIds second
+    (em.find as jest.Mock)
+      .mockResolvedValueOnce(mockFacultyEnrollments)
+      .mockResolvedValueOnce([]);
 
     const result = await service.getMyEnrollments(1, 10);
 
@@ -110,6 +113,7 @@ describe('EnrollmentsService', () => {
       label: '1st Semester',
       academicYear: '2025-2026',
     });
+    expect(result.data[0].submission).toEqual({ submitted: false });
     expect(result.meta.totalItems).toBe(1);
     expect(result.meta.totalPages).toBe(1);
     // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -121,6 +125,47 @@ describe('EnrollmentsService', () => {
         offset: 0,
       }),
     );
+  });
+
+  it('should return submission status when submissions exist', async () => {
+    const submittedAt = new Date('2026-03-20T10:00:00Z');
+    const mockEnrollments = [
+      {
+        id: 'e1',
+        role: 'student',
+        course: {
+          id: 'c1',
+          moodleCourseId: 101,
+          shortname: 'CS101',
+          fullname: 'Intro to CS',
+          courseImage: null,
+          program: {
+            department: {
+              semester: {
+                id: 'sem-1',
+                code: 'S12526',
+                label: '1st Semester',
+                academicYear: '2025-2026',
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    const mockSubmissions = [{ course: { id: 'c1' }, submittedAt }];
+
+    (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
+    (em.find as jest.Mock)
+      .mockResolvedValueOnce([]) // faculty
+      .mockResolvedValueOnce(mockSubmissions); // submissions
+
+    const result = await service.getMyEnrollments(1, 10);
+
+    expect(result.data[0].submission).toEqual({
+      submitted: true,
+      submittedAt,
+    });
   });
 
   it('should return null faculty when no faculty enrolled in course', async () => {
@@ -180,7 +225,7 @@ describe('EnrollmentsService', () => {
     expect(result.data[0].semester).toBeNull();
   });
 
-  it('should not query faculty when no enrollments exist', async () => {
+  it('should not query faculty or submissions when no enrollments exist', async () => {
     (em.findAndCount as jest.Mock).mockResolvedValue([[], 0]);
 
     const result = await service.getMyEnrollments(1, 10);

@@ -6,6 +6,7 @@ import { Program } from 'src/entities/program.entity';
 import { Course } from 'src/entities/course.entity';
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
+import { SyncPhaseResult } from '../lib/sync-result.types';
 
 @Injectable()
 export class MoodleCourseSyncService {
@@ -17,17 +18,28 @@ export class MoodleCourseSyncService {
     private readonly unitOfWork: UnitOfWork,
   ) {}
 
-  async SyncAllPrograms(): Promise<void> {
+  async SyncAllPrograms(): Promise<SyncPhaseResult> {
+    const startTime = Date.now();
     const em = this.em.fork();
+    const countBefore = await em.count(Course);
     const programs = await em.find(Program, {});
     const limit = pLimit(env.MOODLE_SYNC_CONCURRENCY);
+
+    let fetched = 0;
+    let upserted = 0;
+    let deactivated = 0;
+    let errors = 0;
 
     await Promise.all(
       programs.map((program) =>
         limit(async () => {
           try {
-            await this.syncProgramCourses(program);
+            const metrics = await this.syncProgramCourses(program);
+            fetched += metrics.fetched;
+            upserted += metrics.upserted;
+            deactivated += metrics.deactivated;
           } catch (error: unknown) {
+            errors++;
             const message =
               error instanceof Error ? error.message : String(error);
             this.logger.error(
@@ -37,15 +49,30 @@ export class MoodleCourseSyncService {
         }),
       ),
     );
+
+    const inserted = Math.max(0, upserted - countBefore);
+
+    return {
+      status: errors > 0 && upserted === 0 ? 'failed' : 'success',
+      durationMs: Date.now() - startTime,
+      fetched,
+      inserted,
+      updated: upserted - inserted,
+      deactivated,
+      errors,
+    };
   }
 
-  private async syncProgramCourses(program: Program) {
+  private async syncProgramCourses(
+    program: Program,
+  ): Promise<{ fetched: number; upserted: number; deactivated: number }> {
     const remoteData = await this.moodleService.GetCoursesByCategory(
       env.MOODLE_MASTER_KEY,
       program.moodleCategoryId,
     );
 
     const remoteCourses = remoteData.courses;
+    let deactivated = 0;
 
     await this.unitOfWork.runInTransaction(async (tx) => {
       const existing = await tx.find(Course, {
@@ -98,8 +125,15 @@ export class MoodleCourseSyncService {
           course.isActive = false;
           course.isVisible = false;
           tx.persist(course);
+          deactivated++;
         }
       }
     });
+
+    return {
+      fetched: remoteCourses.length,
+      upserted: remoteCourses.length,
+      deactivated,
+    };
   }
 }

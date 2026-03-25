@@ -37,6 +37,7 @@ import { QuestionnaireVersionDetailResponse } from './dto/responses/questionnair
 import { DraftResponse } from './dto/responses/draft-response.dto';
 import { CheckSubmissionQuery } from './dto/requests/check-submission-query.dto';
 import { CheckSubmissionResponse } from './dto/responses/check-submission-response.dto';
+import { SubmitQuestionnaireResponse } from './dto/responses/submit-questionnaire-response.dto';
 import { IngestionResultDto } from './ingestion/dto/ingestion-result.dto';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
@@ -200,7 +201,9 @@ export class QuestionnaireController {
   @Post('submissions')
   @UseJwtGuard()
   @ApiOperation({ summary: 'Submit a completed questionnaire' })
-  async submitQuestionnaire(@Body() data: SubmitQuestionnaireRequest) {
+  async submitQuestionnaire(
+    @Body() data: SubmitQuestionnaireRequest,
+  ): Promise<SubmitQuestionnaireResponse> {
     return this.questionnaireService.submitQuestionnaire(data);
   }
 

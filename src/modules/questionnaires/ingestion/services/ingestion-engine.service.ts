@@ -14,7 +14,7 @@ import {
   IngestionResultDto,
   IngestionRecordResult,
 } from '../dto/ingestion-result.dto';
-import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
+import { SubmitQuestionnaireResponse } from '../../dto/responses/submit-questionnaire-response.dto';
 
 export class DryRunRollbackError extends Error {
   constructor() {
@@ -171,9 +171,9 @@ export class IngestionEngine {
     em: EntityManager,
     mapped: MappedSubmission,
     dryRun: boolean,
-  ): Promise<QuestionnaireSubmission> {
+  ): Promise<SubmitQuestionnaireResponse> {
     if (dryRun) {
-      let submission: QuestionnaireSubmission | undefined;
+      let submission: SubmitQuestionnaireResponse | undefined;
       try {
         await em.transactional(async () => {
           submission = await this.questionnaireService.submitQuestionnaire(

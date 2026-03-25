@@ -367,7 +367,7 @@ describe('QuestionnaireService', () => {
       expect(result).toBeDefined();
       expect(em.persist).toHaveBeenCalled();
       expect(em.flush).toHaveBeenCalled();
-      expect(result.facultyEmployeeNumberSnapshot).toBe('fac123');
+      expect(result.faculty).toBe('Faculty Name');
     });
 
     it('should enqueue embedding job when submission has qualitative comment and worker URL is configured', async () => {

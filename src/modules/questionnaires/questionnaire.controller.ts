@@ -205,7 +205,12 @@ export class QuestionnaireController {
   }
 
   @Get('versions/:versionId/csv-template')
-  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.DEAN)
+  @UseJwtGuard(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+  )
   @ApiOperation({
     summary: 'Download CSV template for a questionnaire version',
   })
@@ -261,7 +266,12 @@ export class QuestionnaireController {
 
   @Post('ingest')
   @HttpCode(200)
-  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.DEAN)
+  @UseJwtGuard(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+  )
   @UseInterceptors(
     FileInterceptor('file', {
       fileFilter: csvFileFilter,

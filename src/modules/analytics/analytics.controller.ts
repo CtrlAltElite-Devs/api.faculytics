@@ -15,7 +15,7 @@ import { FacultyTrendsResponseDto } from './dto/responses/faculty-trends.respons
 
 @ApiTags('Analytics')
 @Controller('analytics')
-@UseJwtGuard(UserRole.DEAN, UserRole.SUPER_ADMIN)
+@UseJwtGuard(UserRole.DEAN, UserRole.CHAIRPERSON, UserRole.SUPER_ADMIN)
 @UseInterceptors(CurrentUserInterceptor)
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}

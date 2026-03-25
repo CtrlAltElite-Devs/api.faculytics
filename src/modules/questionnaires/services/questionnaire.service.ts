@@ -433,8 +433,11 @@ export class QuestionnaireService {
         );
       }
 
-      // Verify respondent enrollment (unless DEAN)
-      if (!respondent.roles.includes(UserRole.DEAN)) {
+      // Verify respondent enrollment (unless DEAN or CHAIRPERSON)
+      if (
+        !respondent.roles.includes(UserRole.DEAN) &&
+        !respondent.roles.includes(UserRole.CHAIRPERSON)
+      ) {
         const respondentEnrollment = await this.enrollmentRepo.findOne({
           user: respondent,
           course: course,
@@ -552,7 +555,9 @@ export class QuestionnaireService {
       faculty,
       respondentRole: respondent.roles.includes(UserRole.DEAN)
         ? RespondentRole.DEAN
-        : RespondentRole.STUDENT,
+        : respondent.roles.includes(UserRole.CHAIRPERSON)
+          ? RespondentRole.CHAIRPERSON
+          : RespondentRole.STUDENT,
       semester,
       course: course || undefined,
       department,

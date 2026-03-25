@@ -85,7 +85,65 @@ describe('ScopeResolverService', () => {
     expect(em.find).toHaveBeenCalledTimes(1);
   });
 
-  it('should throw ForbiddenException for user with neither SUPER_ADMIN nor DEAN role', async () => {
+  it('should return department IDs for chairperson via program-to-department lookup', async () => {
+    const user = createUser([UserRole.CHAIRPERSON]);
+    currentUserService.getOrFail.mockReturnValue(user);
+
+    em.find
+      .mockResolvedValueOnce([{ moodleCategory: { moodleCategoryId: 13 } }]) // institutional roles
+      .mockResolvedValueOnce([{ id: 'prog-1', department: { id: 'dept-1' } }]); // programs
+
+    const result = await service.ResolveDepartmentIds(semesterId);
+
+    expect(result).toEqual(['dept-1']);
+    expect(em.find).toHaveBeenCalledTimes(2);
+  });
+
+  it('should deduplicate departments for chairperson with multiple programs in same department', async () => {
+    const user = createUser([UserRole.CHAIRPERSON]);
+    currentUserService.getOrFail.mockReturnValue(user);
+
+    em.find
+      .mockResolvedValueOnce([
+        { moodleCategory: { moodleCategoryId: 13 } },
+        { moodleCategory: { moodleCategoryId: 18 } },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'prog-1', department: { id: 'dept-1' } },
+        { id: 'prog-2', department: { id: 'dept-1' } },
+      ]);
+
+    const result = await service.ResolveDepartmentIds(semesterId);
+
+    expect(result).toEqual(['dept-1']);
+  });
+
+  it('should return empty array for chairperson with no institutional roles', async () => {
+    const user = createUser([UserRole.CHAIRPERSON]);
+    currentUserService.getOrFail.mockReturnValue(user);
+
+    em.find.mockResolvedValueOnce([]);
+
+    const result = await service.ResolveDepartmentIds(semesterId);
+
+    expect(result).toEqual([]);
+    expect(em.find).toHaveBeenCalledTimes(1);
+  });
+
+  it('should prioritize DEAN over CHAIRPERSON when user has both roles', async () => {
+    const user = createUser([UserRole.DEAN, UserRole.CHAIRPERSON]);
+    currentUserService.getOrFail.mockReturnValue(user);
+
+    em.find
+      .mockResolvedValueOnce([{ moodleCategory: { moodleCategoryId: 100 } }])
+      .mockResolvedValueOnce([{ id: 'dept-1' }]);
+
+    const result = await service.ResolveDepartmentIds(semesterId);
+
+    expect(result).toEqual(['dept-1']);
+  });
+
+  it('should throw ForbiddenException for user with neither SUPER_ADMIN, DEAN, nor CHAIRPERSON role', async () => {
     const user = createUser([UserRole.FACULTY]);
     currentUserService.getOrFail.mockReturnValue(user);
 

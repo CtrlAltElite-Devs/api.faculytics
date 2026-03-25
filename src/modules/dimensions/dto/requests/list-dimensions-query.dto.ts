@@ -9,7 +9,9 @@ export class ListDimensionsQueryDto {
   questionnaireType?: QuestionnaireType;
 
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @Transform(
+    ({ obj }: { obj: Record<string, unknown> }) => obj.active === 'true',
+  )
   active?: boolean;
 
   @IsInt()

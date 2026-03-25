@@ -108,6 +108,14 @@
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
   },
+  "overrides": {
+    "@angular-devkit/core": {
+      "ajv": "8.18.0"
+    },
+    "@rushstack/node-core-library": {
+      "ajv": "8.18.0"
+    }
+  },
   "jest": {
     "moduleFileExtensions": [
       "js",

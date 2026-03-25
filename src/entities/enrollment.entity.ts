@@ -1,5 +1,6 @@
 import { Entity, Index, ManyToOne, Property, Unique } from '@mikro-orm/core';
 import { Course } from './course.entity';
+import { Section } from './section.entity';
 import { CustomBaseEntity } from './base.entity';
 import { User } from './user.entity';
 
@@ -16,6 +17,10 @@ export class Enrollment extends CustomBaseEntity {
 
   @Property()
   role!: string; // student, teacher, etc.
+
+  @ManyToOne(() => Section, { nullable: true })
+  @Index()
+  section?: Section;
 
   @Property({ default: true })
   isActive!: boolean;

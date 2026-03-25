@@ -20,6 +20,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { DimensionsModule } from './dimensions/dimensions.module';
 import { FacultyModule } from './faculty/faculty.module';
 import { CurriculumModule } from './curriculum/curriculum.module';
+import { AdminModule } from './admin/admin.module';
 import { LoggerModule } from 'nestjs-pino';
 import { ClsModule } from 'nestjs-cls';
 import { v4 } from 'uuid';
@@ -36,6 +37,7 @@ export const ApplicationModules = [
   DimensionsModule,
   FacultyModule,
   CurriculumModule,
+  AdminModule,
 ];
 
 export const InfrastructureModules = [

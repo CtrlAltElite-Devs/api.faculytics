@@ -2,6 +2,7 @@ import { EntityManager } from '@mikro-orm/core';
 import { Injectable, Logger } from '@nestjs/common';
 import pLimit from 'p-limit';
 import { Course } from 'src/entities/course.entity';
+import { Section } from 'src/entities/section.entity';
 import { env } from 'src/configurations/env';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { User } from 'src/entities/user.entity';
@@ -160,6 +161,13 @@ export class EnrollmentSyncService {
         { populate: ['user'] },
       );
 
+      // Upsert sections from group data returned with enrolled users
+      const sectionMap = await this.upsertSectionsFromGroups(
+        tx,
+        course,
+        remoteUsers,
+      );
+
       // Load user references for this course's users in a single SELECT
       const moodleUserIds = remoteUsers
         .filter((r) => r.id != null && r.username)
@@ -185,12 +193,18 @@ export class EnrollmentSyncService {
         }
 
         const role = this.moodleService.ExtractRole(remote);
+
+        // Resolve section from user's first group
+        const userGroup = remote.groups?.[0];
+        const section = userGroup ? sectionMap.get(userGroup.id) : undefined;
+
         const enrollmentData = tx.create(
           Enrollment,
           {
             user,
             course,
             role,
+            section: section ?? null,
             isActive: true,
             timeModified: new Date(),
           },
@@ -201,6 +215,7 @@ export class EnrollmentSyncService {
           onConflictFields: ['user', 'course'],
           onConflictMergeFields: [
             'role',
+            'section',
             'isActive',
             'timeModified',
             'updatedAt',
@@ -219,5 +234,46 @@ export class EnrollmentSyncService {
         }
       }
     });
+  }
+
+  private async upsertSectionsFromGroups(
+    tx: EntityManager,
+    course: Course,
+    remoteUsers: MoodleEnrolledUser[],
+  ): Promise<Map<number, Section>> {
+    // Collect unique groups from all remote users for this course
+    const groupMap = new Map<
+      number,
+      { id: number; name: string; description?: string }
+    >();
+    for (const remote of remoteUsers) {
+      for (const group of remote.groups ?? []) {
+        if (!groupMap.has(group.id)) {
+          groupMap.set(group.id, group);
+        }
+      }
+    }
+
+    const sectionMap = new Map<number, Section>();
+    for (const [groupId, groupData] of groupMap) {
+      const sectionData = tx.create(
+        Section,
+        {
+          moodleGroupId: groupId,
+          name: groupData.name,
+          description: groupData.description || undefined,
+          course,
+        },
+        { managed: false },
+      );
+
+      const section = await tx.upsert(Section, sectionData, {
+        onConflictFields: ['moodleGroupId'],
+        onConflictMergeFields: ['name', 'description', 'updatedAt'],
+      });
+      sectionMap.set(groupId, section);
+    }
+
+    return sectionMap;
   }
 }

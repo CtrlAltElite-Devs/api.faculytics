@@ -29,8 +29,10 @@ erDiagram
     DEPARTMENT ||--o{ PROGRAM : "contains"
     PROGRAM ||--o{ COURSE : "contains"
 
+    COURSE ||--o{ SECTION : "has sections"
     COURSE ||--o{ ENROLLMENT : "has"
     COURSE ||--o{ QUESTIONNAIRE_SUBMISSION : "linked to"
+    SECTION ||--o{ ENROLLMENT : "groups students"
 
     QUESTIONNAIRE ||--o{ QUESTIONNAIRE_VERSION : "has"
     QUESTIONNAIRE_VERSION ||--o{ QUESTIONNAIRE_SUBMISSION : "used for"
@@ -165,10 +167,19 @@ erDiagram
         boolean isActive
     }
 
+    SECTION {
+        uuid id
+        int moodleGroupId UK
+        string name
+        string description "nullable"
+        uuid courseId
+    }
+
     ENROLLMENT {
         uuid id
         uuid userId
         uuid courseId
+        uuid sectionId "nullable"
         string role
         boolean isActive
         date timeModified
@@ -377,7 +388,8 @@ erDiagram
 ### Constraints & Idempotency
 
 - **Dimension Registry:** Composite unique on `(code, questionnaireType)`. Allows the same code (e.g., 'PLANNING') across different questionnaire types.
-- **Enrollment:** Composite unique on `(user, course)`. Prevents duplicate enrollments.
+- **Enrollment:** Composite unique on `(user, course)`. Prevents duplicate enrollments. Optional `section` FK links to the student's institutional section (e.g., BSCS-4A).
+- **Section:** Unique on `moodleGroupId`. Maps Moodle course groups to institutional sections. A course can have multiple sections; each enrollment optionally belongs to one.
 - **User Institutional Role:** Composite unique on `(user, moodleCategory, role)`.
 - **Questionnaire Version:** Composite unique on `(questionnaire, versionNumber)`.
 - **Questionnaire Submission:** Composite unique on `(respondent, faculty, questionnaireVersion, semester, course)`. Indexed on `(faculty, semester)`, `(department, semester)`, `(program, semester)`, `(campus, semester)`.

@@ -85,6 +85,22 @@ export class MoodleService {
     return await client.getCoursesByField('category', categoryId.toString());
   }
 
+  async GetCourseGroups(dto: { token: string; courseId: number }) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getCourseGroups(dto.courseId);
+  }
+
+  async GetCourseUserGroups(dto: {
+    token: string;
+    courseId: number;
+    userId: number;
+  }) {
+    const client = this.BuildMoodleClient();
+    client.setToken(dto.token);
+    return await client.getCourseUserGroups(dto.courseId, dto.userId);
+  }
+
   ExtractRole(user?: MoodleEnrolledUser): string {
     if (!user || !user.roles?.length) return 'student';
     return user.roles[0].shortname;

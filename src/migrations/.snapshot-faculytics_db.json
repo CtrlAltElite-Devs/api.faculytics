@@ -1467,6 +1467,159 @@
           "length": 255,
           "mappedType": "string"
         },
+        "moodle_group_id": {
+          "name": "moodle_group_id",
+          "type": "int",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "mappedType": "integer"
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "description": {
+          "name": "description",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "course_id": {
+          "name": "course_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 255,
+          "mappedType": "string"
+        }
+      },
+      "name": "section",
+      "schema": "public",
+      "indexes": [
+        {
+          "columnNames": [
+            "moodle_group_id"
+          ],
+          "composite": false,
+          "keyName": "section_moodle_group_id_index",
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "columnNames": [
+            "moodle_group_id"
+          ],
+          "composite": false,
+          "keyName": "section_moodle_group_id_unique",
+          "constraint": true,
+          "primary": false,
+          "unique": true
+        },
+        {
+          "columnNames": [
+            "course_id"
+          ],
+          "composite": false,
+          "keyName": "section_course_id_index",
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "keyName": "section_moodle_group_id_unique",
+          "columnNames": [
+            "moodle_group_id"
+          ],
+          "composite": false,
+          "constraint": true,
+          "primary": false,
+          "unique": true
+        },
+        {
+          "keyName": "section_pkey",
+          "columnNames": [
+            "id"
+          ],
+          "composite": false,
+          "constraint": true,
+          "primary": true,
+          "unique": true
+        }
+      ],
+      "checks": [],
+      "foreignKeys": {
+        "section_course_id_foreign": {
+          "constraintName": "section_course_id_foreign",
+          "columnNames": [
+            "course_id"
+          ],
+          "localTableName": "public.section",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.course",
+          "updateRule": "cascade"
+        }
+      },
+      "nativeEnums": {}
+    },
+    {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 255,
+          "mappedType": "string"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 6,
+          "mappedType": "datetime"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamptz",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "length": 6,
+          "mappedType": "datetime"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "length": 255,
+          "mappedType": "string"
+        },
         "key": {
           "name": "key",
           "type": "varchar(255)",
@@ -1933,6 +2086,15 @@
         },
         "qualitative_comment": {
           "name": "qualitative_comment",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "mappedType": "text"
+        },
+        "cleaned_comment": {
+          "name": "cleaned_comment",
           "type": "text",
           "unsigned": false,
           "autoincrement": false,
@@ -2955,6 +3117,16 @@
           "length": 255,
           "mappedType": "string"
         },
+        "section_id": {
+          "name": "section_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "length": 255,
+          "mappedType": "string"
+        },
         "is_active": {
           "name": "is_active",
           "type": "boolean",
@@ -2995,6 +3167,16 @@
           ],
           "composite": false,
           "keyName": "enrollment_course_id_index",
+          "constraint": false,
+          "primary": false,
+          "unique": false
+        },
+        {
+          "columnNames": [
+            "section_id"
+          ],
+          "composite": false,
+          "keyName": "enrollment_section_id_index",
           "constraint": false,
           "primary": false,
           "unique": false
@@ -3045,6 +3227,19 @@
             "id"
           ],
           "referencedTableName": "public.course",
+          "updateRule": "cascade"
+        },
+        "enrollment_section_id_foreign": {
+          "constraintName": "enrollment_section_id_foreign",
+          "columnNames": [
+            "section_id"
+          ],
+          "localTableName": "public.enrollment",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "referencedTableName": "public.section",
+          "deleteRule": "set null",
           "updateRule": "cascade"
         }
       },
@@ -4671,16 +4866,37 @@
         },
         "category": {
           "name": "category",
-          "type": "varchar(255)",
+          "type": "text",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": false,
-          "length": 255,
-          "mappedType": "string"
+          "enumItems": [
+            "STRENGTH",
+            "IMPROVEMENT"
+          ],
+          "mappedType": "enum"
         },
-        "action_text": {
-          "name": "action_text",
+        "headline": {
+          "name": "headline",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "mappedType": "text"
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "mappedType": "text"
+        },
+        "action_plan": {
+          "name": "action_plan",
           "type": "text",
           "unsigned": false,
           "autoincrement": false,

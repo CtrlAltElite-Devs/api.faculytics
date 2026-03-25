@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
@@ -6,23 +7,36 @@ import {
   HttpStatus,
   Logger,
   Post,
+  Put,
+  Query,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { EntityManager } from '@mikro-orm/core';
 import { QueueName } from 'src/configurations/common/queue-names';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from 'src/modules/auth/roles.enum';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
+import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-user.interceptor';
+import { SyncLog } from 'src/entities/sync-log.entity';
 import { TriggerSyncResponseDto } from '../dto/responses/trigger-sync.response.dto';
 import {
   SyncState,
   SyncStatusResponseDto,
 } from '../dto/responses/sync-status.response.dto';
+import { SyncLogResponseDto } from '../dto/responses/sync-log.response.dto';
+import { SyncHistoryResponseDto } from '../dto/responses/sync-history.response.dto';
+import { SyncScheduleResponseDto } from '../dto/responses/sync-schedule.response.dto';
+import { UpdateSyncScheduleDto } from '../dto/requests/update-sync-schedule.request.dto';
+import { MoodleSyncScheduler } from '../schedulers/moodle-sync.scheduler';
 
 @ApiTags('Moodle')
 @Controller('moodle')
@@ -31,6 +45,9 @@ export class MoodleSyncController {
 
   constructor(
     @InjectQueue(QueueName.MOODLE_SYNC) private readonly syncQueue: Queue,
+    private readonly syncScheduler: MoodleSyncScheduler,
+    private readonly em: EntityManager,
+    private readonly currentUserService: CurrentUserService,
   ) {}
 
   @Get('sync/status')
@@ -88,6 +105,7 @@ export class MoodleSyncController {
     description: 'Sync already in progress or queued',
   })
   @ApiResponse({ status: 503, description: 'Sync queue unavailable' })
+  @UseInterceptors(CurrentUserInterceptor)
   async TriggerSync(): Promise<TriggerSyncResponseDto> {
     try {
       const [activeCount, waitingCount] = await Promise.all([
@@ -102,9 +120,11 @@ export class MoodleSyncController {
         );
       }
 
+      const user = this.currentUserService.getOrFail();
+
       const job = await this.syncQueue.add(
         QueueName.MOODLE_SYNC,
-        { trigger: 'manual' },
+        { trigger: 'manual', triggeredById: user.id },
         {
           jobId: `moodle-sync-manual-${Date.now()}`,
           removeOnComplete: true,
@@ -125,5 +145,66 @@ export class MoodleSyncController {
         HttpStatus.SERVICE_UNAVAILABLE,
       );
     }
+  }
+
+  @Get('sync/history')
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get paginated Moodle sync history' })
+  @ApiBearerAuth()
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({ status: 200, type: SyncHistoryResponseDto })
+  async GetSyncHistory(
+    @Query('page') page = 1,
+    @Query('limit') limit = 20,
+  ): Promise<SyncHistoryResponseDto> {
+    const fork = this.em.fork();
+    const currentPage = Math.max(1, Number(page));
+    const itemsPerPage = Math.min(100, Math.max(1, Number(limit)));
+    const offset = (currentPage - 1) * itemsPerPage;
+
+    const [logs, totalItems] = await fork.findAndCount(
+      SyncLog,
+      {},
+      {
+        orderBy: { startedAt: 'desc' },
+        limit: itemsPerPage,
+        offset,
+        populate: ['triggeredBy'],
+        filters: { softDelete: false },
+      },
+    );
+
+    return {
+      data: logs.map((log) => SyncLogResponseDto.Map(log)),
+      meta: {
+        totalItems,
+        itemCount: logs.length,
+        itemsPerPage,
+        totalPages: Math.ceil(totalItems / itemsPerPage),
+        currentPage,
+      },
+    };
+  }
+
+  @Get('sync/schedule')
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get current sync schedule' })
+  @ApiBearerAuth()
+  @ApiResponse({ status: 200, type: SyncScheduleResponseDto })
+  GetSyncSchedule(): SyncScheduleResponseDto {
+    return this.syncScheduler.getSchedule();
+  }
+
+  @Put('sync/schedule')
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Update sync schedule interval' })
+  @ApiBearerAuth()
+  @ApiResponse({ status: 200, type: SyncScheduleResponseDto })
+  async UpdateSyncSchedule(
+    @Body() dto: UpdateSyncScheduleDto,
+  ): Promise<SyncScheduleResponseDto> {
+    await this.syncScheduler.updateSchedule(dto.intervalMinutes);
+    return this.syncScheduler.getSchedule();
   }
 }

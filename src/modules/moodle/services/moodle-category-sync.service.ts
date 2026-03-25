@@ -9,6 +9,7 @@ import { Program } from 'src/entities/program.entity';
 import { MoodleCategoryResponse } from '../lib/moodle.types';
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
+import { SyncPhaseResult } from '../lib/sync-result.types';
 
 @Injectable()
 export class MoodleCategorySyncService {
@@ -17,18 +18,53 @@ export class MoodleCategorySyncService {
     private readonly unitOfWork: UnitOfWork,
   ) {}
 
-  async SyncAndRebuildHierarchy(): Promise<void> {
-    return await this.unitOfWork.runInTransaction(async (tx) => {
-      const remoteCategories = await this.moodleService.GetCategories({
-        token: env.MOODLE_MASTER_KEY,
+  async SyncAndRebuildHierarchy(): Promise<SyncPhaseResult> {
+    const startTime = Date.now();
+    try {
+      const result = await this.unitOfWork.runInTransaction(async (tx) => {
+        const countBefore = await tx.count(MoodleCategory);
+
+        const remoteCategories = await this.moodleService.GetCategories({
+          token: env.MOODLE_MASTER_KEY,
+        });
+
+        // Phase 1: Raw mirror sync
+        await this.syncRawCategories(tx, remoteCategories);
+
+        // Phase 2: Rebuild normalized hierarchy
+        await this.rebuildHierarchy(tx);
+
+        const upserted = remoteCategories.length;
+        const inserted = Math.max(0, upserted - countBefore);
+
+        return {
+          fetched: remoteCategories.length,
+          inserted,
+          updated: upserted - inserted,
+        };
       });
 
-      // Phase 1: Raw mirror sync
-      await this.syncRawCategories(tx, remoteCategories);
-
-      // Phase 2: Rebuild normalized hierarchy
-      await this.rebuildHierarchy(tx);
-    });
+      return {
+        status: 'success',
+        durationMs: Date.now() - startTime,
+        fetched: result.fetched,
+        inserted: result.inserted,
+        updated: result.updated,
+        deactivated: 0,
+        errors: 0,
+      };
+    } catch (error: unknown) {
+      return {
+        status: 'failed',
+        durationMs: Date.now() - startTime,
+        fetched: 0,
+        inserted: 0,
+        updated: 0,
+        deactivated: 0,
+        errors: 1,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private async syncRawCategories(

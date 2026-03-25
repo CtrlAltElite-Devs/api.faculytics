@@ -141,13 +141,24 @@ describe('DimensionsService', () => {
       );
     });
 
-    it('should apply active filter', async () => {
+    it('should apply active=true filter', async () => {
       dimensionRepository.findAndCount.mockResolvedValue([[], 0]);
 
       await service.findAll({ active: true, page: 1, limit: 20 });
 
       expect(dimensionRepository.findAndCount).toHaveBeenCalledWith(
         { active: true },
+        expect.anything(),
+      );
+    });
+
+    it('should apply active=false filter', async () => {
+      dimensionRepository.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll({ active: false, page: 1, limit: 20 });
+
+      expect(dimensionRepository.findAndCount).toHaveBeenCalledWith(
+        { active: false },
         expect.anything(),
       );
     });

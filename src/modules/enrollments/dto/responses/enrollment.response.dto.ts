@@ -36,6 +36,14 @@ export class SectionShortResponseDto {
   name: string;
 }
 
+export class SubmissionStatusDto {
+  @ApiProperty()
+  submitted: boolean;
+
+  @ApiPropertyOptional()
+  submittedAt?: Date;
+}
+
 export class EnrollmentResponseDto {
   @ApiProperty()
   @IsString()
@@ -56,4 +64,7 @@ export class EnrollmentResponseDto {
 
   @ApiPropertyOptional({ type: SectionShortResponseDto, nullable: true })
   section: SectionShortResponseDto | null;
+
+  @ApiProperty({ type: SubmissionStatusDto })
+  submission: SubmissionStatusDto;
 }

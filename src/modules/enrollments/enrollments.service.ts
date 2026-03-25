@@ -1,6 +1,7 @@
 import { EntityManager } from '@mikro-orm/core';
 import { Injectable } from '@nestjs/common';
 import { Enrollment } from 'src/entities/enrollment.entity';
+import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
 import { CacheService } from '../common/cache/cache.service';
 import { CacheNamespace } from '../common/cache/cache-namespaces';
 import { CurrentUserService } from '../common/cls/current-user.service';
@@ -45,7 +46,10 @@ export class EnrollmentsService {
     );
 
     const courseIds = [...new Set(enrollments.map((e) => e.course.id))];
-    const facultyMap = await this.getFacultyByCourseIds(courseIds);
+    const [facultyMap, submissionMap] = await Promise.all([
+      this.getFacultyByCourseIds(courseIds),
+      this.getSubmissionStatusByCourseIds(userId, courseIds),
+    ]);
 
     return {
       data: enrollments.map((e) => {
@@ -72,6 +76,10 @@ export class EnrollmentsService {
           section: e.section
             ? { id: e.section.id, name: e.section.name }
             : null,
+          submission: {
+            submitted: submissionMap.has(e.course.id),
+            submittedAt: submissionMap.get(e.course.id),
+          },
         };
       }),
       meta: {
@@ -82,6 +90,29 @@ export class EnrollmentsService {
         currentPage: page,
       },
     };
+  }
+
+  private async getSubmissionStatusByCourseIds(
+    userId: string,
+    courseIds: string[],
+  ): Promise<Map<string, Date>> {
+    const map = new Map<string, Date>();
+    if (courseIds.length === 0) return map;
+
+    const submissions = await this.em.find(
+      QuestionnaireSubmission,
+      { respondent: userId, course: { $in: courseIds } },
+      { fields: ['course', 'submittedAt'], orderBy: { submittedAt: 'DESC' } },
+    );
+
+    for (const submission of submissions) {
+      const courseId = submission.course?.id;
+      if (courseId && !map.has(courseId)) {
+        map.set(courseId, submission.submittedAt);
+      }
+    }
+
+    return map;
   }
 
   private async getFacultyByCourseIds(

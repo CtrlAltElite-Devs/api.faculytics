@@ -616,6 +616,8 @@ export class QuestionnaireService {
       throw e;
     }
 
+    await this.cacheService.invalidateNamespace(CacheNamespace.ENROLLMENTS_ME);
+
     // Fire-and-forget embedding dispatch (uses cleaned text for alignment with topic modeling)
     if (
       !options?.skipAnalysis &&

@@ -8,6 +8,7 @@ import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { EntityRepository } from '@mikro-orm/postgresql';
 import {
   Questionnaire,
+  QuestionnaireType,
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireDraft,
@@ -79,6 +80,10 @@ describe('QuestionnaireService', () => {
         {
           provide: getRepositoryToken(Questionnaire),
           useValue: questionnaireRepoMock,
+        },
+        {
+          provide: getRepositoryToken(QuestionnaireType),
+          useValue: createMockRepo(),
         },
         {
           provide: getRepositoryToken(QuestionnaireVersion),
@@ -953,7 +958,7 @@ describe('QuestionnaireService', () => {
 
       expect(result).toEqual(mockVersion);
       expect(versionRepo.findOne).toHaveBeenCalledWith('v1', {
-        populate: ['questionnaire'],
+        populate: ['questionnaire.type'],
       });
     });
   });

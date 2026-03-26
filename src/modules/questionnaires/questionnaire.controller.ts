@@ -79,7 +79,7 @@ export class QuestionnaireController {
     return this.questionnaireService.getQuestionnaireTypes();
   }
 
-  @Get('types/:type/versions')
+  @Get('types/:typeId/versions')
   @ApiOperation({ summary: 'Get versions for a questionnaire type' })
   @ApiResponse({
     status: 200,
@@ -87,7 +87,7 @@ export class QuestionnaireController {
     type: QuestionnaireVersionsResponse,
   })
   async getVersionsByType(@Param() params: GetVersionsByTypeParam) {
-    return this.questionnaireService.getVersionsByType(params.type);
+    return this.questionnaireService.getVersionsByType(params.typeId);
   }
 
   @Post()
@@ -100,8 +100,10 @@ export class QuestionnaireController {
   async createQuestionnaire(
     @Body() data: CreateQuestionnaireRequest,
   ): Promise<QuestionnaireResponseDto> {
-    const questionnaire =
-      await this.questionnaireService.createQuestionnaire(data);
+    const questionnaire = await this.questionnaireService.createQuestionnaire({
+      title: data.title,
+      typeId: data.typeId,
+    });
     return QuestionnaireResponseDto.Map(questionnaire);
   }
 

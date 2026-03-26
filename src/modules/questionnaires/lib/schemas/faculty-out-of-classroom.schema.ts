@@ -1,12 +1,11 @@
 import {
   QuestionnaireSchemaSnapshot,
-  QuestionnaireType,
   QuestionType,
 } from '../questionnaire.types';
 
 export const FACULTY_OUT_OF_CLASSROOM_SCHEMA_V1: QuestionnaireSchemaSnapshot = {
   meta: {
-    questionnaireType: QuestionnaireType.FACULTY_OUT_OF_CLASSROOM,
+    questionnaireType: 'FACULTY_OUT_OF_CLASSROOM',
     scoringModel: 'SECTION_WEIGHTED',
     version: 1,
     maxScore: 5,

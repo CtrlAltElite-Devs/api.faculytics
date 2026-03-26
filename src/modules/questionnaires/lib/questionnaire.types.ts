@@ -1,9 +1,3 @@
-export enum QuestionnaireType {
-  FACULTY_IN_CLASSROOM = 'FACULTY_IN_CLASSROOM',
-  FACULTY_OUT_OF_CLASSROOM = 'FACULTY_OUT_OF_CLASSROOM',
-  FACULTY_FEEDBACK = 'FACULTY_FEEDBACK',
-}
-
 export enum QuestionType {
   LIKERT_1_5 = 'LIKERT_1_5',
   LIKERT_1_4 = 'LIKERT_1_4',
@@ -48,7 +42,7 @@ export interface SectionNode {
 
 export interface QuestionnaireSchemaSnapshot {
   meta: {
-    questionnaireType: QuestionnaireType;
+    questionnaireType: string;
     scoringModel: 'SECTION_WEIGHTED';
     version: number;
     maxScore: number;

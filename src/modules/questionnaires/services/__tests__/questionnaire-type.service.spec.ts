@@ -86,6 +86,18 @@ describe('QuestionnaireTypeService', () => {
         service.Create({ name: 'Dup', code: 'DUP_CODE' }),
       ).rejects.toThrow(ConflictException);
     });
+
+    it('should allow creating a type with the same code as a soft-deleted one', async () => {
+      // flush succeeds — partial unique index (WHERE deleted_at IS NULL)
+      // allows reuse of codes from soft-deleted rows
+      const result = await service.Create({
+        name: 'Recreated Type',
+        code: 'PREVIOUSLY_DELETED',
+      });
+
+      expect(result.code).toBe('PREVIOUSLY_DELETED');
+      expect(em.flush).toHaveBeenCalled();
+    });
   });
 
   describe('FindAll', () => {

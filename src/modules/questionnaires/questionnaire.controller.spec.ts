@@ -11,7 +11,11 @@ import { QuestionnaireService } from './services/questionnaire.service';
 import { IngestionEngine } from './ingestion/services/ingestion-engine.service';
 import { CSVAdapter } from './ingestion/adapters/csv.adapter';
 import { IngestionResultDto } from './ingestion/dto/ingestion-result.dto';
-import { QuestionnaireSchemaSnapshot } from './lib/questionnaire.types';
+import {
+  QuestionnaireSchemaSnapshot,
+  QuestionnaireStatus,
+  QuestionnaireType,
+} from './lib/questionnaire.types';
 import { RolesGuard } from 'src/security/guards/roles.guard';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
 import { AuthGuard } from '@nestjs/passport';
@@ -688,5 +692,198 @@ describe('QuestionnaireController - GetCsvTemplate', () => {
     const [headerRow, dataRow] = csv.split('\n');
 
     expect(headerRow.split(',').length).toBe(dataRow.split(',').length);
+  });
+});
+
+describe('QuestionnaireController - mutation DTO mapping', () => {
+  let controller: QuestionnaireController;
+  let questionnaireService: jest.Mocked<QuestionnaireService>;
+
+  const mockSchema: QuestionnaireSchemaSnapshot = {
+    meta: {
+      questionnaireType: 'FACULTY_IN_CLASSROOM',
+      scoringModel: 'SECTION_WEIGHTED',
+      version: 1,
+      maxScore: 5,
+    },
+    sections: [],
+  };
+
+  const mockQuestionnaire = {
+    id: 'q-1',
+    title: 'Test Questionnaire',
+    type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+    status: QuestionnaireStatus.DRAFT,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    deletedAt: null,
+    versions: { isInitialized: () => false },
+  };
+
+  const mockVersion = {
+    id: 'v-1',
+    questionnaire: mockQuestionnaire,
+    versionNumber: 1,
+    schemaSnapshot: mockSchema,
+    isActive: false,
+    status: QuestionnaireStatus.DRAFT,
+    publishedAt: undefined,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    deletedAt: null,
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [QuestionnaireController],
+      providers: [
+        {
+          provide: QuestionnaireService,
+          useValue: {
+            GetVersionById: jest.fn(),
+            GetAllQuestions: jest.fn(),
+            getQuestionnaireTypes: jest.fn(),
+            getVersionsByType: jest.fn(),
+            createQuestionnaire: jest.fn(),
+            CreateVersion: jest.fn(),
+            GetLatestActiveVersion: jest.fn(),
+            PublishVersion: jest.fn(),
+            DeprecateVersion: jest.fn(),
+            UpdateDraftVersion: jest.fn(),
+            submitQuestionnaire: jest.fn(),
+            CheckSubmission: jest.fn(),
+            SaveOrUpdateDraft: jest.fn(),
+            GetDraft: jest.fn(),
+            ListMyDrafts: jest.fn(),
+            DeleteDraft: jest.fn(),
+            WipeSubmissions: jest.fn(),
+          },
+        },
+        {
+          provide: IngestionEngine,
+          useValue: { processStream: jest.fn() },
+        },
+        {
+          provide: CSVAdapter,
+          useValue: new CSVAdapter(),
+        },
+      ],
+    })
+      .overrideGuard(AuthGuard('jwt'))
+      .useValue({ canActivate: () => true })
+      .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .overrideInterceptor(CurrentUserInterceptor)
+      .useValue({
+        intercept: (_ctx: ExecutionContext, next: CallHandler) => next.handle(),
+      })
+      .compile();
+
+    controller = module.get(QuestionnaireController);
+    questionnaireService = module.get(QuestionnaireService);
+  });
+
+  it('createQuestionnaire should return QuestionnaireResponseDto', async () => {
+    questionnaireService.createQuestionnaire.mockResolvedValue(
+      mockQuestionnaire as any,
+    );
+
+    const result = await controller.createQuestionnaire({
+      title: 'Test Questionnaire',
+      type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+    });
+
+    expect(result).toEqual({
+      id: 'q-1',
+      title: 'Test Questionnaire',
+      type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      status: QuestionnaireStatus.DRAFT,
+    });
+    expect(result).not.toHaveProperty('createdAt');
+    expect(result).not.toHaveProperty('updatedAt');
+    expect(result).not.toHaveProperty('deletedAt');
+  });
+
+  it('createVersion should return QuestionnaireVersionDetailResponse', async () => {
+    questionnaireService.CreateVersion.mockResolvedValue(mockVersion as any);
+
+    const result = await controller.createVersion('q-1', {
+      schema: mockSchema,
+    });
+
+    expect(result).toEqual({
+      id: 'v-1',
+      questionnaireId: 'q-1',
+      questionnaireTitle: 'Test Questionnaire',
+      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      versionNumber: 1,
+      status: QuestionnaireStatus.DRAFT,
+      isActive: false,
+      schemaSnapshot: mockSchema,
+      publishedAt: undefined,
+      createdAt: mockVersion.createdAt,
+      updatedAt: mockVersion.updatedAt,
+    });
+    expect(result).not.toHaveProperty('deletedAt');
+    expect(result).not.toHaveProperty('questionnaire');
+  });
+
+  it('publishVersion should return QuestionnaireVersionDetailResponse', async () => {
+    const publishedVersion = {
+      ...mockVersion,
+      isActive: true,
+      status: QuestionnaireStatus.ACTIVE,
+      publishedAt: new Date(),
+    };
+    questionnaireService.PublishVersion.mockResolvedValue(
+      publishedVersion as any,
+    );
+
+    const result = await controller.publishVersion('v-1');
+
+    expect(result).toEqual({
+      id: 'v-1',
+      questionnaireId: 'q-1',
+      questionnaireTitle: 'Test Questionnaire',
+      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      versionNumber: 1,
+      status: QuestionnaireStatus.ACTIVE,
+      isActive: true,
+      schemaSnapshot: mockSchema,
+      publishedAt: publishedVersion.publishedAt,
+      createdAt: publishedVersion.createdAt,
+      updatedAt: publishedVersion.updatedAt,
+    });
+    expect(result).not.toHaveProperty('deletedAt');
+    expect(result).not.toHaveProperty('questionnaire');
+  });
+
+  it('deprecateVersion should return QuestionnaireVersionDetailResponse', async () => {
+    const deprecatedVersion = {
+      ...mockVersion,
+      isActive: false,
+      status: QuestionnaireStatus.DEPRECATED,
+    };
+    questionnaireService.DeprecateVersion.mockResolvedValue(
+      deprecatedVersion as any,
+    );
+
+    const result = await controller.deprecateVersion('v-1');
+
+    expect(result).toEqual({
+      id: 'v-1',
+      questionnaireId: 'q-1',
+      questionnaireTitle: 'Test Questionnaire',
+      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      versionNumber: 1,
+      status: QuestionnaireStatus.DEPRECATED,
+      isActive: false,
+      schemaSnapshot: mockSchema,
+      publishedAt: undefined,
+      createdAt: deprecatedVersion.createdAt,
+      updatedAt: deprecatedVersion.updatedAt,
+    });
+    expect(result).not.toHaveProperty('deletedAt');
+    expect(result).not.toHaveProperty('questionnaire');
   });
 });

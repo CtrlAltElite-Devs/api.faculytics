@@ -99,7 +99,7 @@ export class MoodleStartupService {
 
   private async RunPhase(
     name: string,
-    fn: () => Promise<void>,
+    fn: () => Promise<unknown>,
   ): Promise<JobRecordType> {
     const start = Date.now();
     try {

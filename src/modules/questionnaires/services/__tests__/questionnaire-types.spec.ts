@@ -1,12 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-return */
+
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { QuestionnaireService } from '../questionnaire.service';
 import { getRepositoryToken } from '@mikro-orm/nestjs';
 import {
   Questionnaire,
+  QuestionnaireType,
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireDraft,
@@ -18,15 +20,28 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { CacheService } from '../../../common/cache/cache.service';
 import { AnalysisService } from '../../../analysis/analysis.service';
 import { CurrentUserService } from '../../../common/cls/current-user.service';
-import {
-  QuestionnaireStatus,
-  QuestionnaireType,
-} from '../../lib/questionnaire.types';
+import { QuestionnaireStatus } from '../../lib/questionnaire.types';
 
 describe('QuestionnaireService - Types & Versions', () => {
   let service: QuestionnaireService;
   let questionnaireRepo: any;
+  let typeRepo: any;
   let versionRepo: any;
+  let cacheService: any;
+
+  const mockTypeEntity = {
+    id: 'type-1',
+    name: 'Faculty In-Classroom',
+    code: 'FACULTY_IN_CLASSROOM',
+    isSystem: true,
+  };
+
+  const mockTypeEntity2 = {
+    id: 'type-2',
+    name: 'Faculty Feedback',
+    code: 'FACULTY_FEEDBACK',
+    isSystem: true,
+  };
 
   beforeEach(async () => {
     const createMockRepo = () => ({
@@ -40,7 +55,18 @@ describe('QuestionnaireService - Types & Versions', () => {
     });
 
     const questionnaireRepoMock = createMockRepo();
+    const typeRepoMock = createMockRepo();
     const versionRepoMock = createMockRepo();
+
+    cacheService = {
+      wrap: jest
+        .fn()
+        .mockImplementation(
+          (_ns: string, _key: string, fn: () => Promise<unknown>) => fn(),
+        ),
+      invalidateNamespace: jest.fn(),
+      invalidateNamespaces: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -48,6 +74,10 @@ describe('QuestionnaireService - Types & Versions', () => {
         {
           provide: getRepositoryToken(Questionnaire),
           useValue: questionnaireRepoMock,
+        },
+        {
+          provide: getRepositoryToken(QuestionnaireType),
+          useValue: typeRepoMock,
         },
         {
           provide: getRepositoryToken(QuestionnaireVersion),
@@ -76,7 +106,7 @@ describe('QuestionnaireService - Types & Versions', () => {
         {
           provide: EntityManager,
           useValue: {
-            persist: jest.fn(),
+            persist: jest.fn().mockReturnThis(),
             flush: jest.fn(),
             findOne: jest.fn(),
             upsert: jest.fn(),
@@ -95,90 +125,53 @@ describe('QuestionnaireService - Types & Versions', () => {
         },
         {
           provide: CacheService,
-          useValue: {
-            wrap: jest
-              .fn()
-              .mockImplementation(
-                (_ns: string, _key: string, fn: () => Promise<unknown>) => fn(),
-              ),
-            invalidateNamespace: jest.fn(),
-            invalidateNamespaces: jest.fn(),
-          },
+          useValue: cacheService,
         },
       ],
     }).compile();
 
     service = module.get<QuestionnaireService>(QuestionnaireService);
     questionnaireRepo = module.get(getRepositoryToken(Questionnaire));
+    typeRepo = module.get(getRepositoryToken(QuestionnaireType));
     versionRepo = module.get(getRepositoryToken(QuestionnaireVersion));
   });
 
   describe('getQuestionnaireTypes', () => {
-    it('should return all enum values even when only some have entities', async () => {
+    it('should return all type entities with questionnaire info', async () => {
+      typeRepo.findAll.mockResolvedValue([mockTypeEntity, mockTypeEntity2]);
       questionnaireRepo.findAll.mockResolvedValue([
         {
           id: 'q1',
           title: 'Faculty In Classroom Eval',
-          type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+          type: mockTypeEntity,
           status: QuestionnaireStatus.ACTIVE,
         },
       ]);
 
       const result = await service.getQuestionnaireTypes();
 
-      expect(result).toHaveLength(3);
-      expect(result.map((r: any) => r.type)).toEqual(
-        Object.values(QuestionnaireType),
-      );
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        id: 'type-1',
+        name: 'Faculty In-Classroom',
+        code: 'FACULTY_IN_CLASSROOM',
+        description: null,
+        isSystem: true,
+        questionnaireId: 'q1',
+        questionnaireTitle: 'Faculty In Classroom Eval',
+        questionnaireStatus: QuestionnaireStatus.ACTIVE,
+      });
     });
 
-    it('should map existing questionnaire data correctly', async () => {
-      questionnaireRepo.findAll.mockResolvedValue([
-        {
-          id: 'q1',
-          title: 'Faculty In Classroom Eval',
-          type: QuestionnaireType.FACULTY_IN_CLASSROOM,
-          status: QuestionnaireStatus.ACTIVE,
-        },
-        {
-          id: 'q2',
-          title: 'Faculty Feedback Form',
-          type: QuestionnaireType.FACULTY_FEEDBACK,
-          status: QuestionnaireStatus.DRAFT,
-        },
-      ]);
+    it('should return null questionnaire info for types without questionnaires', async () => {
+      typeRepo.findAll.mockResolvedValue([mockTypeEntity2]);
+      questionnaireRepo.findAll.mockResolvedValue([]);
 
       const result = await service.getQuestionnaireTypes();
 
-      const inClassroom = result.find(
-        (r: any) => r.type === QuestionnaireType.FACULTY_IN_CLASSROOM,
-      );
-      expect(inClassroom).toEqual({
-        type: QuestionnaireType.FACULTY_IN_CLASSROOM,
-        questionnaireId: 'q1',
-        title: 'Faculty In Classroom Eval',
-        status: QuestionnaireStatus.ACTIVE,
-      });
-
-      const outOfClassroom = result.find(
-        (r: any) => r.type === QuestionnaireType.FACULTY_OUT_OF_CLASSROOM,
-      );
-      expect(outOfClassroom).toEqual({
-        type: QuestionnaireType.FACULTY_OUT_OF_CLASSROOM,
-        questionnaireId: null,
-        title: null,
-        status: null,
-      });
-
-      const feedback = result.find(
-        (r: any) => r.type === QuestionnaireType.FACULTY_FEEDBACK,
-      );
-      expect(feedback).toEqual({
-        type: QuestionnaireType.FACULTY_FEEDBACK,
-        questionnaireId: 'q2',
-        title: 'Faculty Feedback Form',
-        status: QuestionnaireStatus.DRAFT,
-      });
+      expect(result[0].questionnaireId).toBeNull();
+      expect(result[0].questionnaireTitle).toBeNull();
+      expect(result[0].questionnaireStatus).toBeNull();
     });
   });
 
@@ -187,9 +180,10 @@ describe('QuestionnaireService - Types & Versions', () => {
       const mockQuestionnaire = {
         id: 'q1',
         title: 'Faculty In Classroom Eval',
-        type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+        type: mockTypeEntity,
       };
 
+      typeRepo.findOne.mockResolvedValue(mockTypeEntity);
       questionnaireRepo.findOne.mockResolvedValue(mockQuestionnaire);
       versionRepo.find.mockResolvedValue([
         {
@@ -210,44 +204,79 @@ describe('QuestionnaireService - Types & Versions', () => {
         },
       ]);
 
-      const result = await service.getVersionsByType(
-        QuestionnaireType.FACULTY_IN_CLASSROOM,
-      );
+      const result = await service.getVersionsByType('type-1');
 
       expect(result.questionnaireId).toBe('q1');
       expect(result.questionnaireTitle).toBe('Faculty In Classroom Eval');
-      expect(result.type).toBe(QuestionnaireType.FACULTY_IN_CLASSROOM);
+      expect(result.type).toEqual({
+        id: 'type-1',
+        name: 'Faculty In-Classroom',
+        code: 'FACULTY_IN_CLASSROOM',
+      });
       expect(result.versions).toHaveLength(2);
       expect(result.versions[0].versionNumber).toBe(2);
       expect(result.versions[1].versionNumber).toBe(1);
-
-      expect(versionRepo.find).toHaveBeenCalledWith(
-        { questionnaire: mockQuestionnaire },
-        {
-          orderBy: { versionNumber: 'DESC' },
-          fields: [
-            'id',
-            'versionNumber',
-            'status',
-            'isActive',
-            'publishedAt',
-            'createdAt',
-          ],
-        },
-      );
     });
 
     it('should return empty versions when no questionnaire exists for type', async () => {
+      typeRepo.findOne.mockResolvedValue(mockTypeEntity2);
       questionnaireRepo.findOne.mockResolvedValue(null);
 
-      const result = await service.getVersionsByType(
-        QuestionnaireType.FACULTY_FEEDBACK,
-      );
+      const result = await service.getVersionsByType('type-2');
 
       expect(result.questionnaireId).toBeNull();
       expect(result.questionnaireTitle).toBeNull();
-      expect(result.type).toBe(QuestionnaireType.FACULTY_FEEDBACK);
+      expect(result.type).toEqual({
+        id: 'type-2',
+        name: 'Faculty Feedback',
+        code: 'FACULTY_FEEDBACK',
+      });
       expect(result.versions).toEqual([]);
+    });
+
+    it('should throw NotFoundException for non-existent type ID', async () => {
+      typeRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.getVersionsByType('missing')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('createQuestionnaire', () => {
+    it('should create a questionnaire with valid typeId', async () => {
+      typeRepo.findOne.mockResolvedValue(mockTypeEntity);
+      questionnaireRepo.findOne.mockResolvedValue(null);
+      questionnaireRepo.create.mockReturnValue({
+        id: 'q-new',
+        title: 'New Eval',
+        type: mockTypeEntity,
+        status: QuestionnaireStatus.DRAFT,
+      });
+
+      const result = await service.createQuestionnaire({
+        title: 'New Eval',
+        typeId: 'type-1',
+      });
+
+      expect(result.type).toEqual(mockTypeEntity);
+    });
+
+    it('should throw NotFoundException for non-existent type ID', async () => {
+      typeRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.createQuestionnaire({ title: 'Test', typeId: 'missing' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw ConflictException when type already has a questionnaire', async () => {
+      typeRepo.findOne.mockResolvedValue(mockTypeEntity);
+      questionnaireRepo.findOne.mockResolvedValue({ id: 'existing' });
+
+      await expect(
+        service.createQuestionnaire({ title: 'Test', typeId: 'type-1' }),
+      ).rejects.toThrow(ConflictException);
     });
   });
 });

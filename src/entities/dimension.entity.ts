@@ -1,7 +1,7 @@
-import { Entity, Property, Index, Enum, Unique } from '@mikro-orm/core';
+import { Entity, Property, Index, ManyToOne, Unique } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { DimensionRepository } from '../repositories/dimension.repository';
-import { QuestionnaireType } from '../modules/questionnaires/lib/questionnaire.types';
+import { QuestionnaireType } from './questionnaire-type.entity';
 
 @Entity({ repository: () => DimensionRepository })
 @Unique({ properties: ['code', 'questionnaireType'] })
@@ -13,7 +13,7 @@ export class Dimension extends CustomBaseEntity {
   @Property()
   displayName!: string;
 
-  @Enum(() => QuestionnaireType)
+  @ManyToOne(() => QuestionnaireType)
   questionnaireType!: QuestionnaireType;
 
   @Property({ default: true })

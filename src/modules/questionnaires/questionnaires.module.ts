@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import {
   Questionnaire,
+  QuestionnaireType,
   QuestionnaireVersion,
   QuestionnaireSubmission,
   QuestionnaireAnswer,
@@ -11,7 +12,9 @@ import {
   User,
 } from '../../entities/index.entity';
 import { QuestionnaireService } from './services/questionnaire.service';
+import { QuestionnaireTypeService } from './services/questionnaire-type.service';
 import { QuestionnaireController } from './questionnaire.controller';
+import { QuestionnaireTypeController } from './questionnaire-type.controller';
 import { QuestionnaireSchemaValidator } from './services/questionnaire-schema.validator';
 import { ScoringService } from './services/scoring.service';
 import { SourceAdapterFactory } from './ingestion/factories/source-adapter.factory';
@@ -29,6 +32,7 @@ import { AnalysisModule } from '../analysis/analysis.module';
 @Module({
   imports: [
     MikroOrmModule.forFeature([
+      QuestionnaireType,
       Questionnaire,
       QuestionnaireVersion,
       QuestionnaireSubmission,
@@ -42,9 +46,10 @@ import { AnalysisModule } from '../analysis/analysis.module';
     CommonModule,
     AnalysisModule,
   ],
-  controllers: [QuestionnaireController],
+  controllers: [QuestionnaireController, QuestionnaireTypeController],
   providers: [
     QuestionnaireService,
+    QuestionnaireTypeService,
     QuestionnaireSchemaValidator,
     ScoringService,
     SourceAdapterFactory,
@@ -62,6 +67,6 @@ import { AnalysisModule } from '../analysis/analysis.module';
       useExisting: ExcelAdapter,
     },
   ],
-  exports: [QuestionnaireService],
+  exports: [QuestionnaireService, QuestionnaireTypeService],
 })
 export class QuestionnaireModule {}

@@ -1,7 +1,6 @@
-import { IsEnum } from 'class-validator';
-import { QuestionnaireType } from '../../lib/questionnaire.types';
+import { IsUUID } from 'class-validator';
 
 export class GetVersionsByTypeParam {
-  @IsEnum(QuestionnaireType)
-  type!: QuestionnaireType;
+  @IsUUID()
+  typeId!: string;
 }

@@ -14,7 +14,6 @@ import { IngestionResultDto } from './ingestion/dto/ingestion-result.dto';
 import {
   QuestionnaireSchemaSnapshot,
   QuestionnaireStatus,
-  QuestionnaireType,
 } from './lib/questionnaire.types';
 import { RolesGuard } from 'src/security/guards/roles.guard';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
@@ -709,10 +708,16 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
     sections: [],
   };
 
+  const mockTypeEntity = {
+    id: 'type-1',
+    name: 'Faculty In-Classroom',
+    code: 'FACULTY_IN_CLASSROOM',
+  };
+
   const mockQuestionnaire = {
     id: 'q-1',
     title: 'Test Questionnaire',
-    type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+    type: mockTypeEntity,
     status: QuestionnaireStatus.DRAFT,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -790,13 +795,13 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
 
     const result = await controller.createQuestionnaire({
       title: 'Test Questionnaire',
-      type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      typeId: 'type-1',
     });
 
     expect(result).toEqual({
       id: 'q-1',
       title: 'Test Questionnaire',
-      type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      type: mockTypeEntity,
       status: QuestionnaireStatus.DRAFT,
     });
     expect(result).not.toHaveProperty('createdAt');
@@ -815,7 +820,7 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
       id: 'v-1',
       questionnaireId: 'q-1',
       questionnaireTitle: 'Test Questionnaire',
-      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      questionnaireType: mockTypeEntity,
       versionNumber: 1,
       status: QuestionnaireStatus.DRAFT,
       isActive: false,
@@ -845,7 +850,7 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
       id: 'v-1',
       questionnaireId: 'q-1',
       questionnaireTitle: 'Test Questionnaire',
-      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      questionnaireType: mockTypeEntity,
       versionNumber: 1,
       status: QuestionnaireStatus.ACTIVE,
       isActive: true,
@@ -874,7 +879,7 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
       id: 'v-1',
       questionnaireId: 'q-1',
       questionnaireTitle: 'Test Questionnaire',
-      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      questionnaireType: mockTypeEntity,
       versionNumber: 1,
       status: QuestionnaireStatus.DEPRECATED,
       isActive: false,

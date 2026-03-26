@@ -1,13 +1,20 @@
-import { Entity, Property, OneToMany, Collection, Enum } from '@mikro-orm/core';
+import {
+  Entity,
+  Property,
+  OneToMany,
+  Collection,
+  Enum,
+  ManyToOne,
+  Unique,
+} from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { QuestionnaireRepository } from '../repositories/questionnaire.repository';
-import {
-  QuestionnaireStatus,
-  QuestionnaireType,
-} from '../modules/questionnaires/lib/questionnaire.types';
+import { QuestionnaireStatus } from '../modules/questionnaires/lib/questionnaire.types';
 import { QuestionnaireVersion } from './questionnaire-version.entity';
+import { QuestionnaireType } from './questionnaire-type.entity';
 
 @Entity({ repository: () => QuestionnaireRepository })
+@Unique({ properties: ['type'] })
 export class Questionnaire extends CustomBaseEntity {
   @Property()
   title!: string;
@@ -15,7 +22,7 @@ export class Questionnaire extends CustomBaseEntity {
   @Enum(() => QuestionnaireStatus)
   status: QuestionnaireStatus = QuestionnaireStatus.DRAFT;
 
-  @Enum(() => QuestionnaireType)
+  @ManyToOne(() => QuestionnaireType)
   type!: QuestionnaireType;
 
   @OneToMany(() => QuestionnaireVersion, (v) => v.questionnaire)

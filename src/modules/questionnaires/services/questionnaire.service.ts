@@ -17,6 +17,7 @@ import {
   QuestionnaireSubmission,
   QuestionnaireAnswer,
   QuestionnaireDraft,
+  QuestionnaireType,
   User,
   Semester,
   Course,
@@ -33,7 +34,6 @@ import {
   QuestionnaireSchemaSnapshot,
   RespondentRole,
   SectionNode,
-  QuestionnaireType,
   QuestionNode,
   EnrollmentRole,
 } from '../lib/questionnaire.types';
@@ -59,6 +59,8 @@ export class QuestionnaireService {
   constructor(
     @InjectRepository(Questionnaire)
     private readonly questionnaireRepo: EntityRepository<Questionnaire>,
+    @InjectRepository(QuestionnaireType)
+    private readonly typeRepo: EntityRepository<QuestionnaireType>,
     @InjectRepository(QuestionnaireVersion)
     private readonly versionRepo: EntityRepository<QuestionnaireVersion>,
     @InjectRepository(QuestionnaireSubmission)
@@ -80,19 +82,29 @@ export class QuestionnaireService {
       CacheNamespace.QUESTIONNAIRE_TYPES,
       'all',
       async () => {
-        const questionnaires = await this.questionnaireRepo.findAll();
+        const types = await this.typeRepo.findAll({
+          orderBy: { code: 'ASC' },
+        });
+
+        const questionnaires = await this.questionnaireRepo.findAll({
+          populate: ['type'],
+        });
 
         const questionnaireMap = new Map(
-          questionnaires.map((q) => [q.type, q]),
+          questionnaires.map((q) => [q.type.id, q]),
         );
 
-        return Object.values(QuestionnaireType).map((type) => {
-          const questionnaire = questionnaireMap.get(type);
+        return types.map((type) => {
+          const questionnaire = questionnaireMap.get(type.id);
           return {
-            type,
+            id: type.id,
+            name: type.name,
+            code: type.code,
+            description: type.description ?? null,
+            isSystem: type.isSystem,
             questionnaireId: questionnaire?.id ?? null,
-            title: questionnaire?.title ?? null,
-            status: questionnaire?.status ?? null,
+            questionnaireTitle: questionnaire?.title ?? null,
+            questionnaireStatus: questionnaire?.status ?? null,
           };
         });
       },
@@ -101,23 +113,33 @@ export class QuestionnaireService {
   }
 
   async getVersionsByType(
-    type: QuestionnaireType,
+    typeId: string,
   ): Promise<QuestionnaireVersionsResponse> {
-    if (!Object.values(QuestionnaireType).includes(type)) {
-      throw new NotFoundException(`Questionnaire type ${type} not found.`);
+    const typeEntity = await this.typeRepo.findOne({ id: typeId });
+    if (!typeEntity) {
+      throw new NotFoundException(
+        `Questionnaire type with id '${typeId}' not found.`,
+      );
     }
 
     return this.cacheService.wrap(
       CacheNamespace.QUESTIONNAIRE_VERSIONS,
-      type,
+      typeId,
       async () => {
-        const questionnaire = await this.questionnaireRepo.findOne({ type });
+        const questionnaire = await this.questionnaireRepo.findOne(
+          { type: typeEntity },
+          { populate: ['type'] },
+        );
 
         if (!questionnaire) {
           return {
             questionnaireId: null,
             questionnaireTitle: null,
-            type,
+            type: {
+              id: typeEntity.id,
+              name: typeEntity.name,
+              code: typeEntity.code,
+            },
             versions: [],
           };
         }
@@ -140,7 +162,11 @@ export class QuestionnaireService {
         return {
           questionnaireId: questionnaire.id,
           questionnaireTitle: questionnaire.title,
-          type: questionnaire.type,
+          type: {
+            id: questionnaire.type.id,
+            name: questionnaire.type.name,
+            code: questionnaire.type.code,
+          },
           versions: versions.map((v) => ({
             id: v.id,
             versionNumber: v.versionNumber,
@@ -155,10 +181,26 @@ export class QuestionnaireService {
     );
   }
 
-  async createQuestionnaire(data: { title: string; type: QuestionnaireType }) {
+  async createQuestionnaire(data: { title: string; typeId: string }) {
+    const typeEntity = await this.typeRepo.findOne({ id: data.typeId });
+    if (!typeEntity) {
+      throw new NotFoundException(
+        `Questionnaire type with id '${data.typeId}' not found.`,
+      );
+    }
+
+    const existing = await this.questionnaireRepo.findOne({
+      type: typeEntity,
+    });
+    if (existing) {
+      throw new ConflictException(
+        'A questionnaire already exists for this type.',
+      );
+    }
+
     const questionnaire = this.questionnaireRepo.create({
       title: data.title,
-      type: data.type,
+      type: typeEntity,
       status: QuestionnaireStatus.DRAFT,
     });
     this.em.persist(questionnaire);
@@ -173,7 +215,10 @@ export class QuestionnaireService {
     questionnaireId: string,
     schema: QuestionnaireSchemaSnapshot,
   ) {
-    const questionnaire = await this.questionnaireRepo.findOne(questionnaireId);
+    const questionnaire = await this.questionnaireRepo.findOne(
+      questionnaireId,
+      { populate: ['type'] },
+    );
 
     if (!questionnaire) {
       throw new NotFoundException(
@@ -219,7 +264,7 @@ export class QuestionnaireService {
 
   async PublishVersion(versionId: string) {
     const version = await this.versionRepo.findOne(versionId, {
-      populate: ['questionnaire'],
+      populate: ['questionnaire.type'],
     });
 
     if (!version) {
@@ -260,7 +305,7 @@ export class QuestionnaireService {
 
   async DeprecateVersion(versionId: string) {
     const version = await this.versionRepo.findOne(versionId, {
-      populate: ['questionnaire'],
+      populate: ['questionnaire.type'],
     });
 
     if (!version) {
@@ -299,7 +344,7 @@ export class QuestionnaireService {
 
   async GetVersionById(versionId: string): Promise<QuestionnaireVersion> {
     const version = await this.versionRepo.findOne(versionId, {
-      populate: ['questionnaire'],
+      populate: ['questionnaire.type'],
     });
 
     if (!version) {
@@ -316,7 +361,7 @@ export class QuestionnaireService {
     data: { schema: QuestionnaireSchemaSnapshot; title?: string },
   ): Promise<QuestionnaireVersion> {
     const version = await this.versionRepo.findOne(versionId, {
-      populate: ['questionnaire'],
+      populate: ['questionnaire.type'],
     });
 
     if (!version) {
@@ -355,7 +400,7 @@ export class QuestionnaireService {
 
     const activeVersion = await this.versionRepo.findOne(
       { questionnaire, isActive: true },
-      { populate: ['questionnaire'] },
+      { populate: ['questionnaire.type'] },
     );
 
     return activeVersion;
@@ -374,7 +419,7 @@ export class QuestionnaireService {
     options?: { skipAnalysis?: boolean },
   ) {
     const version = await this.versionRepo.findOne(data.versionId, {
-      populate: ['questionnaire'],
+      populate: ['questionnaire.type'],
     });
 
     if (!version) {

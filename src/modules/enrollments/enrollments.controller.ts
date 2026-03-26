@@ -4,6 +4,7 @@ import { UseJwtGuard } from 'src/security/decorators';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { MyEnrollmentsResponseDto } from './dto/responses/my-enrollments.response.dto';
+import { MyEnrollmentsQueryDto } from './dto/requests/my-enrollments-query.dto';
 
 @ApiTags('enrollments')
 @Controller('enrollments')
@@ -15,12 +16,8 @@ export class EnrollmentsController {
   @Get('me')
   @ApiOperation({ summary: "Get current user's enrolled courses" })
   async getMyEnrollments(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 10,
+    @Query() query: MyEnrollmentsQueryDto,
   ): Promise<MyEnrollmentsResponseDto> {
-    return await this.enrollmentsService.getMyEnrollments(
-      Number(page),
-      Number(limit),
-    );
+    return await this.enrollmentsService.getMyEnrollments(query);
   }
 }

@@ -37,6 +37,8 @@ import { QuestionnaireVersionDetailResponse } from './dto/responses/questionnair
 import { DraftResponse } from './dto/responses/draft-response.dto';
 import { CheckSubmissionQuery } from './dto/requests/check-submission-query.dto';
 import { CheckSubmissionResponse } from './dto/responses/check-submission-response.dto';
+import { SubmitQuestionnaireResponse } from './dto/responses/submit-questionnaire-response.dto';
+import { QuestionnaireResponseDto } from './dto/responses/questionnaire-response.dto';
 import { IngestionResultDto } from './ingestion/dto/ingestion-result.dto';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
@@ -90,20 +92,37 @@ export class QuestionnaireController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new questionnaire' })
-  async createQuestionnaire(@Body() data: CreateQuestionnaireRequest) {
-    return this.questionnaireService.createQuestionnaire(data);
+  @ApiResponse({
+    status: 201,
+    description: 'Questionnaire created successfully',
+    type: QuestionnaireResponseDto,
+  })
+  async createQuestionnaire(
+    @Body() data: CreateQuestionnaireRequest,
+  ): Promise<QuestionnaireResponseDto> {
+    const questionnaire =
+      await this.questionnaireService.createQuestionnaire(data);
+    return QuestionnaireResponseDto.Map(questionnaire);
   }
 
   @Post(':id/versions')
   @ApiOperation({ summary: 'Create a new version for a questionnaire' })
-  @ApiResponse({ status: 201, description: 'Version created successfully' })
+  @ApiResponse({
+    status: 201,
+    description: 'Version created successfully',
+    type: QuestionnaireVersionDetailResponse,
+  })
   @ApiResponse({ status: 404, description: 'Questionnaire not found' })
   @ApiResponse({ status: 409, description: 'Draft version already exists' })
   async createVersion(
     @Param('id') id: string,
     @Body() data: CreateVersionRequest,
-  ) {
-    return this.questionnaireService.CreateVersion(id, data.schema);
+  ): Promise<QuestionnaireVersionDetailResponse> {
+    const version = await this.questionnaireService.CreateVersion(
+      id,
+      data.schema,
+    );
+    return QuestionnaireVersionDetailResponse.Map(version);
   }
 
   @Get(':id/latest-active-version')
@@ -124,23 +143,37 @@ export class QuestionnaireController {
 
   @Patch('versions/:versionId/publish')
   @ApiOperation({ summary: 'Publish a questionnaire version' })
-  @ApiResponse({ status: 200, description: 'Version published successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Version published successfully',
+    type: QuestionnaireVersionDetailResponse,
+  })
   @ApiResponse({
     status: 400,
     description: 'Version already published or invalid schema',
   })
   @ApiResponse({ status: 404, description: 'Version not found' })
-  async publishVersion(@Param('versionId') versionId: string) {
-    return this.questionnaireService.PublishVersion(versionId);
+  async publishVersion(
+    @Param('versionId') versionId: string,
+  ): Promise<QuestionnaireVersionDetailResponse> {
+    const version = await this.questionnaireService.PublishVersion(versionId);
+    return QuestionnaireVersionDetailResponse.Map(version);
   }
 
   @Patch('versions/:versionId/deprecate')
   @ApiOperation({ summary: 'Deprecate a questionnaire version' })
-  @ApiResponse({ status: 200, description: 'Version deprecated successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Version deprecated successfully',
+    type: QuestionnaireVersionDetailResponse,
+  })
   @ApiResponse({ status: 400, description: 'Version already deprecated' })
   @ApiResponse({ status: 404, description: 'Version not found' })
-  async deprecateVersion(@Param('versionId') versionId: string) {
-    return this.questionnaireService.DeprecateVersion(versionId);
+  async deprecateVersion(
+    @Param('versionId') versionId: string,
+  ): Promise<QuestionnaireVersionDetailResponse> {
+    const version = await this.questionnaireService.DeprecateVersion(versionId);
+    return QuestionnaireVersionDetailResponse.Map(version);
   }
 
   @Get('versions/:versionId')
@@ -200,7 +233,9 @@ export class QuestionnaireController {
   @Post('submissions')
   @UseJwtGuard()
   @ApiOperation({ summary: 'Submit a completed questionnaire' })
-  async submitQuestionnaire(@Body() data: SubmitQuestionnaireRequest) {
+  async submitQuestionnaire(
+    @Body() data: SubmitQuestionnaireRequest,
+  ): Promise<SubmitQuestionnaireResponse> {
     return this.questionnaireService.submitQuestionnaire(data);
   }
 

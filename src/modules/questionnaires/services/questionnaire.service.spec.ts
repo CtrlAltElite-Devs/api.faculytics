@@ -20,6 +20,7 @@ import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { CacheService } from '../../common/cache/cache.service';
+import { CacheNamespace } from '../../common/cache/cache-namespaces';
 import { AnalysisService } from '../../analysis/analysis.service';
 import { CurrentUserService } from '../../common/cls/current-user.service';
 import {
@@ -43,6 +44,10 @@ describe('QuestionnaireService', () => {
   let versionRepo: jest.Mocked<EntityRepository<QuestionnaireVersion>>;
   let questionnaireRepo: jest.Mocked<EntityRepository<Questionnaire>>;
   let analysisService: { EnqueueJob: jest.Mock };
+  let cacheService: {
+    invalidateNamespace: jest.Mock;
+    invalidateNamespaces: jest.Mock;
+  };
 
   const RESPONDENT_ID = 'r1';
   const FACULTY_ID = 'f1';
@@ -157,6 +162,7 @@ describe('QuestionnaireService', () => {
     versionRepo = module.get(getRepositoryToken(QuestionnaireVersion));
     questionnaireRepo = module.get(getRepositoryToken(Questionnaire));
     analysisService = module.get(AnalysisService);
+    cacheService = module.get(CacheService);
   });
 
   it('should be defined', () => {
@@ -367,7 +373,10 @@ describe('QuestionnaireService', () => {
       expect(result).toBeDefined();
       expect(em.persist).toHaveBeenCalled();
       expect(em.flush).toHaveBeenCalled();
-      expect(result.facultyEmployeeNumberSnapshot).toBe('fac123');
+      expect(result.faculty).toBe('Faculty Name');
+      expect(cacheService.invalidateNamespace).toHaveBeenCalledWith(
+        CacheNamespace.ENROLLMENTS_ME,
+      );
     });
 
     it('should enqueue embedding job when submission has qualitative comment and worker URL is configured', async () => {

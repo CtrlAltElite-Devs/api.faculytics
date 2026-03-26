@@ -227,6 +227,16 @@ The `UserInstitutionalRole` entity gains a `source` field (`auto` | `manual`) to
 - **Cleanup:** When a manual DEAN exists at a department, any CHAIRPERSON roles at child programs are automatically removed during hydration to prevent redundant roles.
 - **Trade-off:** Deans require a one-time manual promotion by an admin. This is accepted because Deans are fewer in number and the Moodle API provides no reliable way to auto-detect the distinction.
 
+## 33. Dynamic Sync Scheduling with SyncLog Observability
+
+The `MoodleSyncScheduler` was rewritten from a static `@Cron(CronExpression.EVERY_HOUR)` decorator to a dynamic `SchedulerRegistry`-based approach, paired with a `SyncLog` audit entity.
+
+- **Dynamic scheduling:** The scheduler implements `OnModuleInit` and registers a `CronJob` via `SchedulerRegistry` at startup. The interval resolves from DB (`SystemConfig`) > env var (`MOODLE_SYNC_INTERVAL_MINUTES`) > per-environment default (dev: 60 min, staging: 360 min, production: 180 min). Super admins can update the interval at runtime via `PUT /moodle/sync/schedule`, which persists to `SystemConfig` and replaces the running cron job.
+- **Minimum interval:** 30 minutes, enforced at the DTO validation layer (`@Min(30)`), the Zod env schema (`.min(30)`), and the DB resolution path (values below 30 are ignored).
+- **SyncLog entity:** Does not extend `CustomBaseEntity` (no `deletedAt` — audit records are never soft-deleted). Stores per-phase `SyncPhaseResult` as JSONB (fetched, inserted, updated, deactivated, errors, durationMs). Insert vs update counts use a count-before/after strategy — one extra `COUNT` query per phase, no per-record overhead.
+- **Soft-delete filter bypass:** Since `SyncLog` has no `deletedAt` column, MikroORM's global `softDelete` filter would fail at query time. Queries must use `filters: { softDelete: false }`. The `@Filter` decorator approach (`cond: {}, default: false`) was found to be insufficient at runtime.
+- **Trade-off:** Admin schedule changes don't survive process restarts unless persisted to the database (which they are, via `SystemConfig`). The scheduler reads from DB on init, so restarts pick up the latest admin-configured interval.
+
 ## 30. Semester Code Parsing for Display Labels
 
 The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.

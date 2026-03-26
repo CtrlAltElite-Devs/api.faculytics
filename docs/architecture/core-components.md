@@ -139,12 +139,12 @@ Priority ranges: `0-99` core auth, `100-199` external providers, `200+` fallback
 
 Institutional sync (categories, courses, enrollments) uses a BullMQ-based composite job instead of individual cron jobs. See [Institutional Sync Workflow](../workflows/institutional-sync.md) for the full flow.
 
-| Component              | Purpose                                                                             |
-| ---------------------- | ----------------------------------------------------------------------------------- |
-| `MoodleStartupService` | Blocking startup orchestrator — categories always, courses/enrollments gated by env |
-| `MoodleSyncProcessor`  | BullMQ processor — runs categories → courses → enrollments in sequence              |
-| `MoodleSyncScheduler`  | Hourly `@Cron` that enqueues a composite sync job (fixed `jobId` for deduplication) |
-| `MoodleSyncController` | `POST /moodle/sync` (manual trigger), `GET /moodle/sync/status` (queue state)       |
+| Component              | Purpose                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `MoodleStartupService` | Blocking startup orchestrator — categories always, courses/enrollments gated by env                          |
+| `MoodleSyncProcessor`  | BullMQ processor — runs categories → courses → enrollments; creates/updates `SyncLog` with per-phase metrics |
+| `MoodleSyncScheduler`  | Dynamic `SchedulerRegistry`-based cron (env-aware, admin-configurable via `SystemConfig`)                    |
+| `MoodleSyncController` | Sync trigger, status, paginated history, schedule get/update — all SUPER_ADMIN only                          |
 
 Phase dependency: if categories fail, courses and enrollments are skipped. If courses fail, enrollments are skipped.
 

@@ -6,4 +6,7 @@ export class CheckSubmissionResponse {
 
   @ApiPropertyOptional()
   submittedAt?: Date;
+
+  @ApiPropertyOptional()
+  archived?: boolean;
 }

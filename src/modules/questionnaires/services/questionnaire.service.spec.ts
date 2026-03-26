@@ -187,6 +187,10 @@ describe('QuestionnaireService', () => {
     const mockVersion = {
       id: 'v1',
       isActive: true,
+      questionnaire: {
+        status: QuestionnaireStatus.ACTIVE,
+        type: { code: 'T1' },
+      },
       schemaSnapshot: {
         meta: { maxScore: 5 },
         sections: [
@@ -1127,6 +1131,167 @@ describe('QuestionnaireService', () => {
         { submission: { $in: ids } },
       ]);
       expect(calls[4]).toEqual([expect.anything(), { id: { $in: ids } }]);
+    });
+  });
+
+  describe('UpdateTitle', () => {
+    const mockQuestionnaire = {
+      id: 'q1',
+      title: 'Old Title',
+      status: QuestionnaireStatus.ACTIVE,
+      type: { id: 't1', name: 'Type 1', code: 'T1' },
+    };
+
+    it('should throw NotFoundException if questionnaire not found', async () => {
+      questionnaireRepo.findOne.mockResolvedValue(null);
+      await expect(service.UpdateTitle('q1', 'New Title')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should update title and invalidate caches', async () => {
+      questionnaireRepo.findOne.mockResolvedValue({
+        ...mockQuestionnaire,
+      } as any);
+
+      const result = await service.UpdateTitle('q1', 'New Title');
+
+      expect(result.title).toBe('New Title');
+      expect(em.flush).toHaveBeenCalled();
+      expect(cacheService.invalidateNamespaces).toHaveBeenCalledWith(
+        CacheNamespace.QUESTIONNAIRE_TYPES,
+        CacheNamespace.QUESTIONNAIRE_VERSIONS,
+      );
+    });
+  });
+
+  describe('ArchiveQuestionnaire', () => {
+    const mockQuestionnaire = {
+      id: 'q1',
+      title: 'Test',
+      status: QuestionnaireStatus.ACTIVE,
+      type: { id: 't1', name: 'Type 1', code: 'T1' },
+    };
+
+    it('should throw NotFoundException if questionnaire not found', async () => {
+      questionnaireRepo.findOne.mockResolvedValue(null);
+      await expect(service.ArchiveQuestionnaire('q1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw BadRequestException if already archived', async () => {
+      questionnaireRepo.findOne.mockResolvedValue({
+        ...mockQuestionnaire,
+        status: QuestionnaireStatus.ARCHIVED,
+      } as any);
+      await expect(service.ArchiveQuestionnaire('q1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should set status to ARCHIVED and invalidate caches', async () => {
+      const questionnaire = { ...mockQuestionnaire };
+      questionnaireRepo.findOne.mockResolvedValue(questionnaire as any);
+
+      const result = await service.ArchiveQuestionnaire('q1');
+
+      expect(result.status).toBe(QuestionnaireStatus.ARCHIVED);
+      expect(em.flush).toHaveBeenCalled();
+      expect(cacheService.invalidateNamespaces).toHaveBeenCalledWith(
+        CacheNamespace.QUESTIONNAIRE_TYPES,
+        CacheNamespace.QUESTIONNAIRE_VERSIONS,
+      );
+    });
+  });
+
+  describe('archive guards', () => {
+    it('submitQuestionnaire should reject archived questionnaire', async () => {
+      versionRepo.findOne.mockResolvedValue({
+        id: 'v1',
+        isActive: true,
+        questionnaire: {
+          status: QuestionnaireStatus.ARCHIVED,
+          type: { code: 'T1' },
+        },
+        schemaSnapshot: { meta: { maxScore: 5 }, sections: [] },
+      } as any);
+
+      await expect(
+        service.submitQuestionnaire({
+          versionId: 'v1',
+          respondentId: RESPONDENT_ID,
+          facultyId: FACULTY_ID,
+          semesterId: SEMESTER_ID,
+          answers: {},
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('CheckSubmission should return archived true for archived questionnaire', async () => {
+      versionRepo.findOne.mockResolvedValue({
+        id: 'v1',
+        questionnaire: { status: QuestionnaireStatus.ARCHIVED },
+      } as any);
+
+      const result = await service.CheckSubmission({
+        versionId: 'v1',
+        facultyId: FACULTY_ID,
+        semesterId: SEMESTER_ID,
+      });
+
+      expect(result).toEqual({ submitted: false, archived: true });
+    });
+
+    it('CreateVersion should reject archived questionnaire', async () => {
+      questionnaireRepo.findOne.mockResolvedValue({
+        id: 'q1',
+        status: QuestionnaireStatus.ARCHIVED,
+        type: { id: 't1' },
+      } as any);
+
+      await expect(
+        service.CreateVersion('q1', {
+          meta: {
+            questionnaireType: 'T1',
+            scoringModel: 'SECTION_WEIGHTED',
+            version: 1,
+            maxScore: 5,
+          },
+          sections: [],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('PublishVersion should reject archived questionnaire', async () => {
+      versionRepo.findOne.mockResolvedValue({
+        id: 'v1',
+        publishedAt: null,
+        questionnaire: {
+          status: QuestionnaireStatus.ARCHIVED,
+          type: { code: 'T1' },
+        },
+        schemaSnapshot: { meta: { maxScore: 5 }, sections: [] },
+      } as any);
+
+      await expect(service.PublishVersion('v1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('DeprecateVersion should reject archived questionnaire', async () => {
+      versionRepo.findOne.mockResolvedValue({
+        id: 'v1',
+        status: QuestionnaireStatus.ACTIVE,
+        questionnaire: {
+          status: QuestionnaireStatus.ARCHIVED,
+          type: { code: 'T1' },
+        },
+      } as any);
+
+      await expect(service.DeprecateVersion('v1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });

@@ -42,6 +42,8 @@ describe('QuestionnaireController - checkSubmission', () => {
             UpdateDraftVersion: jest.fn(),
             submitQuestionnaire: jest.fn(),
             CheckSubmission: jest.fn(),
+            UpdateTitle: jest.fn(),
+            ArchiveQuestionnaire: jest.fn(),
             SaveOrUpdateDraft: jest.fn(),
             GetDraft: jest.fn(),
             ListMyDrafts: jest.fn(),
@@ -757,6 +759,8 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
             UpdateDraftVersion: jest.fn(),
             submitQuestionnaire: jest.fn(),
             CheckSubmission: jest.fn(),
+            UpdateTitle: jest.fn(),
+            ArchiveQuestionnaire: jest.fn(),
             SaveOrUpdateDraft: jest.fn(),
             GetDraft: jest.fn(),
             ListMyDrafts: jest.fn(),
@@ -890,5 +894,64 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
     });
     expect(result).not.toHaveProperty('deletedAt');
     expect(result).not.toHaveProperty('questionnaire');
+  });
+
+  it('updateTitle should return QuestionnaireResponseDto', async () => {
+    const mockQuestionnaire = {
+      id: 'q-1',
+      title: 'Updated Title',
+      status: QuestionnaireStatus.ACTIVE,
+      type: mockTypeEntity,
+    };
+    questionnaireService.UpdateTitle.mockResolvedValue(
+      mockQuestionnaire as any,
+    );
+
+    const result = await controller.updateTitle('q-1', {
+      title: 'Updated Title',
+    });
+
+    expect(result).toEqual({
+      id: 'q-1',
+      title: 'Updated Title',
+      type: {
+        id: mockTypeEntity.id,
+        name: mockTypeEntity.name,
+        code: mockTypeEntity.code,
+      },
+      status: QuestionnaireStatus.ACTIVE,
+    });
+    expect(questionnaireService.UpdateTitle).toHaveBeenCalledWith(
+      'q-1',
+      'Updated Title',
+    );
+  });
+
+  it('archiveQuestionnaire should return QuestionnaireResponseDto', async () => {
+    const mockQuestionnaire = {
+      id: 'q-1',
+      title: 'Test Questionnaire',
+      status: QuestionnaireStatus.ARCHIVED,
+      type: mockTypeEntity,
+    };
+    questionnaireService.ArchiveQuestionnaire.mockResolvedValue(
+      mockQuestionnaire as any,
+    );
+
+    const result = await controller.archiveQuestionnaire('q-1');
+
+    expect(result).toEqual({
+      id: 'q-1',
+      title: 'Test Questionnaire',
+      type: {
+        id: mockTypeEntity.id,
+        name: mockTypeEntity.name,
+        code: mockTypeEntity.code,
+      },
+      status: QuestionnaireStatus.ARCHIVED,
+    });
+    expect(questionnaireService.ArchiveQuestionnaire).toHaveBeenCalledWith(
+      'q-1',
+    );
   });
 });

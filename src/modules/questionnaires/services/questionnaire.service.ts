@@ -38,6 +38,7 @@ import {
   EnrollmentRole,
 } from '../lib/questionnaire.types';
 import { QuestionnaireTypeResponse } from '../dto/responses/questionnaire-type-response.dto';
+import { SubmitQuestionnaireResponse } from '../dto/responses/submit-questionnaire-response.dto';
 import { QuestionnaireVersionsResponse } from '../dto/responses/questionnaire-version-response.dto';
 import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { ScoringService } from './scoring.service';
@@ -615,6 +616,8 @@ export class QuestionnaireService {
       throw e;
     }
 
+    await this.cacheService.invalidateNamespace(CacheNamespace.ENROLLMENTS_ME);
+
     // Fire-and-forget embedding dispatch (uses cleaned text for alignment with topic modeling)
     if (
       !options?.skipAnalysis &&
@@ -638,7 +641,7 @@ export class QuestionnaireService {
       }
     }
 
-    return submission;
+    return SubmitQuestionnaireResponse.Map(submission);
   }
 
   // F6: Iterative traversal to avoid stack overflow

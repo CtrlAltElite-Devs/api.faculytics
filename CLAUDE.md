@@ -72,10 +72,15 @@ The app uses a split between **Infrastructure** and **Application** modules (`sr
 - Extend `BaseJob` class which provides startup execution and graceful shutdown
 - Jobs register results in `StartupJobRegistry` for boot summary
 - **Active jobs:**
-  - `CategorySyncJob`: Syncs Moodle categories to local hierarchy
-  - `CourseSyncJob`: Syncs Moodle courses
-  - `EnrollmentSyncJob`: Syncs user-course enrollments
   - `RefreshTokenCleanupJob`: Purges expired refresh tokens every 12 hours (7-day retention)
+
+**Moodle Sync Scheduling** (`src/modules/moodle/schedulers/`):
+
+- Dynamic cron via `SchedulerRegistry` (no static `@Cron()` decorator)
+- Interval resolves: DB (`SystemConfig`) > env var (`MOODLE_SYNC_INTERVAL_MINUTES`) > per-env default
+- Admin-configurable at runtime via `PUT /moodle/sync/schedule` (min 30 minutes)
+- `SyncLog` entity tracks every sync with per-phase metrics (fetched, inserted, updated, deactivated)
+- `SyncLog` does NOT extend `CustomBaseEntity` — queries must use `filters: { softDelete: false }`
 
 ### Analysis Job Queue
 
@@ -164,3 +169,4 @@ Optional:
 - `BULLMQ_HTTP_TIMEOUT_MS`: HTTP request timeout in ms (default: `90000`)
 - `BULLMQ_SENTIMENT_CONCURRENCY`: Sentiment processor concurrency (default: `3`)
 - `SENTIMENT_WORKER_URL`: RunPod/mock worker URL for sentiment analysis
+- `MOODLE_SYNC_INTERVAL_MINUTES`: Sync schedule interval in minutes (min `30`; defaults per env: dev=60, staging=360, prod=180)

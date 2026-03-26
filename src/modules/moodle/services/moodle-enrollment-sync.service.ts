@@ -9,6 +9,7 @@ import { User } from 'src/entities/user.entity';
 import { MoodleEnrolledUser } from '../lib/moodle.types';
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
+import { SyncPhaseResult } from '../lib/sync-result.types';
 
 @Injectable()
 export class EnrollmentSyncService {
@@ -20,10 +21,15 @@ export class EnrollmentSyncService {
     private readonly unitOfWork: UnitOfWork,
   ) {}
 
-  async SyncAllCourses() {
+  async SyncAllCourses(): Promise<SyncPhaseResult> {
+    const startTime = Date.now();
     const em = this.em.fork();
+    const enrollmentCountBefore = await em.count(Enrollment);
     const courses = await em.find(Course, { isVisible: true });
     const limit = pLimit(env.MOODLE_SYNC_CONCURRENCY);
+
+    let totalFetched = 0;
+    let fetchErrors = 0;
 
     // Phase 1: Concurrent HTTP fetch
     const results = await Promise.all(
@@ -35,8 +41,10 @@ export class EnrollmentSyncService {
                 token: env.MOODLE_MASTER_KEY,
                 courseId: course.moodleCourseId,
               });
+            totalFetched += remoteUsers.length;
             return { course, remoteUsers };
           } catch (error: unknown) {
+            fetchErrors++;
             const message =
               error instanceof Error ? error.message : String(error);
             this.logger.error(
@@ -56,16 +64,38 @@ export class EnrollmentSyncService {
     await this.syncAllUsers(fetched);
 
     // Phase 3: Sequential per-course enrollment upsert
+    let enrollmentUpserts = 0;
+    let deactivated = 0;
+    let enrollmentErrors = 0;
+
     for (const { course, remoteUsers } of fetched) {
       try {
-        await this.syncCourseEnrollments(course, remoteUsers);
+        const metrics = await this.syncCourseEnrollments(course, remoteUsers);
+        enrollmentUpserts += metrics.upserted;
+        deactivated += metrics.deactivated;
       } catch (error: unknown) {
+        enrollmentErrors++;
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(
           `Failed to sync enrollments for course ${course.moodleCourseId}: ${message}`,
         );
       }
     }
+
+    const inserted = Math.max(0, enrollmentUpserts - enrollmentCountBefore);
+
+    return {
+      status:
+        fetchErrors + enrollmentErrors > 0 && enrollmentUpserts === 0
+          ? 'failed'
+          : 'success',
+      durationMs: Date.now() - startTime,
+      fetched: totalFetched,
+      inserted,
+      updated: enrollmentUpserts - inserted,
+      deactivated,
+      errors: fetchErrors + enrollmentErrors,
+    };
   }
 
   private async syncAllUsers(
@@ -153,7 +183,10 @@ export class EnrollmentSyncService {
   private async syncCourseEnrollments(
     course: Course,
     remoteUsers: MoodleEnrolledUser[],
-  ) {
+  ): Promise<{ upserted: number; deactivated: number }> {
+    let upserted = 0;
+    let deactivated = 0;
+
     await this.unitOfWork.runInTransaction(async (tx) => {
       const existing = await tx.find(
         Enrollment,
@@ -221,6 +254,7 @@ export class EnrollmentSyncService {
             'updatedAt',
           ],
         });
+        upserted++;
       }
 
       // Soft deactivate users missing from remote
@@ -231,9 +265,12 @@ export class EnrollmentSyncService {
         ) {
           enrollment.isActive = false;
           tx.persist(enrollment);
+          deactivated++;
         }
       }
     });
+
+    return { upserted, deactivated };
   }
 
   private async upsertSectionsFromGroups(

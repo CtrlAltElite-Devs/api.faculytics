@@ -1,4 +1,4 @@
-import { Entity, Property, Unique, Index } from '@mikro-orm/core';
+import { Entity, Property, Index } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { QuestionnaireTypeRepository } from '../repositories/questionnaire-type.repository';
 
@@ -8,7 +8,6 @@ export class QuestionnaireType extends CustomBaseEntity {
   name!: string;
 
   @Property()
-  @Unique()
   @Index()
   code!: string;
 

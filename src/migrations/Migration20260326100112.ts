@@ -5,7 +5,7 @@ export class Migration20260326100112 extends Migration {
   override async up(): Promise<void> {
     this.addSql(`create table "questionnaire_type" ("id" varchar(255) not null, "created_at" timestamptz not null, "updated_at" timestamptz not null, "deleted_at" varchar(255) null, "name" varchar(255) not null, "code" varchar(255) not null, "description" varchar(255) null, "is_system" boolean not null default false, constraint "questionnaire_type_pkey" primary key ("id"));`);
     this.addSql(`create index "questionnaire_type_code_index" on "questionnaire_type" ("code");`);
-    this.addSql(`alter table "questionnaire_type" add constraint "questionnaire_type_code_unique" unique ("code");`);
+    this.addSql(`create unique index "questionnaire_type_code_unique" on "questionnaire_type" ("code") where "deleted_at" is null;`);
 
     this.addSql(`alter table "questionnaire" drop column "type";`);
 

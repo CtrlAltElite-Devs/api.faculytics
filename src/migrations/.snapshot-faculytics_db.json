@@ -377,16 +377,6 @@
           "unique": false
         },
         {
-          "columnNames": [
-            "code"
-          ],
-          "composite": false,
-          "keyName": "questionnaire_type_code_unique",
-          "constraint": true,
-          "primary": false,
-          "unique": true
-        },
-        {
           "keyName": "questionnaire_type_pkey",
           "columnNames": [
             "id"

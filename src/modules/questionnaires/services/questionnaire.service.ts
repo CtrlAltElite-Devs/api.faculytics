@@ -211,6 +211,28 @@ export class QuestionnaireService {
     return questionnaire;
   }
 
+  async UpdateTitle(questionnaireId: string, title: string) {
+    const questionnaire = await this.questionnaireRepo.findOne(
+      questionnaireId,
+      { populate: ['type'] },
+    );
+
+    if (!questionnaire) {
+      throw new NotFoundException(
+        `Questionnaire with ID ${questionnaireId} not found.`,
+      );
+    }
+
+    questionnaire.title = title;
+    await this.em.flush();
+    await this.cacheService.invalidateNamespaces(
+      CacheNamespace.QUESTIONNAIRE_TYPES,
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+    );
+
+    return questionnaire;
+  }
+
   async CreateVersion(
     questionnaireId: string,
     schema: QuestionnaireSchemaSnapshot,
@@ -223,6 +245,12 @@ export class QuestionnaireService {
     if (!questionnaire) {
       throw new NotFoundException(
         `Questionnaire with ID ${questionnaireId} not found.`,
+      );
+    }
+
+    if (questionnaire.status === QuestionnaireStatus.ARCHIVED) {
+      throw new BadRequestException(
+        'Cannot create a version for an archived questionnaire.',
       );
     }
 
@@ -277,6 +305,12 @@ export class QuestionnaireService {
       throw new BadRequestException('Version is already published.');
     }
 
+    if (version.questionnaire.status === QuestionnaireStatus.ARCHIVED) {
+      throw new BadRequestException(
+        'Cannot publish a version for an archived questionnaire.',
+      );
+    }
+
     // Validate schema before publishing
     await this.validator.validate(version.schemaSnapshot);
 
@@ -318,6 +352,12 @@ export class QuestionnaireService {
       throw new BadRequestException('Version is already deprecated.');
     }
 
+    if (version.questionnaire.status === QuestionnaireStatus.ARCHIVED) {
+      throw new BadRequestException(
+        'Cannot deprecate a version for an archived questionnaire.',
+      );
+    }
+
     version.isActive = false;
     version.status = QuestionnaireStatus.DEPRECATED;
 
@@ -340,6 +380,32 @@ export class QuestionnaireService {
       CacheNamespace.QUESTIONNAIRE_VERSIONS,
     );
     return version;
+  }
+
+  async ArchiveQuestionnaire(questionnaireId: string) {
+    const questionnaire = await this.questionnaireRepo.findOne(
+      questionnaireId,
+      { populate: ['type'] },
+    );
+
+    if (!questionnaire) {
+      throw new NotFoundException(
+        `Questionnaire with ID ${questionnaireId} not found.`,
+      );
+    }
+
+    if (questionnaire.status === QuestionnaireStatus.ARCHIVED) {
+      throw new BadRequestException('Questionnaire is already archived.');
+    }
+
+    questionnaire.status = QuestionnaireStatus.ARCHIVED;
+    await this.em.flush();
+    await this.cacheService.invalidateNamespaces(
+      CacheNamespace.QUESTIONNAIRE_TYPES,
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+    );
+
+    return questionnaire;
   }
 
   async GetVersionById(versionId: string): Promise<QuestionnaireVersion> {
@@ -431,6 +497,12 @@ export class QuestionnaireService {
     if (!version.isActive) {
       throw new BadRequestException(
         'Cannot submit to an inactive questionnaire version.',
+      );
+    }
+
+    if (version.questionnaire.status === QuestionnaireStatus.ARCHIVED) {
+      throw new BadRequestException(
+        'Cannot submit to an archived questionnaire.',
       );
     }
 
@@ -839,8 +911,17 @@ export class QuestionnaireService {
     facultyId: string;
     semesterId: string;
     courseId?: string;
-  }): Promise<{ submitted: boolean; submittedAt?: Date }> {
+  }): Promise<{ submitted: boolean; submittedAt?: Date; archived?: boolean }> {
     const respondentId = this.currentUserService.getOrFail().id;
+
+    const version = await this.versionRepo.findOne(query.versionId, {
+      populate: ['questionnaire'],
+    });
+
+    if (version?.questionnaire.status === QuestionnaireStatus.ARCHIVED) {
+      return { submitted: false, archived: true };
+    }
+
     const submission = await this.submissionRepo.findOne(
       {
         respondent: respondentId,

@@ -9,6 +9,7 @@ export enum QuestionnaireStatus {
   DRAFT = 'DRAFT',
   ACTIVE = 'ACTIVE',
   DEPRECATED = 'DEPRECATED',
+  ARCHIVED = 'ARCHIVED',
 }
 
 export enum RespondentRole {

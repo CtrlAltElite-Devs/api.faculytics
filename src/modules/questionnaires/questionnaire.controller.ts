@@ -27,6 +27,7 @@ import type { Response } from 'express';
 import { CreateQuestionnaireRequest } from './dto/requests/create-questionnaire-request.dto';
 import { CreateVersionRequest } from './dto/requests/create-version-request.dto';
 import { UpdateVersionRequest } from './dto/requests/update-version-request.dto';
+import { UpdateQuestionnaireTitleRequest } from './dto/requests/update-questionnaire-title-request.dto';
 import { SubmitQuestionnaireRequest } from './dto/requests/submit-questionnaire-request.dto';
 import { SaveDraftRequest } from './dto/requests/save-draft-request.dto';
 import { GetDraftRequest } from './dto/requests/get-draft-request.dto';
@@ -104,6 +105,44 @@ export class QuestionnaireController {
       title: data.title,
       typeId: data.typeId,
     });
+    return QuestionnaireResponseDto.Map(questionnaire);
+  }
+
+  @Patch(':id/archive')
+  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Archive a questionnaire' })
+  @ApiResponse({
+    status: 200,
+    description: 'Questionnaire archived successfully',
+    type: QuestionnaireResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Questionnaire already archived' })
+  @ApiResponse({ status: 404, description: 'Questionnaire not found' })
+  async archiveQuestionnaire(
+    @Param('id') id: string,
+  ): Promise<QuestionnaireResponseDto> {
+    const questionnaire =
+      await this.questionnaireService.ArchiveQuestionnaire(id);
+    return QuestionnaireResponseDto.Map(questionnaire);
+  }
+
+  @Patch(':id')
+  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Update questionnaire title' })
+  @ApiResponse({
+    status: 200,
+    description: 'Questionnaire updated successfully',
+    type: QuestionnaireResponseDto,
+  })
+  @ApiResponse({ status: 404, description: 'Questionnaire not found' })
+  async updateTitle(
+    @Param('id') id: string,
+    @Body() data: UpdateQuestionnaireTitleRequest,
+  ): Promise<QuestionnaireResponseDto> {
+    const questionnaire = await this.questionnaireService.UpdateTitle(
+      id,
+      data.title,
+    );
     return QuestionnaireResponseDto.Map(questionnaire);
   }
 

@@ -97,7 +97,7 @@ describe('EnrollmentsService', () => {
       .mockResolvedValueOnce(mockFacultyEnrollments)
       .mockResolvedValueOnce([]);
 
-    const result = await service.getMyEnrollments(1, 10);
+    const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
     expect(result.data).toHaveLength(1);
     expect(result.data[0].id).toBe('e1');
@@ -160,7 +160,7 @@ describe('EnrollmentsService', () => {
       .mockResolvedValueOnce([]) // faculty
       .mockResolvedValueOnce(mockSubmissions); // submissions
 
-    const result = await service.getMyEnrollments(1, 10);
+    const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
     expect(result.data[0].submission).toEqual({
       submitted: true,
@@ -196,7 +196,7 @@ describe('EnrollmentsService', () => {
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
     (em.find as jest.Mock).mockResolvedValue([]);
 
-    const result = await service.getMyEnrollments(1, 10);
+    const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
     expect(result.data[0].faculty).toBeNull();
   });
@@ -220,7 +220,7 @@ describe('EnrollmentsService', () => {
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
     (em.find as jest.Mock).mockResolvedValue([]);
 
-    const result = await service.getMyEnrollments(1, 10);
+    const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
     expect(result.data[0].semester).toBeNull();
   });
@@ -228,7 +228,7 @@ describe('EnrollmentsService', () => {
   it('should not query faculty or submissions when no enrollments exist', async () => {
     (em.findAndCount as jest.Mock).mockResolvedValue([[], 0]);
 
-    const result = await service.getMyEnrollments(1, 10);
+    const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
     expect(result.data).toHaveLength(0);
     // eslint-disable-next-line @typescript-eslint/unbound-method

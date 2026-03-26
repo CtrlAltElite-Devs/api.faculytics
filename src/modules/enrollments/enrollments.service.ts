@@ -5,6 +5,7 @@ import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.e
 import { CacheService } from '../common/cache/cache.service';
 import { CacheNamespace } from '../common/cache/cache-namespaces';
 import { CurrentUserService } from '../common/cls/current-user.service';
+import { MyEnrollmentsQueryDto } from './dto/requests/my-enrollments-query.dto';
 import { FacultyShortResponseDto } from './dto/responses/faculty-short.response.dto';
 import { MyEnrollmentsResponseDto } from './dto/responses/my-enrollments.response.dto';
 
@@ -17,9 +18,9 @@ export class EnrollmentsService {
   ) {}
 
   async getMyEnrollments(
-    page: number,
-    limit: number,
+    query: MyEnrollmentsQueryDto,
   ): Promise<MyEnrollmentsResponseDto> {
+    const { page = 1, limit = 10 } = query;
     const user = this.currentUserService.getOrFail();
     return this.cacheService.wrap(
       CacheNamespace.ENROLLMENTS_ME,

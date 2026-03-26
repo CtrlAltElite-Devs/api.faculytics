@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
+import { BooleanQueryTransform } from 'src/modules/common/transforms/boolean-query.transform';
 import {
   IsUUID,
   IsOptional,
@@ -21,11 +22,7 @@ export class IngestCsvRequestDto {
     description: 'Run in dry-run mode (validate only, no persistence)',
   })
   @IsOptional()
-  @Transform(({ obj, key }: { obj: Record<string, unknown>; key: string }) => {
-    const raw = obj[key];
-    if (typeof raw === 'string') return raw === 'true';
-    return raw === true;
-  })
+  @BooleanQueryTransform()
   @IsBoolean()
   dryRun?: boolean;
 

@@ -1,7 +1,7 @@
 import { Type } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { QuestionnaireType } from 'src/modules/questionnaires/lib/questionnaire.types';
-import { Transform } from 'class-transformer';
+import { BooleanQueryTransform } from 'src/modules/common/transforms/boolean-query.transform';
 
 export class ListDimensionsQueryDto {
   @IsEnum(QuestionnaireType)
@@ -9,9 +9,7 @@ export class ListDimensionsQueryDto {
   questionnaireType?: QuestionnaireType;
 
   @IsOptional()
-  @Transform(
-    ({ obj }: { obj: Record<string, unknown> }) => obj.active === 'true',
-  )
+  @BooleanQueryTransform()
   active?: boolean;
 
   @IsInt()

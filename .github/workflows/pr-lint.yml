@@ -52,7 +52,7 @@ jobs:
                   fi
 
             - name: Discord notification
-              if: ${{ github.event_name == 'pull_request' }}
+              if: ${{ github.event_name == 'pull_request' && secrets.DISCORD_PR_WEBHOOK != '' }}
               continue-on-error: true
               env:
                   DISCORD_WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK }}
@@ -78,6 +78,19 @@ jobs:
                          "timestamp": "${{ github.event.pull_request.updated_at }}"
                          }
                       ]
-              uses: Ilshidur/action-discord@0.4.0
-              with:
-                  args: ${{ env.LINT_STATUS == '✅ Lint passed, clean code! ✨' && '✅ Lint passed! pwede na mag NU' || 'Naa kay sayup, wala kay respeto! 😡' }}
+                  DISCORD_MESSAGE: ${{ env.LINT_STATUS == '✅ Lint passed, clean code! ✨' && '✅ Lint passed! pwede na mag NU' || 'Naa kay sayup, wala kay respeto! 😡' }}
+              run: |
+                  payload=$(jq -nc \
+                    --arg username "$DISCORD_USERNAME" \
+                    --arg avatar_url "$DISCORD_AVATAR" \
+                    --arg content "$DISCORD_MESSAGE" \
+                    --argjson embeds "$DISCORD_EMBEDS" \
+                    '{username: $username, avatar_url: $avatar_url, content: $content, embeds: $embeds}')
+
+                  curl \
+                    --fail \
+                    --show-error \
+                    --silent \
+                    -H "Content-Type: application/json" \
+                    -d "$payload" \
+                    "$DISCORD_WEBHOOK"

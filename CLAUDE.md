@@ -159,6 +159,9 @@ Required environment variables (see `.env.sample`):
 
 Optional:
 
+- `JWT_ACCESS_TOKEN_EXPIRY`: Access token lifetime (default: `300s`)
+- `JWT_REFRESH_TOKEN_EXPIRY`: Refresh token lifetime (default: `30d`)
+- `JWT_BCRYPT_ROUNDS`: Bcrypt cost factor for refresh-token hashing (default: `10`; values below `10` warn outside production)
 - `OPENAPI_MODE`: Set to `"true"` to enable Swagger docs (default: disabled)
 - `SYNC_ON_STARTUP`: Set to `"true"` to run Course and Enrollment sync on startup (default: disabled)
 - `SUPER_ADMIN_USERNAME`: Default super admin username (default: `superadmin`)

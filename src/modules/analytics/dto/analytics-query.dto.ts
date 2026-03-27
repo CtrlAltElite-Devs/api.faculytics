@@ -1,5 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsUUID, IsOptional, IsString, IsNumber, Min } from 'class-validator';
+import {
+  IsUUID,
+  IsOptional,
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  IsInt,
+  Min,
+  Max,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class DepartmentOverviewQueryDto {
@@ -49,4 +58,39 @@ export class FacultyTrendsQueryDto {
   @Min(0)
   @IsOptional()
   minR2?: number;
+}
+
+export class BaseFacultyReportQueryDto {
+  @ApiProperty({ description: 'Semester UUID' })
+  @IsUUID()
+  semesterId!: string;
+
+  @ApiProperty({ description: 'Questionnaire type code' })
+  @IsString()
+  @IsNotEmpty()
+  questionnaireTypeCode!: string;
+
+  @ApiPropertyOptional({ description: 'Optional course UUID filter' })
+  @IsUUID()
+  @IsOptional()
+  courseId?: string;
+}
+
+export class FacultyReportQueryDto extends BaseFacultyReportQueryDto {}
+
+export class FacultyReportCommentsQueryDto extends BaseFacultyReportQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  @Type(() => Number)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 100 })
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  @Type(() => Number)
+  limit?: number = 10;
 }

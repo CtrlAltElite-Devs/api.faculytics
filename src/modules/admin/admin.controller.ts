@@ -1,16 +1,90 @@
-import { Body, Controller, Delete, Post } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Post, Query } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
 import { AdminService } from './services/admin.service';
 import { AssignInstitutionalRoleDto } from './dto/requests/assign-institutional-role.request.dto';
 import { RemoveInstitutionalRoleDto } from './dto/requests/remove-institutional-role.request.dto';
+import { ListUsersQueryDto } from './dto/requests/list-users-query.dto';
+import { AdminUserListResponseDto } from './dto/responses/admin-user-list.response.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
 @UseJwtGuard(UserRole.SUPER_ADMIN)
+@ApiBearerAuth()
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
+
+  @Get('users')
+  @ApiOperation({ summary: 'List users for the admin console' })
+  @ApiQuery({
+    name: 'search',
+    required: false,
+    type: String,
+    example: 'john',
+    description: 'Search by username, full name, first name, last name, or id',
+  })
+  @ApiQuery({
+    name: 'role',
+    required: false,
+    enum: UserRole,
+    example: UserRole.FACULTY,
+    description: 'Filter by a role contained in the user roles array',
+  })
+  @ApiQuery({
+    name: 'isActive',
+    required: false,
+    type: Boolean,
+    example: true,
+    description: 'Filter by active or inactive users',
+  })
+  @ApiQuery({
+    name: 'campusId',
+    required: false,
+    type: String,
+    example: '3f6dd1dd-8f33-4b2e-bb0b-6ac2d8bbf5d7',
+    description: 'Filter by campus UUID',
+  })
+  @ApiQuery({
+    name: 'departmentId',
+    required: false,
+    type: String,
+    example: '9ad12fa1-6286-4461-93f8-33b48d2e5725',
+    description: 'Filter by department UUID',
+  })
+  @ApiQuery({
+    name: 'programId',
+    required: false,
+    type: String,
+    example: 'd8be53aa-59c0-4d1f-b7c8-1e739bf6e1e2',
+    description: 'Filter by program UUID',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    description: 'Page number starting at 1',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 20,
+    description: 'Items per page, max 100',
+  })
+  @ApiResponse({ status: 200, type: AdminUserListResponseDto })
+  async ListUsers(
+    @Query() query: ListUsersQueryDto,
+  ): Promise<AdminUserListResponseDto> {
+    return this.adminService.ListUsers(query);
+  }
 
   @Post('institutional-roles')
   @ApiOperation({

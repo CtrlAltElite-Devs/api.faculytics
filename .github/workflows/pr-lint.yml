@@ -52,7 +52,7 @@ jobs:
                   fi
 
             - name: Discord notification
-              if: ${{ github.event_name == 'pull_request' && secrets.DISCORD_PR_WEBHOOK != '' }}
+              if: ${{ github.event_name == 'pull_request' }}
               continue-on-error: true
               env:
                   DISCORD_WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK }}
@@ -86,6 +86,11 @@ jobs:
                     --arg content "$DISCORD_MESSAGE" \
                     --argjson embeds "$DISCORD_EMBEDS" \
                     '{username: $username, avatar_url: $avatar_url, content: $content, embeds: $embeds}')
+
+                  if [ -z "$DISCORD_WEBHOOK" ]; then
+                    echo "DISCORD_PR_WEBHOOK is not configured; skipping Discord notification."
+                    exit 0
+                  fi
 
                   curl \
                     --fail \

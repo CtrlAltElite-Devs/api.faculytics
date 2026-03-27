@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { AnalyticsService } from './analytics.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
+import { QuestionnaireSchemaSnapshot } from 'src/modules/questionnaires/lib/questionnaire.types';
 
 describe('AnalyticsService', () => {
   let service: AnalyticsService;
@@ -391,6 +393,676 @@ describe('AnalyticsService', () => {
       const result = await service.GetFacultyTrends({});
 
       expect(result.items).toHaveLength(0);
+    });
+  });
+
+  describe('GetFacultyReport', () => {
+    const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+    const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+    const baseQuery = {
+      semesterId,
+      questionnaireTypeCode: 'STUDENT_EVAL',
+    };
+
+    const sampleSchema: QuestionnaireSchemaSnapshot = {
+      meta: {
+        questionnaireType: 'STUDENT_EVAL',
+        scoringModel: 'SECTION_WEIGHTED',
+        version: 1,
+        maxScore: 5,
+      },
+      sections: [
+        {
+          id: 'sec-1',
+          title: 'Teaching Effectiveness',
+          order: 1,
+          weight: 60,
+          questions: [
+            {
+              id: 'q-1',
+              text: 'Explains clearly',
+              type: 'LIKERT_1_5' as const,
+              dimensionCode: 'TEACH',
+              required: true,
+              order: 1,
+            },
+            {
+              id: 'q-2',
+              text: 'Uses examples',
+              type: 'LIKERT_1_5' as const,
+              dimensionCode: 'TEACH',
+              required: true,
+              order: 2,
+            },
+          ],
+        },
+        {
+          id: 'sec-2',
+          title: 'Classroom Management',
+          order: 2,
+          weight: 40,
+          questions: [
+            {
+              id: 'q-3',
+              text: 'Starts on time',
+              type: 'LIKERT_1_5' as const,
+              dimensionCode: 'MGMT',
+              required: true,
+              order: 1,
+            },
+          ],
+        },
+      ],
+    };
+
+    function setupSuperAdminReportMocks(
+      schema: QuestionnaireSchemaSnapshot,
+      aggRows: Record<string, unknown>[],
+      countResult: number,
+    ) {
+      // Super admin: scope returns null (no validateFacultyScope execute call)
+      // 1. faculty metadata query + semester metadata query (parallel)
+      // 2. resolveVersionIds: phase 1 (type check), phase 2 (versions)
+      // 3. aggregation + submission count (parallel)
+      mockExecute
+        // faculty metadata
+        .mockResolvedValueOnce([{ first_name: 'John', last_name: 'Doe' }])
+        // semester metadata
+        .mockResolvedValueOnce([
+          {
+            id: semesterId,
+            code: '1S2526',
+            label: '1st Semester',
+            academic_year: '2025-2026',
+          },
+        ])
+        // phase 1: type check
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // phase 2: versions
+        .mockResolvedValueOnce([
+          {
+            id: 'v-1',
+            version_number: 1,
+            schema_snapshot: schema,
+          },
+        ])
+        // aggregation query
+        .mockResolvedValueOnce(aggRows)
+        // submission count
+        .mockResolvedValueOnce([{ count: countResult }]);
+    }
+
+    it('should return full report for super admin', async () => {
+      setupSuperAdminReportMocks(
+        sampleSchema,
+        [
+          {
+            question_id: 'q-1',
+            section_id: 'sec-1',
+            average: '4.50',
+            response_count: '30',
+          },
+          {
+            question_id: 'q-2',
+            section_id: 'sec-1',
+            average: '4.00',
+            response_count: '30',
+          },
+          {
+            question_id: 'q-3',
+            section_id: 'sec-2',
+            average: '3.80',
+            response_count: '28',
+          },
+        ],
+        30,
+      );
+
+      const result = await service.GetFacultyReport(facultyId, baseQuery);
+
+      expect(result.faculty.name).toBe('John Doe');
+      expect(result.semester.code).toBe('1S2526');
+      expect(result.questionnaireType.code).toBe('STUDENT_EVAL');
+      expect(result.questionnaireType.name).toBe('Student Evaluation');
+      expect(result.submissionCount).toBe(30);
+      expect(result.sections).toHaveLength(2);
+
+      // Section 1: avg = (4.50 + 4.00) / 2 = 4.25
+      expect(result.sections[0].sectionAverage).toBe(4.25);
+      expect(result.sections[0].sectionInterpretation).toBe(
+        'VERY SATISFACTORY PERFORMANCE',
+      );
+      expect(result.sections[0].questions).toHaveLength(2);
+
+      // Section 2: avg = 3.80
+      expect(result.sections[1].sectionAverage).toBe(3.8);
+      expect(result.sections[1].sectionInterpretation).toBe(
+        'VERY SATISFACTORY PERFORMANCE',
+      );
+
+      // Overall: (60 * 4.25 + 40 * 3.80) / (60 + 40) = (255 + 152) / 100 = 4.07
+      expect(result.overallRating).toBe(4.07);
+      expect(result.overallInterpretation).toBe(
+        'VERY SATISFACTORY PERFORMANCE',
+      );
+    });
+
+    it('should return empty report when no submissions found', async () => {
+      // Super admin — no scope execute call
+      mockExecute
+        // faculty metadata
+        .mockResolvedValueOnce([{ first_name: 'John', last_name: 'Doe' }])
+        // semester metadata
+        .mockResolvedValueOnce([
+          {
+            id: semesterId,
+            code: '1S2526',
+            label: '1st Semester',
+            academic_year: '2025-2026',
+          },
+        ])
+        // phase 1: type check
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // phase 2: no versions found
+        .mockResolvedValueOnce([]);
+
+      const result = await service.GetFacultyReport(facultyId, baseQuery);
+
+      expect(result.submissionCount).toBe(0);
+      expect(result.sections).toHaveLength(0);
+      expect(result.overallRating).toBeNull();
+      expect(result.overallInterpretation).toBeNull();
+      expect(result.faculty.name).toBe('John Doe');
+    });
+
+    it('should throw NotFoundException for invalid questionnaireTypeCode', async () => {
+      mockExecute
+        // faculty metadata
+        .mockResolvedValueOnce([{ first_name: 'John', last_name: 'Doe' }])
+        // semester metadata
+        .mockResolvedValueOnce([
+          {
+            id: semesterId,
+            code: '1S2526',
+            label: '1st Semester',
+            academic_year: '2025-2026',
+          },
+        ])
+        // phase 1: type not found
+        .mockResolvedValueOnce([]);
+
+      await expect(
+        service.GetFacultyReport(facultyId, baseQuery),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw NotFoundException when faculty does not exist', async () => {
+      // faculty metadata returns empty
+      mockExecute.mockResolvedValueOnce([]);
+
+      await expect(
+        service.GetFacultyReport(facultyId, baseQuery),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw NotFoundException when semester does not exist', async () => {
+      // faculty metadata exists
+      mockExecute
+        .mockResolvedValueOnce([{ first_name: 'John', last_name: 'Doe' }])
+        // semester metadata returns empty
+        .mockResolvedValueOnce([]);
+
+      await expect(
+        service.GetFacultyReport(facultyId, baseQuery),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw ForbiddenException when dean accesses faculty outside scope', async () => {
+      mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([
+        'dept-allowed',
+      ]);
+      // validateFacultyScope: user query (includes name fields now)
+      mockExecute.mockResolvedValueOnce([
+        {
+          id: facultyId,
+          department_id: 'dept-other',
+          first_name: 'John',
+          last_name: 'Doe',
+        },
+      ]);
+
+      await expect(
+        service.GetFacultyReport(facultyId, baseQuery),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should allow dean to access faculty within scope', async () => {
+      mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([
+        'dept-allowed',
+      ]);
+      // validateFacultyScope returns user data — no separate faculty query needed
+      mockExecute
+        .mockResolvedValueOnce([
+          {
+            id: facultyId,
+            department_id: 'dept-allowed',
+            first_name: 'Jane',
+            last_name: 'Smith',
+          },
+        ])
+        // semester metadata
+        .mockResolvedValueOnce([
+          {
+            id: semesterId,
+            code: '1S2526',
+            label: '1st Semester',
+            academic_year: '2025-2026',
+          },
+        ])
+        // phase 1: type check
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // phase 2: no versions
+        .mockResolvedValueOnce([]);
+
+      const result = await service.GetFacultyReport(facultyId, baseQuery);
+
+      expect(result.faculty.name).toBe('Jane Smith');
+    });
+
+    it('should include courseId filter in SQL when provided', async () => {
+      const courseId = '550e8400-e29b-41d4-a716-446655440099';
+      setupSuperAdminReportMocks(
+        sampleSchema,
+        [
+          {
+            question_id: 'q-1',
+            section_id: 'sec-1',
+            average: '4.00',
+            response_count: '10',
+          },
+        ],
+        10,
+      );
+      // course snapshot query
+      mockExecute.mockResolvedValueOnce([
+        { course_code_snapshot: 'CS101', course_title_snapshot: 'Intro to CS' },
+      ]);
+
+      const result = await service.GetFacultyReport(facultyId, {
+        ...baseQuery,
+        courseId,
+      });
+
+      expect(result.courseFilter).toEqual({
+        id: courseId,
+        code: 'CS101',
+        title: 'Intro to CS',
+      });
+    });
+
+    it('should compute interpretation labels correctly per question', async () => {
+      setupSuperAdminReportMocks(
+        sampleSchema,
+        [
+          {
+            question_id: 'q-1',
+            section_id: 'sec-1',
+            average: '4.50',
+            response_count: '30',
+          },
+          {
+            question_id: 'q-2',
+            section_id: 'sec-1',
+            average: '2.49',
+            response_count: '30',
+          },
+          {
+            question_id: 'q-3',
+            section_id: 'sec-2',
+            average: '1.49',
+            response_count: '28',
+          },
+        ],
+        30,
+      );
+
+      const result = await service.GetFacultyReport(facultyId, baseQuery);
+
+      expect(result.sections[0].questions[0].interpretation).toBe(
+        'EXCELLENT PERFORMANCE',
+      );
+      expect(result.sections[0].questions[1].interpretation).toBe(
+        'FAIR PERFORMANCE',
+      );
+      expect(result.sections[1].questions[0].interpretation).toBe(
+        'NEEDS IMPROVEMENT',
+      );
+    });
+
+    it('should exclude questions without SQL results from section average', async () => {
+      // Only q-1 has data, q-2 is missing
+      setupSuperAdminReportMocks(
+        sampleSchema,
+        [
+          {
+            question_id: 'q-1',
+            section_id: 'sec-1',
+            average: '4.00',
+            response_count: '30',
+          },
+          {
+            question_id: 'q-3',
+            section_id: 'sec-2',
+            average: '3.50',
+            response_count: '28',
+          },
+        ],
+        30,
+      );
+
+      const result = await service.GetFacultyReport(facultyId, baseQuery);
+
+      // Section 1 has only q-1: sectionAverage = 4.00
+      expect(result.sections[0].sectionAverage).toBe(4.0);
+      expect(result.sections[0].questions).toHaveLength(1);
+    });
+
+    describe('schema flattening', () => {
+      it('should handle nested sections (parent → child with questions)', async () => {
+        const nestedSchema: QuestionnaireSchemaSnapshot = {
+          meta: {
+            questionnaireType: 'STUDENT_EVAL',
+            scoringModel: 'SECTION_WEIGHTED',
+            version: 1,
+            maxScore: 5,
+          },
+          sections: [
+            {
+              id: 'parent-1',
+              title: 'Parent Section',
+              order: 1,
+              sections: [
+                {
+                  id: 'child-1',
+                  title: 'Child Section A',
+                  order: 1,
+                  weight: 50,
+                  questions: [
+                    {
+                      id: 'q-nested-1',
+                      text: 'Nested Q1',
+                      type: 'LIKERT_1_5' as const,
+                      dimensionCode: 'DIM',
+                      required: true,
+                      order: 1,
+                    },
+                  ],
+                },
+                {
+                  id: 'child-2',
+                  title: 'Child Section B',
+                  order: 2,
+                  weight: 50,
+                  questions: [
+                    {
+                      id: 'q-nested-2',
+                      text: 'Nested Q2',
+                      type: 'LIKERT_1_5' as const,
+                      dimensionCode: 'DIM',
+                      required: true,
+                      order: 1,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+
+        setupSuperAdminReportMocks(
+          nestedSchema,
+          [
+            {
+              question_id: 'q-nested-1',
+              section_id: 'child-1',
+              average: '4.00',
+              response_count: '20',
+            },
+            {
+              question_id: 'q-nested-2',
+              section_id: 'child-2',
+              average: '3.00',
+              response_count: '20',
+            },
+          ],
+          20,
+        );
+
+        const result = await service.GetFacultyReport(facultyId, baseQuery);
+
+        // Only child (leaf) sections appear
+        expect(result.sections).toHaveLength(2);
+        expect(result.sections[0].title).toBe('Child Section A');
+        expect(result.sections[1].title).toBe('Child Section B');
+
+        // Overall: (50 * 4.00 + 50 * 3.00) / 100 = 3.50
+        expect(result.overallRating).toBe(3.5);
+      });
+
+      it('should only produce entries for leaf sections with questions', async () => {
+        const mixedSchema: QuestionnaireSchemaSnapshot = {
+          meta: {
+            questionnaireType: 'STUDENT_EVAL',
+            scoringModel: 'SECTION_WEIGHTED',
+            version: 1,
+            maxScore: 5,
+          },
+          sections: [
+            {
+              id: 'empty-parent',
+              title: 'Empty Parent',
+              order: 1,
+              sections: [],
+            },
+            {
+              id: 'leaf-1',
+              title: 'Real Section',
+              order: 2,
+              weight: 100,
+              questions: [
+                {
+                  id: 'q-only',
+                  text: 'Only question',
+                  type: 'LIKERT_1_5' as const,
+                  dimensionCode: 'DIM',
+                  required: true,
+                  order: 1,
+                },
+              ],
+            },
+          ],
+        };
+
+        setupSuperAdminReportMocks(
+          mixedSchema,
+          [
+            {
+              question_id: 'q-only',
+              section_id: 'leaf-1',
+              average: '4.50',
+              response_count: '10',
+            },
+          ],
+          10,
+        );
+
+        const result = await service.GetFacultyReport(facultyId, baseQuery);
+
+        expect(result.sections).toHaveLength(1);
+        expect(result.sections[0].title).toBe('Real Section');
+      });
+    });
+  });
+
+  describe('GetFacultyReportComments', () => {
+    const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+    const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+    const baseQuery = {
+      semesterId,
+      questionnaireTypeCode: 'STUDENT_EVAL',
+      page: 1,
+      limit: 10,
+    };
+
+    it('should return paginated comments for super admin', async () => {
+      // Super admin: scope returns null
+      mockExecute
+        // resolveVersionIds phase 1
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // resolveVersionIds phase 2
+        .mockResolvedValueOnce([
+          {
+            id: 'v-1',
+            version_number: 1,
+            schema_snapshot: { meta: {}, sections: [] },
+          },
+        ])
+        // count query
+        .mockResolvedValueOnce([{ total: '2' }])
+        // paginated query
+        .mockResolvedValueOnce([
+          {
+            text: 'Great teacher',
+            submitted_at: '2026-03-20T10:00:00.000Z',
+          },
+          {
+            text: 'Very helpful',
+            submitted_at: '2026-03-19T10:00:00.000Z',
+          },
+        ]);
+
+      const result = await service.GetFacultyReportComments(
+        facultyId,
+        baseQuery,
+      );
+
+      expect(result.items).toHaveLength(2);
+      expect(result.items[0].text).toBe('Great teacher');
+      expect(result.meta.totalItems).toBe(2);
+      expect(result.meta.currentPage).toBe(1);
+      expect(result.meta.itemsPerPage).toBe(10);
+      expect(result.meta.totalPages).toBe(1);
+    });
+
+    it('should return empty items when no versions found', async () => {
+      mockExecute
+        // resolveVersionIds phase 1
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // resolveVersionIds phase 2: no versions
+        .mockResolvedValueOnce([]);
+
+      const result = await service.GetFacultyReportComments(
+        facultyId,
+        baseQuery,
+      );
+
+      expect(result.items).toHaveLength(0);
+      expect(result.meta.totalItems).toBe(0);
+    });
+
+    it('should compute pagination meta correctly for page 2', async () => {
+      mockExecute
+        // resolveVersionIds phase 1
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // resolveVersionIds phase 2
+        .mockResolvedValueOnce([
+          {
+            id: 'v-1',
+            version_number: 1,
+            schema_snapshot: { meta: {}, sections: [] },
+          },
+        ])
+        // count query
+        .mockResolvedValueOnce([{ total: '15' }])
+        // paginated query
+        .mockResolvedValueOnce([
+          {
+            text: 'Page 2 comment',
+            submitted_at: '2026-03-15T10:00:00.000Z',
+          },
+        ]);
+
+      const result = await service.GetFacultyReportComments(facultyId, {
+        ...baseQuery,
+        page: 2,
+      });
+
+      expect(result.meta.totalItems).toBe(15);
+      expect(result.meta.totalPages).toBe(2);
+      expect(result.meta.currentPage).toBe(2);
+      expect(result.meta.itemCount).toBe(1);
+    });
+
+    it('should throw ForbiddenException for unauthorized dean', async () => {
+      mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([
+        'dept-allowed',
+      ]);
+      // validateFacultyScope: user query
+      mockExecute.mockResolvedValueOnce([
+        {
+          id: facultyId,
+          department_id: 'dept-other',
+          first_name: 'John',
+          last_name: 'Doe',
+        },
+      ]);
+
+      await expect(
+        service.GetFacultyReportComments(facultyId, baseQuery),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should throw NotFoundException for invalid questionnaireTypeCode', async () => {
+      // resolveVersionIds phase 1: type not found
+      mockExecute.mockResolvedValueOnce([]);
+
+      await expect(
+        service.GetFacultyReportComments(facultyId, baseQuery),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should include courseId filter when provided', async () => {
+      const courseId = '550e8400-e29b-41d4-a716-446655440099';
+      mockExecute
+        // resolveVersionIds phase 1
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // resolveVersionIds phase 2
+        .mockResolvedValueOnce([
+          {
+            id: 'v-1',
+            version_number: 1,
+            schema_snapshot: { meta: {}, sections: [] },
+          },
+        ])
+        // count query
+        .mockResolvedValueOnce([{ total: '1' }])
+        // paginated query
+        .mockResolvedValueOnce([
+          {
+            text: 'Course-specific comment',
+            submitted_at: '2026-03-20T10:00:00.000Z',
+          },
+        ]);
+
+      const result = await service.GetFacultyReportComments(facultyId, {
+        ...baseQuery,
+        courseId,
+      });
+
+      expect(result.items).toHaveLength(1);
+      // Verify courseId was passed in SQL params
+      const countCall = mockExecute.mock.calls[2] as [string, unknown[]];
+      expect(countCall[1]).toContain(courseId);
     });
   });
 });

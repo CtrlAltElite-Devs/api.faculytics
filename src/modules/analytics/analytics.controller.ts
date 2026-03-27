@@ -1,4 +1,11 @@
-import { Controller, Get, Query, UseInterceptors } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Query,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from 'src/modules/auth/roles.enum';
@@ -8,10 +15,14 @@ import {
   DepartmentOverviewQueryDto,
   AttentionListQueryDto,
   FacultyTrendsQueryDto,
+  FacultyReportQueryDto,
+  FacultyReportCommentsQueryDto,
 } from './dto/analytics-query.dto';
 import { DepartmentOverviewResponseDto } from './dto/responses/department-overview.response.dto';
 import { AttentionListResponseDto } from './dto/responses/attention-list.response.dto';
 import { FacultyTrendsResponseDto } from './dto/responses/faculty-trends.response.dto';
+import { FacultyReportResponseDto } from './dto/responses/faculty-report.response.dto';
+import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report-comments.response.dto';
 
 @ApiTags('Analytics')
 @Controller('analytics')
@@ -53,5 +64,37 @@ export class AnalyticsController {
     @Query() query: FacultyTrendsQueryDto,
   ): Promise<FacultyTrendsResponseDto> {
     return this.analyticsService.GetFacultyTrends(query);
+  }
+
+  @Get('faculty/:facultyId/report')
+  @ApiOperation({
+    summary: 'Get per-question faculty evaluation report',
+  })
+  @ApiQuery({ name: 'semesterId', required: true, type: String })
+  @ApiQuery({ name: 'questionnaireTypeCode', required: true, type: String })
+  @ApiQuery({ name: 'courseId', required: false, type: String })
+  @ApiResponse({ status: 200, type: FacultyReportResponseDto })
+  async GetFacultyReport(
+    @Param('facultyId', ParseUUIDPipe) facultyId: string,
+    @Query() query: FacultyReportQueryDto,
+  ): Promise<FacultyReportResponseDto> {
+    return this.analyticsService.GetFacultyReport(facultyId, query);
+  }
+
+  @Get('faculty/:facultyId/report/comments')
+  @ApiOperation({
+    summary: 'Get paginated qualitative comments for faculty report',
+  })
+  @ApiQuery({ name: 'semesterId', required: true, type: String })
+  @ApiQuery({ name: 'questionnaireTypeCode', required: true, type: String })
+  @ApiQuery({ name: 'courseId', required: false, type: String })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({ status: 200, type: FacultyReportCommentsResponseDto })
+  async GetFacultyReportComments(
+    @Param('facultyId', ParseUUIDPipe) facultyId: string,
+    @Query() query: FacultyReportCommentsQueryDto,
+  ): Promise<FacultyReportCommentsResponseDto> {
+    return this.analyticsService.GetFacultyReportComments(facultyId, query);
   }
 }

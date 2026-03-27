@@ -23,7 +23,10 @@ import { CurriculumModule } from './curriculum/curriculum.module';
 import { AdminModule } from './admin/admin.module';
 import { LoggerModule } from 'nestjs-pino';
 import { ClsModule } from 'nestjs-cls';
+import type { StringValue } from 'ms';
 import { v4 } from 'uuid';
+
+const asJwtExpiresIn = (value: string): StringValue => value as StringValue;
 
 export const ApplicationModules = [
   HealthModule,
@@ -51,7 +54,7 @@ export const InfrastructureModules = [
     global: true,
     secret: env.JWT_SECRET,
     signOptions: {
-      expiresIn: '300s',
+      expiresIn: asJwtExpiresIn(env.JWT_ACCESS_TOKEN_EXPIRY),
     },
   }),
   ClsModule.forRoot({

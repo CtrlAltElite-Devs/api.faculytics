@@ -10,6 +10,7 @@ import { openaiEnvSchema } from './openai.env';
 import { adminEnvSchema } from './admin.env';
 import { redisEnvSchema } from './redis.env';
 import { bullmqEnvSchema } from './bullmq.env';
+import { throttleEnvSchema } from './throttle.env';
 
 export const envSchema = z.object({
   ...databaseEnvSchema.shape,
@@ -21,6 +22,7 @@ export const envSchema = z.object({
   ...adminEnvSchema.shape,
   ...redisEnvSchema.shape,
   ...bullmqEnvSchema.shape,
+  ...throttleEnvSchema.shape,
 });
 
 export type Env = z.infer<typeof envSchema>;

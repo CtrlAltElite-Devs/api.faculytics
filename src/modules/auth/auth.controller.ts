@@ -10,7 +10,7 @@ import {
 import { AuthService } from './auth.service';
 import { LoginRequest } from './dto/requests/login.request.dto';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
-import { UseJwtGuard } from 'src/security/decorators';
+import { Throttle, UseJwtGuard } from 'src/security/decorators';
 import { MetaDataInterceptor } from '../common/interceptors/metadata.interceptor';
 import { JwtRefreshGuard } from 'src/security/guards/refresh-jwt-auth.guard';
 import type { RefreshTokenRequest } from '../common/interceptors/http/refresh-token-request';
@@ -21,6 +21,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @UseInterceptors(MetaDataInterceptor)
   async Login(@Body() body: LoginRequest) {
     return await this.authService.Login(body);
@@ -34,6 +35,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
   @UseGuards(JwtRefreshGuard)
   @UseInterceptors(MetaDataInterceptor)
   async Refresh(

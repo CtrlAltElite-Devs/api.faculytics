@@ -5,5 +5,12 @@
   "testRegex": ".e2e-spec.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
-  }
+  },
+  "moduleNameMapper": {
+    "^uuid$": "uuid",
+    "^src/(.*)$": "<rootDir>/../src/$1"
+  },
+  "transformIgnorePatterns": [
+    "/node_modules/(?!(uuid|p-limit|yocto-queue|cache-manager|cache-manager-redis-yet)/)"
+  ]
 }

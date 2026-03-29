@@ -57,7 +57,7 @@ export class MoodleLoginStrategy implements LoginStrategy {
     } catch (error) {
       if (error instanceof MoodleConnectivityError) {
         this.logger.error(
-          `Moodle connectivity failure during login for user "${body.username}": ${error.message}`,
+          `Moodle connectivity failure during login: ${error.message}`,
           error.cause?.stack,
         );
         throw new UnauthorizedException(

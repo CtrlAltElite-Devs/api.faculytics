@@ -225,6 +225,58 @@ describe('EnrollmentsService', () => {
     expect(result.data[0].semester).toBeNull();
   });
 
+  it('should return faculty data for teacher role (not just editingteacher)', async () => {
+    const mockEnrollments = [
+      {
+        id: 'e1',
+        role: 'student',
+        course: {
+          id: 'c1',
+          moodleCourseId: 101,
+          shortname: 'CS101',
+          fullname: 'Intro to CS',
+          courseImage: null,
+          program: {
+            department: {
+              semester: {
+                id: 'sem-1',
+                code: 'S12526',
+                label: '1st Semester',
+                academicYear: '2025-2026',
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    const mockFacultyEnrollments = [
+      {
+        course: { id: 'c1' },
+        user: {
+          id: 'faculty-2',
+          fullName: 'Prof. Jones',
+          userName: 'EMP002',
+          userProfilePicture: null,
+        },
+      },
+    ];
+
+    (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
+    (em.find as jest.Mock)
+      .mockResolvedValueOnce(mockFacultyEnrollments)
+      .mockResolvedValueOnce([]);
+
+    const result = await service.getMyEnrollments({ page: 1, limit: 10 });
+
+    expect(result.data[0].faculty).toEqual({
+      id: 'faculty-2',
+      fullName: 'Prof. Jones',
+      employeeNumber: 'EMP002',
+      profilePicture: undefined,
+    });
+  });
+
   it('should not query faculty or submissions when no enrollments exist', async () => {
     (em.findAndCount as jest.Mock).mockResolvedValue([[], 0]);
 

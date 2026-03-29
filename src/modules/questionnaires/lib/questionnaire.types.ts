@@ -21,6 +21,7 @@ export enum RespondentRole {
 export enum EnrollmentRole {
   STUDENT = 'student',
   EDITING_TEACHER = 'editingteacher',
+  TEACHER = 'teacher',
 }
 
 export interface QuestionNode {

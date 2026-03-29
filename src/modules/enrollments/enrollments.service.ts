@@ -8,6 +8,7 @@ import { CurrentUserService } from '../common/cls/current-user.service';
 import { MyEnrollmentsQueryDto } from './dto/requests/my-enrollments-query.dto';
 import { FacultyShortResponseDto } from './dto/responses/faculty-short.response.dto';
 import { MyEnrollmentsResponseDto } from './dto/responses/my-enrollments.response.dto';
+import { EnrollmentRole } from '../questionnaires/lib/questionnaire.types';
 
 @Injectable()
 export class EnrollmentsService {
@@ -124,7 +125,11 @@ export class EnrollmentsService {
 
     const facultyEnrollments = await this.em.find(
       Enrollment,
-      { course: { $in: courseIds }, role: 'editingteacher', isActive: true },
+      {
+        course: { $in: courseIds },
+        role: { $in: [EnrollmentRole.EDITING_TEACHER, EnrollmentRole.TEACHER] },
+        isActive: true,
+      },
       { populate: ['user', 'course'] },
     );
 

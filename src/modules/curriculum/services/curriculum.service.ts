@@ -45,19 +45,7 @@ export class CurriculumService {
       Object.assign(filter, { id: { $in: departmentIds } });
     }
 
-    if (query.search) {
-      const escaped = this.EscapeLikeWildcards(query.search);
-      Object.assign(filter, {
-        $and: [
-          {
-            $or: [
-              { code: { $ilike: `%${escaped}%` } },
-              { name: { $ilike: `%${escaped}%` } },
-            ],
-          },
-        ],
-      });
-    }
+    this.ApplySearchFilter(filter, query.search, ['code', 'name']);
 
     const departments = await this.em.find(Department, filter, {
       orderBy: { name: QueryOrder.ASC_NULLS_LAST },
@@ -83,7 +71,7 @@ export class CurriculumService {
       }
     }
 
-    const departmentFilter: Record<string, unknown> = {
+    const departmentFilter: FilterQuery<Department> = {
       semester: query.semesterId,
     };
 
@@ -98,21 +86,9 @@ export class CurriculumService {
 
     const filter: FilterQuery<Program> = {
       department: departmentFilter,
-    } as FilterQuery<Program>;
+    };
 
-    if (query.search) {
-      const escaped = this.EscapeLikeWildcards(query.search);
-      Object.assign(filter, {
-        $and: [
-          {
-            $or: [
-              { code: { $ilike: `%${escaped}%` } },
-              { name: { $ilike: `%${escaped}%` } },
-            ],
-          },
-        ],
-      });
-    }
+    this.ApplySearchFilter(filter, query.search, ['code', 'name']);
 
     const programs = await this.em.find(Program, filter, {
       populate: ['department'],
@@ -177,7 +153,7 @@ export class CurriculumService {
     }
 
     // Build filter
-    const departmentFilter: Record<string, unknown> = {
+    const departmentFilter: FilterQuery<Department> = {
       semester: query.semesterId,
     };
 
@@ -190,7 +166,7 @@ export class CurriculumService {
       departmentFilter.id = { $in: departmentIds };
     }
 
-    const programFilter: Record<string, unknown> = {
+    const programFilter: FilterQuery<Program> = {
       department: departmentFilter,
     };
 
@@ -200,21 +176,9 @@ export class CurriculumService {
 
     const filter: FilterQuery<Course> = {
       program: programFilter,
-    } as FilterQuery<Course>;
+    };
 
-    if (query.search) {
-      const escaped = this.EscapeLikeWildcards(query.search);
-      Object.assign(filter, {
-        $and: [
-          {
-            $or: [
-              { shortname: { $ilike: `%${escaped}%` } },
-              { fullname: { $ilike: `%${escaped}%` } },
-            ],
-          },
-        ],
-      });
-    }
+    this.ApplySearchFilter(filter, query.search, ['shortname', 'fullname']);
 
     const courses = await this.em.find(Course, filter, {
       populate: ['program'],
@@ -231,6 +195,24 @@ export class CurriculumService {
         `Semester with id '${semesterId}' not found.`,
       );
     }
+  }
+
+  private ApplySearchFilter(
+    filter: Record<string, unknown>,
+    search: string | undefined,
+    fields: [string, string],
+  ): void {
+    if (!search) return;
+    const escaped = this.EscapeLikeWildcards(search);
+    Object.assign(filter, {
+      $and: [
+        {
+          $or: fields.map((field) => ({
+            [field]: { $ilike: `%${escaped}%` },
+          })),
+        },
+      ],
+    });
   }
 
   private EscapeLikeWildcards(input: string): string {

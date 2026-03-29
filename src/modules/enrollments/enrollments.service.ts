@@ -130,7 +130,18 @@ export class EnrollmentsService {
         role: { $in: [EnrollmentRole.EDITING_TEACHER, EnrollmentRole.TEACHER] },
         isActive: true,
       },
-      { populate: ['user', 'course'] },
+      {
+        populate: ['user'],
+        fields: [
+          'course',
+          'user.id',
+          'user.fullName',
+          'user.firstName',
+          'user.lastName',
+          'user.userName',
+          'user.userProfilePicture',
+        ],
+      },
     );
 
     for (const enrollment of facultyEnrollments) {

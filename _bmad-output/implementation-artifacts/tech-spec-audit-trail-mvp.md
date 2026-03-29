@@ -192,7 +192,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - `async Emit(params: { action: string; actorId?: string; actorUsername?: string; resourceType?: string; resourceId?: string; metadata?: Record<string, unknown>; ipAddress?: string; userAgent?: string }): Promise<void>`
     - Build envelope with `occurredAt: new Date().toISOString()`
     - Enqueue via `this.auditQueue.add('audit', envelope)`
-    - Wrap in try/catch — audit failures MUST NOT break the request. Log with `Logger.warn` including the action name so failed emissions are observable in application logs.
+    - Wrap in try/catch — audit failures MUST NOT break the request. Log with `Logger.warn` including the **full emission params** (action, actorId, actorUsername, resourceType, resourceId, metadata) so failed emissions preserve the audit data in application logs as a last line of defense.
   - Notes: Fire-and-forget. Set `attempts: 1` on job options (no retries). Audit inserts are idempotent-safe and not critical enough to retry.
 
 - [ ] Task 8: Create `@Audited()` decorator
@@ -298,7 +298,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 - [ ] Task 20: Update auth service tests
   - File: `src/modules/auth/auth.service.spec.ts`
-  - Action: Add mock for `AuditService`; verify `Emit()` called with `auth.login.failure` on failed login
+  - Action: Add mock for `AuditService`; verify `Emit()` called with `auth.login.failure` on failed login; add test case where `AuditService` is `undefined` (not provided via `@Optional()`) and verify login/logout still completes without throwing
 
 ### Acceptance Criteria
 
@@ -343,7 +343,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 - `audit.service.spec.ts` — Test `Emit()` enqueues correct envelope to AUDIT queue; test error handling for Redis connection failures
 - `audit.processor.spec.ts` — Test `process()` persists `AuditLog` entity with correct fields via `em.fork().persistAndFlush()`; test malformed job data handling
-- `audit.interceptor.spec.ts` — Test interceptor reads `@Audited()` metadata, calls `AuditService.Emit()` post-response with correct action/context; test no-op when decorator is absent
+- `audit.interceptor.spec.ts` — Test interceptor reads `@Audited()` metadata, calls `AuditService.Emit()` post-response with correct action/context; test no-op when decorator is absent; test that when `RequestMetadataService.get()` returns null, a `Logger.warn` fires but the audit event still emits with null IP/userAgent
 
 **Integration Points (existing test files to update):**
 

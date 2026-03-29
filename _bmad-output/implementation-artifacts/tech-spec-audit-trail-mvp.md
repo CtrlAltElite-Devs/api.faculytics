@@ -2,9 +2,18 @@
 title: 'Audit Trail MVP'
 slug: 'audit-trail-mvp'
 created: '2026-03-29'
-status: 'ready-for-dev'
+status: 'completed'
 stepsCompleted: [1, 2, 3, 4]
-tech_stack: ['NestJS', 'BullMQ', 'MikroORM', 'PostgreSQL', 'nestjs-cls', 'Zod', 'Passport/JWT']
+tech_stack:
+  [
+    'NestJS',
+    'BullMQ',
+    'MikroORM',
+    'PostgreSQL',
+    'nestjs-cls',
+    'Zod',
+    'Passport/JWT',
+  ]
 files_to_modify:
   - 'src/configurations/common/queue-names.ts'
   - 'src/modules/index.module.ts'
@@ -91,29 +100,29 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 ### Files to Reference
 
-| File | Purpose |
-| ---- | ------- |
-| `src/configurations/common/queue-names.ts` | Queue name enum — add `AUDIT` here. Uses `as const` pattern with derived type. |
-| `src/modules/analysis/analysis.module.ts` | Pattern for `BullModule.registerQueue({ name: QueueName.X })` and provider registration |
-| `src/modules/analysis/processors/sentiment.processor.ts` | Pattern for `@Processor(QueueName.X, { concurrency })`, `WorkerHost` extension, `em.fork()` |
-| `src/modules/analysis/analysis.service.ts` | Pattern for `@InjectQueue()`, envelope format `{ jobId, version, type, metadata, publishedAt }`, job options |
-| `src/entities/sync-log.entity.ts` | **Primary pattern**: append-only entity, no `CustomBaseEntity`, no soft delete, own `@PrimaryKey()` + timestamps |
-| `src/entities/base.entity.ts` | `CustomBaseEntity` — audit entity does NOT extend this |
-| `src/modules/common/interceptors/metadata.interceptor.ts` | Extracts IP (x-forwarded-for fallback), browser, OS via UAParser; stores in CLS |
-| `src/modules/common/interceptors/current-user.interceptor.ts` | Loads User entity from DataLoader, stores in CLS via `CurrentUserService.set()` |
-| `src/modules/common/cls/request-metadata.service.ts` | `RequestMetadata = { browserName, os, ipAddress }`, wraps `ClsService` with typed get/set |
-| `src/modules/common/cls/current-user.service.ts` | `get()` returns `User \| null`, `getUserId()` extracts from JWT payload |
-| `src/modules/common/cls/cls.module.ts` | `AppClsModule` exports both CLS services |
-| `src/modules/index.module.ts` | `ApplicationModules` array — add `AuditModule` here |
-| `src/security/decorators/roles.decorator.ts` | Pattern for `SetMetadata(KEY, value)` custom decorator |
-| `src/security/decorators/index.ts` | Pattern for `applyDecorators()` composite decorator (`UseJwtGuard`) |
-| `src/modules/auth/auth.controller.ts` | MVP endpoints: `POST /login`, `POST /logout`, `POST /refresh` |
-| `src/modules/auth/auth.service.ts` | Login strategy execution, failure paths at lines 51-54 (no strategy match), refresh token validation |
-| `src/modules/auth/strategies/local-login.strategy.ts` | Throws `UnauthorizedException` on invalid credentials — direct emit audit point |
-| `src/modules/auth/strategies/moodle-login.strategy.ts` | Catches `MoodleConnectivityError` — direct emit audit point |
-| `src/modules/moodle/controllers/moodle-sync.controller.ts` | MVP endpoints: `POST /moodle/sync` (manual trigger, superadmin), `PUT /moodle/sync/schedule` (superadmin) |
-| `src/modules/questionnaires/questionnaire.controller.ts` | MVP endpoints: `POST /submissions`, `POST /ingest` (bulk CSV, superadmin), `DELETE /versions/:id/submissions` (wipe, superadmin) |
-| `src/modules/analysis/analysis.controller.ts` | MVP endpoints: `POST /pipelines` (create), `POST /pipelines/:id/confirm`, `POST /pipelines/:id/cancel` |
+| File                                                          | Purpose                                                                                                                          |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `src/configurations/common/queue-names.ts`                    | Queue name enum — add `AUDIT` here. Uses `as const` pattern with derived type.                                                   |
+| `src/modules/analysis/analysis.module.ts`                     | Pattern for `BullModule.registerQueue({ name: QueueName.X })` and provider registration                                          |
+| `src/modules/analysis/processors/sentiment.processor.ts`      | Pattern for `@Processor(QueueName.X, { concurrency })`, `WorkerHost` extension, `em.fork()`                                      |
+| `src/modules/analysis/analysis.service.ts`                    | Pattern for `@InjectQueue()`, envelope format `{ jobId, version, type, metadata, publishedAt }`, job options                     |
+| `src/entities/sync-log.entity.ts`                             | **Primary pattern**: append-only entity, no `CustomBaseEntity`, no soft delete, own `@PrimaryKey()` + timestamps                 |
+| `src/entities/base.entity.ts`                                 | `CustomBaseEntity` — audit entity does NOT extend this                                                                           |
+| `src/modules/common/interceptors/metadata.interceptor.ts`     | Extracts IP (x-forwarded-for fallback), browser, OS via UAParser; stores in CLS                                                  |
+| `src/modules/common/interceptors/current-user.interceptor.ts` | Loads User entity from DataLoader, stores in CLS via `CurrentUserService.set()`                                                  |
+| `src/modules/common/cls/request-metadata.service.ts`          | `RequestMetadata = { browserName, os, ipAddress }`, wraps `ClsService` with typed get/set                                        |
+| `src/modules/common/cls/current-user.service.ts`              | `get()` returns `User \| null`, `getUserId()` extracts from JWT payload                                                          |
+| `src/modules/common/cls/cls.module.ts`                        | `AppClsModule` exports both CLS services                                                                                         |
+| `src/modules/index.module.ts`                                 | `ApplicationModules` array — add `AuditModule` here                                                                              |
+| `src/security/decorators/roles.decorator.ts`                  | Pattern for `SetMetadata(KEY, value)` custom decorator                                                                           |
+| `src/security/decorators/index.ts`                            | Pattern for `applyDecorators()` composite decorator (`UseJwtGuard`)                                                              |
+| `src/modules/auth/auth.controller.ts`                         | MVP endpoints: `POST /login`, `POST /logout`, `POST /refresh`                                                                    |
+| `src/modules/auth/auth.service.ts`                            | Login strategy execution, failure paths at lines 51-54 (no strategy match), refresh token validation                             |
+| `src/modules/auth/strategies/local-login.strategy.ts`         | Throws `UnauthorizedException` on invalid credentials — direct emit audit point                                                  |
+| `src/modules/auth/strategies/moodle-login.strategy.ts`        | Catches `MoodleConnectivityError` — direct emit audit point                                                                      |
+| `src/modules/moodle/controllers/moodle-sync.controller.ts`    | MVP endpoints: `POST /moodle/sync` (manual trigger, superadmin), `PUT /moodle/sync/schedule` (superadmin)                        |
+| `src/modules/questionnaires/questionnaire.controller.ts`      | MVP endpoints: `POST /submissions`, `POST /ingest` (bulk CSV, superadmin), `DELETE /versions/:id/submissions` (wipe, superadmin) |
+| `src/modules/analysis/analysis.controller.ts`                 | MVP endpoints: `POST /pipelines` (create), `POST /pipelines/:id/confirm`, `POST /pipelines/:id/cancel`                           |
 
 ### Technical Decisions
 
@@ -122,20 +131,21 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 - **Concurrency: 1**: Audit inserts are lightweight. Single concurrency avoids contention and is sufficient for MVP volume.
 - **JSONB `metadata` field**: Flexible bag for action-specific details. Keeps schema stable across action types. Expected shapes per action:
 
-  | Action | Metadata Shape | Source |
-  |--------|---------------|--------|
-  | `auth.login.success` | `{ strategyUsed: string }` | Direct emit |
-  | `auth.login.failure` | `{ username: string, reason: string }` | Direct emit |
-  | `auth.logout` | `{}` (no route params or query) | Interceptor |
-  | `auth.token.refresh` | `{}` (no extra context) | Direct emit |
-  | `admin.sync.trigger` | `{}` (no route params) | Interceptor |
-  | `admin.sync-schedule.update` | `{}` (body-only endpoint, no route params or query) | Interceptor |
-  | `questionnaire.submit` | `{}` (no route params) | Interceptor |
-  | `questionnaire.ingest` | `{}` (body excluded, no route params) | Interceptor |
-  | `questionnaire.submissions.wipe` | `{ versionId: string }` | Interceptor (from params) |
-  | `analysis.pipeline.create` | `{}` (no route params — pipeline ID is in response, not captured) | Interceptor |
-  | `analysis.pipeline.confirm` | `{ id: string }` | Interceptor (from params) |
-  | `analysis.pipeline.cancel` | `{ id: string }` | Interceptor (from params) |
+  | Action                           | Metadata Shape                                                    | Source                    |
+  | -------------------------------- | ----------------------------------------------------------------- | ------------------------- |
+  | `auth.login.success`             | `{ strategyUsed: string }`                                        | Direct emit               |
+  | `auth.login.failure`             | `{ username: string, reason: string }`                            | Direct emit               |
+  | `auth.logout`                    | `{}` (no route params or query)                                   | Interceptor               |
+  | `auth.token.refresh`             | `{}` (no extra context)                                           | Direct emit               |
+  | `admin.sync.trigger`             | `{}` (no route params)                                            | Interceptor               |
+  | `admin.sync-schedule.update`     | `{}` (body-only endpoint, no route params or query)               | Interceptor               |
+  | `questionnaire.submit`           | `{}` (no route params)                                            | Interceptor               |
+  | `questionnaire.ingest`           | `{}` (body excluded, no route params)                             | Interceptor               |
+  | `questionnaire.submissions.wipe` | `{ versionId: string }`                                           | Interceptor (from params) |
+  | `analysis.pipeline.create`       | `{}` (no route params — pipeline ID is in response, not captured) | Interceptor               |
+  | `analysis.pipeline.confirm`      | `{ id: string }`                                                  | Interceptor (from params) |
+  | `analysis.pipeline.cancel`       | `{ id: string }`                                                  | Interceptor (from params) |
+
 - **Denormalized `actorUsername`**: Users can be renamed; audit records preserve the username at time of action.
 - **Two emission paths**: Interceptor for standard authenticated endpoints; direct `Emit()` for edge cases (failed logins, service-level events).
 
@@ -145,12 +155,12 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 #### Phase 1: Foundation (Entity + Queue + Processor)
 
-- [ ] Task 1: Add `AUDIT` queue name
+- [x] Task 1: Add `AUDIT` queue name
   - File: `src/configurations/common/queue-names.ts`
   - Action: Add `AUDIT: 'audit'` to the `QueueName` const object
   - Notes: Follows existing pattern (`SENTIMENT: 'sentiment'`, etc.)
 
-- [ ] Task 2: Create `AuditLog` entity
+- [x] Task 2: Create `AuditLog` entity
   - File: `src/entities/audit-log.entity.ts` (NEW)
   - Action: Create append-only entity following `SyncLog` pattern (no `CustomBaseEntity`). Fields:
     - `id: string` — `@PrimaryKey()`, default `v4()`
@@ -166,16 +176,16 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - `occurredAt: Date` — `@Index()`, **required (no JS-side default)**. The processor MUST always set this from the job payload. Omitting it should cause a runtime error, not a silent wrong timestamp. The PostgreSQL migration adds `DEFAULT now()` as a DB-level safety net only.
   - Notes: No `updatedAt`, no `deletedAt`. Add comment on the entity class: "Audit records are never soft-deleted. Queries must use `filters: { softDelete: false }` to bypass the global filter. See SyncLog for precedent." No custom repository for MVP — follows `SyncLog` pattern which uses `filters: { softDelete: false }` at call sites.
 
-- [ ] Task 3: Register entity in entity index
+- [x] Task 3: Register entity in entity index
   - File: `src/entities/index.entity.ts`
   - Action: Export `AuditLog` from the entity barrel file AND add it to the `entities` array (used by MikroORM for schema discovery/migrations). Without this, `npx mikro-orm migration:create` will not detect the new entity.
 
-- [ ] Task 4: Create database migration
+- [x] Task 4: Create database migration
   - Command: `npx mikro-orm migration:create`
   - Action: Create `audit_log` table with all columns from Task 2. Add index on `occurred_at`. Add index on `action`.
   - Notes: Run `npx mikro-orm migration:create` after entity is created, verify generated SQL. Add a PostgreSQL-level `DEFAULT now()` on the `occurred_at` column as a second safety net (the entity default is JS-side only and fires at instantiation, not at DB insert time).
 
-- [ ] Task 5: Create `AuditProcessor`
+- [x] Task 5: Create `AuditProcessor`
   - File: `src/modules/audit/audit.processor.ts` (NEW)
   - Action: Create processor that extends `WorkerHost` (NOT `BaseAnalysisProcessor`):
     - `@Processor(QueueName.AUDIT, { concurrency: 1 })`
@@ -184,7 +194,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - `@OnWorkerEvent('failed')`: log error with job ID, attempt count, and **non-PII fields only**: `action`, `actorId`, `resourceType`, `resourceId`, `occurredAt`. Do NOT log `metadata` (may contain usernames from failed logins or other PII). This preserves audit traceability in application logs without leaking sensitive data.
   - Notes: No HTTP dispatch. Direct DB write only. `attempts: 1` is set at enqueue time in `AuditService.Emit()` (Task 7) — the processor does NOT configure attempts. The `@Processor()` decorator only accepts `concurrency`, `stalledInterval`, etc. Add a `Logger.log` on successful processing (e.g., `Persisted audit log: ${job.data.action}`) for basic throughput observability — since `removeOnComplete: true` leaves no trace in Redis.
 
-- [ ] Task 6: Create `AuditJobMessage` DTO
+- [x] Task 6: Create `AuditJobMessage` DTO
   - File: `src/modules/audit/dto/audit-job-message.dto.ts` (NEW)
   - Action: Define TypeScript interface for the audit queue envelope:
     ```typescript
@@ -205,7 +215,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 #### Phase 2: Service + Decorator + Interceptor
 
-- [ ] Task 7: Create `AuditService`
+- [x] Task 7: Create `AuditService`
   - File: `src/modules/audit/audit.service.ts` (NEW)
   - Action: Create service with:
     - `@InjectQueue(QueueName.AUDIT) private readonly auditQueue: Queue`
@@ -215,7 +225,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - Wrap in try/catch — audit failures MUST NOT break the request. Log with `Logger.warn` including **non-PII fields only**: `action`, `actorId`, `resourceType`, `resourceId`, `occurredAt`. Do NOT log `metadata` (may contain usernames from failed logins — same PII policy as the processor's `@OnWorkerEvent('failed')` handler in Task 5).
   - Notes: Fire-and-forget. Set `attempts: 1` on job options (no retries). Audit inserts are idempotent-safe and not critical enough to retry.
 
-- [ ] Task 8a: Create `AuditAction` const enum
+- [x] Task 8a: Create `AuditAction` const enum
   - File: `src/modules/audit/audit-action.enum.ts` (NEW)
   - Action: Define all MVP audit actions as a const object (same pattern as `QueueName`):
     ```typescript
@@ -237,7 +247,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     ```
   - Notes: Prevents typos in action strings. All tasks referencing action strings must use this enum.
 
-- [ ] Task 8b: Create `@Audited()` decorator
+- [x] Task 8b: Create `@Audited()` decorator
   - File: `src/modules/audit/decorators/audited.decorator.ts` (NEW)
   - Action: Create decorator using `SetMetadata` that accepts an options object:
     ```typescript
@@ -246,11 +256,12 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
       action: AuditAction;
       resource?: string; // e.g. 'User', 'QuestionnaireSubmission'
     }
-    export const Audited = (options: AuditedOptions) => SetMetadata(AUDIT_META_KEY, options);
+    export const Audited = (options: AuditedOptions) =>
+      SetMetadata(AUDIT_META_KEY, options);
     ```
   - Notes: Extended from single string to options object. `resource` is optional and populates `resourceType` in the audit log. The interceptor extracts `resourceId` from the first UUID route param (`request.params`). When `resourceId` is null but `resource` is set (e.g., `POST /moodle/sync` with `resource: 'SyncLog'`), it means the resource is **created by the action** and doesn't exist yet at audit capture time. This is expected and acceptable for MVP.
 
-- [ ] Task 9: Create `AuditInterceptor`
+- [x] Task 9: Create `AuditInterceptor`
   - File: `src/modules/audit/interceptors/audit.interceptor.ts` (NEW)
   - Action: Create NestJS interceptor:
     - Inject `Reflector`, `AuditService`, `CurrentUserService`, `RequestMetadataService`. Type the request as `AuthenticatedRequest` (from `src/modules/common/interceptors/http/authenticated-request.ts`) for typed access to `req.user?.userId`.
@@ -270,7 +281,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 #### Phase 3: Module Wiring
 
-- [ ] Task 10: Create `AuditModule` (global)
+- [x] Task 10: Create `AuditModule` (global)
   - File: `src/modules/audit/audit.module.ts` (NEW)
   - Action: Create **global** module — audit is a cross-cutting concern (same pattern as `JwtModule`, `CacheModule`):
     ```typescript
@@ -288,20 +299,20 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     ```
   - Notes: `@Global()` makes `AuditService` and `AuditInterceptor` injectable in all modules without explicit imports. This is a new convention — no existing application module uses `@Global()`. The infrastructure modules (`JwtModule`, `CacheModule`, `ClsModule`) achieve global scope via `isGlobal: true` / `global: true` config options, not `@Global()` decorator. `@Global()` is justified here because audit is a cross-cutting concern consumed by many modules, and explicit imports in every host module add friction with no benefit. Import `AppClsModule` (not `CommonModule`) — audit only needs `CurrentUserService` and `RequestMetadataService`.
 
-- [ ] Task 11: Register `AuditModule` in application modules
+- [x] Task 11: Register `AuditModule` in application modules
   - File: `src/modules/index.module.ts`
   - Action: Import `AuditModule` and add to `ApplicationModules` array
 
 #### Phase 4: Tag MVP Endpoints
 
-- [ ] Task 12: Tag auth logout endpoint (interceptor path)
+- [x] Task 12: Tag auth logout endpoint (interceptor path)
   - File: `src/modules/auth/auth.controller.ts`
   - Action:
     - Add `@Audited({ action: AuditAction.AUTH_LOGOUT, resource: 'User' })` to `POST /logout` handler
     - **REPLACE** the existing `@UseInterceptors(CurrentUserInterceptor)` on `POST /logout` with `@UseInterceptors(MetaDataInterceptor, CurrentUserInterceptor, AuditInterceptor)` — do NOT add a second decorator (would cause `CurrentUserInterceptor` to run twice). **Ordering matters**: metadata first, user second, audit last.
   - Notes: Only logout uses the interceptor path for auth. Login (success + failure) and refresh use direct emit (Task 13) because there is no authenticated user in CLS for login, and `CurrentUserInterceptor` is not wired for refresh. Note: the logout endpoint currently has NO `MetaDataInterceptor` — this is a pre-existing gap (login and refresh already have it). Adding it here incidentally fixes that gap. Side effect: `MetaDataInterceptor` performs `Logger.log()` on every request with IP/browser/OS. Adding it to endpoints that didn't have it will increase log volume slightly — this is expected and acceptable.
 
-- [ ] Task 13: Add direct audit emit for auth events (login success, login failure, token refresh)
+- [x] Task 13: Add direct audit emit for auth events (login success, login failure, token refresh)
   - File: `src/modules/auth/auth.service.ts`
   - Action:
     - Inject `AuditService` using `@Optional()` decorator. Guard all `Emit()` calls with `this.auditService?.Emit(...)` (optional chaining). Note: `@Optional()` documents the contract that auth does not require audit — it handles the case where the provider isn't registered. However, if `AuditModule` fails during bootstrap (e.g., Redis down), NestJS will crash the whole app regardless. The real runtime protection is the try/catch inside `Emit()`, not `@Optional()`.
@@ -329,7 +340,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - Pull browser/OS/IP from `RequestMetadataService.get()` with null-safe destructure: `const { browserName, os, ipAddress } = this.requestMetadataService.get() ?? {};` — guards against null if `MetaDataInterceptor` didn't run.
   - Notes: All audit emits use `void` (fire-and-forget, no `await`) — this prevents audit from blocking the response or holding transactions open. `actorId`/`actorUsername` will be undefined for failed logins. `RequestMetadataService` IS available since `MetaDataInterceptor` runs before auth logic. The `@Optional()` injection with optional chaining prevents audit from being a hard dependency of auth.
 
-- [ ] Task 14: Tag moodle sync endpoints
+- [x] Task 14: Tag moodle sync endpoints
   - File: `src/modules/moodle/controllers/moodle-sync.controller.ts`
   - Action:
     - Add `@Audited({ action: AuditAction.ADMIN_SYNC_TRIGGER, resource: 'SyncLog' })` to `POST /moodle/sync`
@@ -338,7 +349,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - For `PUT /moodle/sync/schedule`: Add `@UseInterceptors(MetaDataInterceptor, AuditInterceptor)` — this endpoint has no existing interceptors. `CurrentUserInterceptor` not required (JWT fallback in AuditInterceptor).
   - Notes: Both are superadmin-only endpoints.
 
-- [ ] Task 15: Tag questionnaire endpoints
+- [x] Task 15: Tag questionnaire endpoints
   - File: `src/modules/questionnaires/questionnaire.controller.ts`
   - Action:
     - Add `@Audited({ action: AuditAction.QUESTIONNAIRE_SUBMIT, resource: 'QuestionnaireSubmission' })` and `@UseInterceptors(MetaDataInterceptor, CurrentUserInterceptor, AuditInterceptor)` to `POST /submissions` (no existing interceptors). **Exception to the "no CurrentUserInterceptor" rule**: this is the highest-volume audited action — every student submission. The extra DB hit from `UserLoader.load()` is justified here so that `actorUsername` is populated (not null), making the audit log meaningfully readable for the most frequent event.
@@ -346,7 +357,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - Add `@Audited({ action: AuditAction.QUESTIONNAIRE_SUBMISSIONS_WIPE, resource: 'QuestionnaireVersion' })` and `@UseInterceptors(MetaDataInterceptor, AuditInterceptor)` to `DELETE /versions/:versionId/submissions`. Note: `resourceId` will be the `versionId` (the parent resource whose submissions are being wiped), and `resourceType` is `QuestionnaireVersion` — this correctly identifies what resource the wipe is scoped to, not the individual submissions being deleted.
   - Notes: Interceptor stacks are specified per-endpoint above (each bullet includes its own `@UseInterceptors` call). `CurrentUserInterceptor` is NOT added to endpoints that didn't already have it — the `AuditInterceptor` falls back to `req.user.userId` from the JWT payload (see Task 9). Submission wipe is the highest-risk action. For bulk ingestion (`POST /ingest`), the interceptor fires **once per HTTP request** (not per record) — one audit event with route params, not thousands. `POST /ingest` is accessible by 4 roles (SUPER_ADMIN, ADMIN, DEAN, CHAIRPERSON), not just superadmin. Note: `POST /ingest` has no route params or query params — interceptor-captured metadata will be `{}`. The actual ingestion context (version, record count) lives in the multipart body which is intentionally excluded. For richer audit data on this endpoint, a future iteration could add a direct emit enrichment inside the handler. Document this explicitly so nobody adds per-record auditing inside the ingestion engine later.
 
-- [ ] Task 16: Tag analysis endpoints
+- [x] Task 16: Tag analysis endpoints
   - File: `src/modules/analysis/analysis.controller.ts`
   - Action:
     - Add `@Audited({ action: AuditAction.ANALYSIS_PIPELINE_CREATE, resource: 'AnalysisPipeline' })` to `POST /pipelines`
@@ -357,19 +368,19 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 #### Phase 5: Tests
 
-- [ ] Task 17: Unit test `AuditService`
+- [x] Task 17: Unit test `AuditService`
   - File: `src/modules/audit/audit.service.spec.ts` (NEW)
   - Action: Test that `Emit()` calls `queue.add()` with correct envelope; test that Redis errors are caught and logged (not thrown)
 
-- [ ] Task 18: Unit test `AuditProcessor`
+- [x] Task 18: Unit test `AuditProcessor`
   - File: `src/modules/audit/audit.processor.spec.ts` (NEW)
   - Action: Test that `process()` creates `AuditLog` entity with correct field mapping; test `em.fork()` is called; test malformed job data logs error
 
-- [ ] Task 19: Unit test `AuditInterceptor`
+- [x] Task 19: Unit test `AuditInterceptor`
   - File: `src/modules/audit/interceptors/audit.interceptor.spec.ts` (NEW)
   - Action: Test interceptor reads `@Audited()` metadata and calls `AuditService.Emit()` after response; test no-op when no `@Audited()` metadata; test errors in emit don't propagate
 
-- [ ] Task 20: Update auth service tests
+- [x] Task 20: Update auth service tests
   - File: `src/modules/auth/auth.service.spec.ts`
   - Action: Add mock for `AuditService`; verify `Emit()` called with `auth.login.failure` on failed login; verify `Emit()` called with `auth.login.success` after transaction returns (not inside); verify `Emit()` called with `auth.token.refresh` after transaction returns; add test case where `AuditService` is `undefined` (not provided via `@Optional()`) and verify login and refresh still complete without throwing (logout uses interceptor path, not direct emit — not relevant here)
 
@@ -377,29 +388,38 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 #### Core Pipeline
 
-- [ ] AC 1: Given the application starts, when the AUDIT queue is registered, then BullMQ connects to Redis and the `audit` queue is available for job dispatch
-- [ ] AC 2: Given a valid `AuditJobMessage` is enqueued, when the `AuditProcessor` processes it, then an `AuditLog` row is persisted with all fields correctly mapped
-- [ ] AC 3: Given the Redis connection fails during `AuditService.Emit()`, when an audited action occurs, then the error is logged but the original request completes successfully (audit never breaks the app)
+- [x] AC 1: Given the application starts, when the AUDIT queue is registered, then BullMQ connects to Redis and the `audit` queue is available for job dispatch
+- [x] AC 2: Given a valid `AuditJobMessage` is enqueued, when the `AuditProcessor` processes it, then an `AuditLog` row is persisted with all fields correctly mapped
+- [x] AC 3: Given the Redis connection fails during `AuditService.Emit()`, when an audited action occurs, then the error is logged but the original request completes successfully (audit never breaks the app)
 
 #### Interceptor Path
 
-- [ ] AC 4: Given a controller method decorated with `@Audited({ action: AuditAction.AUTH_LOGOUT, resource: 'User' })`, when the endpoint returns a successful response, then an audit event is enqueued with `action='auth.logout'`, the current user's ID (from CLS or JWT fallback), `resourceType: 'User'`, and request metadata (IP, browser, OS)
-- [ ] AC 5: Given a controller method WITHOUT `@Audited()`, when the `AuditInterceptor` is applied, then no audit event is emitted (pass-through)
-- [ ] AC 6: Given the `AuditInterceptor` fails to emit (e.g., service error), when the endpoint handler succeeds, then the original response is still returned to the client
+- [x] AC 4: Given a controller method decorated with `@Audited({ action: AuditAction.AUTH_LOGOUT, resource: 'User' })`, when the endpoint returns a successful response, then an audit event is enqueued with `action='auth.logout'`, the current user's ID (from CLS or JWT fallback), `resourceType: 'User'`, and request metadata (IP, browser, OS)
+- [x] AC 5: Given a controller method WITHOUT `@Audited()`, when the `AuditInterceptor` is applied, then no audit event is emitted (pass-through)
+- [x] AC 6: Given the `AuditInterceptor` fails to emit (e.g., service error), when the endpoint handler succeeds, then the original response is still returned to the client
 
 #### Direct Emit Path
 
-- [ ] AC 7: Given a user submits invalid credentials, when the login strategy throws `UnauthorizedException`, then `AuditService.Emit()` is called with `action='auth.login.failure'`, the attempted username in metadata, and the request IP address
-- [ ] AC 8: Given a user logs in successfully, when the auth service returns tokens, then `AuditService.Emit()` is called via the **direct emit path** inside `AuthService` with `action=AuditAction.AUTH_LOGIN_SUCCESS`, the authenticated user's ID/username, and the strategy used in metadata
+- [x] AC 7: Given a user submits invalid credentials, when the login strategy throws `UnauthorizedException`, then `AuditService.Emit()` is called with `action='auth.login.failure'`, the attempted username in metadata, and the request IP address
+- [x] AC 8: Given a user logs in successfully, when the auth service returns tokens, then `AuditService.Emit()` is called via the **direct emit path** inside `AuthService` with `action=AuditAction.AUTH_LOGIN_SUCCESS`, the authenticated user's ID/username, and the strategy used in metadata
 
 #### Entity Integrity
 
-- [ ] AC 9: Given the `audit_log` table exists, when a query is run without `filters: { softDelete: false }`, then the global soft-delete filter does not exclude audit records (entity has no `deletedAt` field, but queries must still bypass the filter)
-- [ ] AC 10: Given an `AuditLog` record is created, then it has no `updatedAt` or `deletedAt` fields — it is immutable and append-only
+- [x] AC 9: Given the `audit_log` table exists, when a query is run without `filters: { softDelete: false }`, then the global soft-delete filter does not exclude audit records (entity has no `deletedAt` field, but queries must still bypass the filter)
+- [x] AC 10: Given an `AuditLog` record is created, then it has no `updatedAt` or `deletedAt` fields — it is immutable and append-only
 
 #### MVP Endpoint Coverage
 
-- [ ] AC 11: Given the MVP is complete, when inspecting the codebase, then: `POST /auth/logout`, `POST /moodle/sync`, `PUT /moodle/sync/schedule`, `POST /questionnaires/submissions`, `POST /questionnaires/ingest`, `DELETE /questionnaires/versions/:id/submissions`, `POST /analysis/pipelines`, `POST /analysis/pipelines/:id/confirm`, `POST /analysis/pipelines/:id/cancel` have `@Audited()` decorators (interceptor path); and `POST /auth/login` (success + failure) and `POST /auth/refresh` use direct `AuditService.Emit()` calls (direct emit path)
+- [x] AC 11: Given the MVP is complete, when inspecting the codebase, then: `POST /auth/logout`, `POST /moodle/sync`, `PUT /moodle/sync/schedule`, `POST /questionnaires/submissions`, `POST /questionnaires/ingest`, `DELETE /questionnaires/versions/:id/submissions`, `POST /analysis/pipelines`, `POST /analysis/pipelines/:id/confirm`, `POST /analysis/pipelines/:id/cancel` have `@Audited()` decorators (interceptor path); and `POST /auth/login` (success + failure) and `POST /auth/refresh` use direct `AuditService.Emit()` calls (direct emit path)
+
+## Review Notes
+
+- Adversarial review completed (15 findings)
+- Findings: 15 total, 9 fixed, 6 skipped (4 noise, 2 undecided)
+- Resolution approach: auto-fix
+- Fixed: metadata size cap (F1), sanitized error reasons (F2), moved failure emits outside transaction (F3), added actorId index (F6), added onFailed handler test (F8), added metadata capture tests (F9), moved EmitParams to dto/ (F10), added failure-path @Optional test (F14), extracted shared test helpers (F15)
+- Skipped as noise: processor validation (F5, spec decision), soft-delete filter risk (F7, matches SyncLog), spoofable x-forwarded-for (F12, pre-existing), occurredAt accuracy (F13, negligible)
+- Skipped as undecided: strategy.constructor.name (F4, NestJS doesn't minify), composite decorator (F11, out of MVP scope)
 
 ## Additional Context
 

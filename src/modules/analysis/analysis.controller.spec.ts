@@ -2,6 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AnalysisController } from './analysis.controller';
 import { PipelineOrchestratorService } from './services/pipeline-orchestrator.service';
 import { PipelineStatus } from './enums';
+import {
+  auditTestProviders,
+  overrideAuditInterceptors,
+} from '../audit/testing/audit-test.helpers';
 
 const makeMockPipeline = (
   overrides: Partial<Record<string, unknown>> = {},
@@ -47,15 +51,18 @@ describe('AnalysisController', () => {
       GetRecommendations: jest.fn(),
     };
 
-    const module: TestingModule = await Test.createTestingModule({
+    const builder = Test.createTestingModule({
       controllers: [AnalysisController],
       providers: [
         {
           provide: PipelineOrchestratorService,
           useValue: mockOrchestrator,
         },
+        ...auditTestProviders(),
       ],
-    }).compile();
+    });
+    const module: TestingModule =
+      await overrideAuditInterceptors(builder).compile();
 
     controller = module.get<AnalysisController>(AnalysisController);
   });

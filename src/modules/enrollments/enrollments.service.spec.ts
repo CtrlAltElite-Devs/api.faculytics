@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EnrollmentsService } from './enrollments.service';
 import { EntityManager } from '@mikro-orm/core';
 import { User } from 'src/entities/user.entity';
+import { Enrollment } from 'src/entities/enrollment.entity';
+import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
 import { CacheService } from '../common/cache/cache.service';
 import { CurrentUserService } from '../common/cls/current-user.service';
 
@@ -92,10 +94,11 @@ describe('EnrollmentsService', () => {
     ];
 
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
-    // Promise.all order: getFacultyByCourseIds first, getSubmissionStatusByCourseIds second
-    (em.find as jest.Mock)
-      .mockResolvedValueOnce(mockFacultyEnrollments)
-      .mockResolvedValueOnce([]);
+    (em.find as jest.Mock).mockImplementation((entity: unknown) => {
+      if (entity === Enrollment) return Promise.resolve(mockFacultyEnrollments);
+      if (entity === QuestionnaireSubmission) return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
 
     const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
@@ -156,9 +159,12 @@ describe('EnrollmentsService', () => {
     const mockSubmissions = [{ course: { id: 'c1' }, submittedAt }];
 
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
-    (em.find as jest.Mock)
-      .mockResolvedValueOnce([]) // faculty
-      .mockResolvedValueOnce(mockSubmissions); // submissions
+    (em.find as jest.Mock).mockImplementation((entity: unknown) => {
+      if (entity === Enrollment) return Promise.resolve([]);
+      if (entity === QuestionnaireSubmission)
+        return Promise.resolve(mockSubmissions);
+      return Promise.resolve([]);
+    });
 
     const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 

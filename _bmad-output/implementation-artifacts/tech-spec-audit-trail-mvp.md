@@ -2,8 +2,8 @@
 title: 'Audit Trail MVP'
 slug: 'audit-trail-mvp'
 created: '2026-03-29'
-status: 'review'
-stepsCompleted: [1, 2, 3]
+status: 'ready-for-dev'
+stepsCompleted: [1, 2, 3, 4]
 tech_stack: ['NestJS', 'BullMQ', 'MikroORM', 'PostgreSQL', 'nestjs-cls', 'Zod', 'Passport/JWT']
 files_to_modify:
   - 'src/configurations/common/queue-names.ts'

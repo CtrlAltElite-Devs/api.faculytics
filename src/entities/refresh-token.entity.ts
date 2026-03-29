@@ -37,22 +37,17 @@ export class RefreshToken extends CustomBaseEntity {
     userId: string,
     metaData: RequestMetadata,
     refreshId: string,
+    expiresAt: Date,
   ) {
     const newRefreshToken = new RefreshToken();
     newRefreshToken.id = refreshId;
     newRefreshToken.tokenHash = hashedToken;
     newRefreshToken.userId = userId;
-    newRefreshToken.expiresAt = RefreshToken.addDays(new Date(), 30);
+    newRefreshToken.expiresAt = expiresAt;
     newRefreshToken.isActive = true;
     newRefreshToken.browserName = metaData.browserName;
     newRefreshToken.os = metaData.os;
     newRefreshToken.ipAddress = metaData.ipAddress;
     return newRefreshToken;
-  }
-
-  static addDays(date: Date, days: number): Date {
-    const result = new Date(date);
-    result.setDate(result.getDate() + days);
-    return result;
   }
 }

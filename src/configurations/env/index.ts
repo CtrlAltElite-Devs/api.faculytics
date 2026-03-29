@@ -5,11 +5,12 @@ import { serverEnvSchema } from './server.env';
 import { corsEnvSchema } from './cors.env';
 import { DEFAULT_PORT } from '../common/constants';
 import { databaseEnvSchema } from './database.env';
-import { jwtEnvSchema } from './jwt.env';
+import { jwtEnvSchema, warnOnWeakJwtConfig } from './jwt.env';
 import { openaiEnvSchema } from './openai.env';
 import { adminEnvSchema } from './admin.env';
 import { redisEnvSchema } from './redis.env';
 import { bullmqEnvSchema } from './bullmq.env';
+import { throttleEnvSchema } from './throttle.env';
 
 export const envSchema = z.object({
   ...databaseEnvSchema.shape,
@@ -21,10 +22,13 @@ export const envSchema = z.object({
   ...adminEnvSchema.shape,
   ...redisEnvSchema.shape,
   ...bullmqEnvSchema.shape,
+  ...throttleEnvSchema.shape,
 });
 
 export type Env = z.infer<typeof envSchema>;
 
 export const env = envSchema.parse(process.env);
+
+warnOnWeakJwtConfig(env);
 
 export const envPortResolve = () => env.PORT ?? DEFAULT_PORT;

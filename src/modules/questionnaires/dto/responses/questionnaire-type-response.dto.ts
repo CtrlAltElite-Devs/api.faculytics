@@ -1,11 +1,12 @@
-import {
-  QuestionnaireStatus,
-  QuestionnaireType,
-} from '../../lib/questionnaire.types';
+import { QuestionnaireStatus } from '../../lib/questionnaire.types';
 
 export class QuestionnaireTypeResponse {
-  type!: QuestionnaireType;
+  id!: string;
+  name!: string;
+  code!: string;
+  description!: string | null;
+  isSystem!: boolean;
   questionnaireId!: string | null;
-  title!: string | null;
-  status!: QuestionnaireStatus | null;
+  questionnaireTitle!: string | null;
+  questionnaireStatus!: QuestionnaireStatus | null;
 }

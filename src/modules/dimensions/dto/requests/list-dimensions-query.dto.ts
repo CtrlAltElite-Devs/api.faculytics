@@ -1,12 +1,11 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
-import { QuestionnaireType } from 'src/modules/questionnaires/lib/questionnaire.types';
+import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { BooleanQueryTransform } from 'src/modules/common/transforms/boolean-query.transform';
 
 export class ListDimensionsQueryDto {
-  @IsEnum(QuestionnaireType)
+  @IsUUID()
   @IsOptional()
-  questionnaireType?: QuestionnaireType;
+  questionnaireTypeId?: string;
 
   @IsOptional()
   @BooleanQueryTransform()

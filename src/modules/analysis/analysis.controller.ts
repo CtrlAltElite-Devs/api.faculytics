@@ -1,6 +1,18 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UseJwtGuard } from 'src/security/decorators';
+import { MetaDataInterceptor } from '../common/interceptors/metadata.interceptor';
+import { AuditInterceptor } from '../audit/interceptors/audit.interceptor';
+import { Audited } from '../audit/decorators/audited.decorator';
+import { AuditAction } from '../audit/audit-action.enum';
 import type { AuthenticatedRequest } from '../common/interceptors/http/authenticated-request';
 import { PipelineOrchestratorService } from './services/pipeline-orchestrator.service';
 import { CreatePipelineDto } from './dto/create-pipeline.dto';
@@ -13,6 +25,11 @@ export class AnalysisController {
   constructor(private readonly orchestrator: PipelineOrchestratorService) {}
 
   @Post('pipelines')
+  @Audited({
+    action: AuditAction.ANALYSIS_PIPELINE_CREATE,
+    resource: 'AnalysisPipeline',
+  })
+  @UseInterceptors(MetaDataInterceptor, AuditInterceptor)
   @ApiOperation({ summary: 'Create an analysis pipeline' })
   async CreatePipeline(
     @Body() body: CreatePipelineDto,
@@ -26,6 +43,11 @@ export class AnalysisController {
   }
 
   @Post('pipelines/:id/confirm')
+  @Audited({
+    action: AuditAction.ANALYSIS_PIPELINE_CONFIRM,
+    resource: 'AnalysisPipeline',
+  })
+  @UseInterceptors(MetaDataInterceptor, AuditInterceptor)
   @ApiOperation({ summary: 'Confirm and start pipeline execution' })
   async ConfirmPipeline(@Param('id') id: string) {
     const pipeline = await this.orchestrator.ConfirmPipeline(id);
@@ -33,6 +55,11 @@ export class AnalysisController {
   }
 
   @Post('pipelines/:id/cancel')
+  @Audited({
+    action: AuditAction.ANALYSIS_PIPELINE_CANCEL,
+    resource: 'AnalysisPipeline',
+  })
+  @UseInterceptors(MetaDataInterceptor, AuditInterceptor)
   @ApiOperation({ summary: 'Cancel a non-terminal pipeline' })
   async CancelPipeline(@Param('id') id: string) {
     const pipeline = await this.orchestrator.CancelPipeline(id);

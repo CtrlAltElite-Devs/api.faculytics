@@ -23,6 +23,10 @@ import { Queue } from 'bullmq';
 import { EntityManager } from '@mikro-orm/core';
 import { QueueName } from 'src/configurations/common/queue-names';
 import { UseJwtGuard } from 'src/security/decorators';
+import { Audited } from 'src/modules/audit/decorators/audited.decorator';
+import { AuditAction } from 'src/modules/audit/audit-action.enum';
+import { AuditInterceptor } from 'src/modules/audit/interceptors/audit.interceptor';
+import { MetaDataInterceptor } from 'src/modules/common/interceptors/metadata.interceptor';
 import { UserRole } from 'src/modules/auth/roles.enum';
 import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-user.interceptor';
@@ -105,7 +109,12 @@ export class MoodleSyncController {
     description: 'Sync already in progress or queued',
   })
   @ApiResponse({ status: 503, description: 'Sync queue unavailable' })
-  @UseInterceptors(CurrentUserInterceptor)
+  @Audited({ action: AuditAction.ADMIN_SYNC_TRIGGER, resource: 'SyncLog' })
+  @UseInterceptors(
+    MetaDataInterceptor,
+    CurrentUserInterceptor,
+    AuditInterceptor,
+  )
   async TriggerSync(): Promise<TriggerSyncResponseDto> {
     try {
       const [activeCount, waitingCount] = await Promise.all([
@@ -198,6 +207,11 @@ export class MoodleSyncController {
 
   @Put('sync/schedule')
   @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @Audited({
+    action: AuditAction.ADMIN_SYNC_SCHEDULE_UPDATE,
+    resource: 'SystemConfig',
+  })
+  @UseInterceptors(MetaDataInterceptor, AuditInterceptor)
   @ApiOperation({ summary: 'Update sync schedule interval' })
   @ApiBearerAuth()
   @ApiResponse({ status: 200, type: SyncScheduleResponseDto })

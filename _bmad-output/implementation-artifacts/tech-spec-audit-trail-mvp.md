@@ -145,7 +145,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - `ipAddress: string` — nullable
     - `userAgent: string` — nullable (browser + OS combined)
     - `occurredAt: Date` — `@Index()`, default `new Date()`
-  - Notes: No `updatedAt`, no `deletedAt`. Add comment: "Audit records are never soft-deleted. Queries must use `filters: { softDelete: false }`."
+  - Notes: No `updatedAt`, no `deletedAt`. Add comment: "Audit records are never soft-deleted. Queries must use `filters: { softDelete: false }`." Also add a stub `AuditLogRepository` with a `findAll()` method that enforces `filters: { softDelete: false }` — prevents future developers from hitting the global filter footgun when building the query endpoint.
 
 - [ ] Task 3: Register entity in entity index
   - File: `src/entities/index.entity.ts`
@@ -162,8 +162,8 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - `@Processor(QueueName.AUDIT, { concurrency: 1 })`
     - Inject `EntityManager`
     - `process(job: Job<AuditJobMessage>)`: extract fields from job data, create `AuditLog` entity, `em.fork().persistAndFlush()`
-    - `@OnWorkerEvent('failed')`: log error with job ID and attempt count
-  - Notes: No HTTP dispatch. Direct DB write only.
+    - `@OnWorkerEvent('failed')`: log error with job ID, attempt count, AND full job payload (so audit data is preserved in application logs even if DB write fails)
+  - Notes: No HTTP dispatch. Direct DB write only. Set `attempts: 1` in job options — no retries. If the insert fails, it fails. Retrying audit inserts adds complexity with no real benefit.
 
 - [ ] Task 6: Create `AuditJobMessage` DTO
   - File: `src/modules/audit/dto/audit-job-message.dto.ts` (NEW)
@@ -192,8 +192,8 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - `async Emit(params: { action: string; actorId?: string; actorUsername?: string; resourceType?: string; resourceId?: string; metadata?: Record<string, unknown>; ipAddress?: string; userAgent?: string }): Promise<void>`
     - Build envelope with `occurredAt: new Date().toISOString()`
     - Enqueue via `this.auditQueue.add('audit', envelope)`
-    - Wrap in try/catch — audit failures MUST NOT break the request. Log error and swallow.
-  - Notes: Fire-and-forget. No `attempts`/`backoff` config needed — audit inserts are idempotent-safe and not critical enough to retry.
+    - Wrap in try/catch — audit failures MUST NOT break the request. Log with `Logger.warn` including the action name so failed emissions are observable in application logs.
+  - Notes: Fire-and-forget. Set `attempts: 1` on job options (no retries). Audit inserts are idempotent-safe and not critical enough to retry.
 
 - [ ] Task 8: Create `@Audited()` decorator
   - File: `src/modules/audit/decorators/audited.decorator.ts` (NEW)
@@ -213,7 +213,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
       2. If no action metadata, pass through (`return next.handle()`)
       3. Return `next.handle().pipe(tap(() => { ... }))` — emit audit event **after** successful response
       4. In the `tap` callback: read user from `CurrentUserService.get()`, metadata from `RequestMetadataService.get()`, call `AuditService.Emit()` with action, actorId, actorUsername, resourceType (from decorator or undefined), ipAddress, userAgent (`${browserName} on ${os}`)
-    - Notes: Uses RxJS `tap` operator to fire post-response. Errors in `tap` must be caught and logged — never propagate to the response.
+    - Notes: Uses RxJS `tap` operator to fire post-response. Errors in `tap` must be caught and logged — never propagate to the response. If `RequestMetadataService.get()` returns null, log a `Logger.warn` with the controller/handler name indicating missing CLS metadata — don't fail, just record what's available.
 
 #### Phase 3: Module Wiring
 
@@ -252,10 +252,10 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 - [ ] Task 13: Add direct audit emit for auth failures
   - File: `src/modules/auth/auth.service.ts`
   - Action:
-    - Inject `AuditService`
+    - Inject `AuditService` using `@Optional()` decorator — if the audit module fails to initialize (e.g., Redis down at startup), auth still works. Guard all `Emit()` calls with `if (this.auditService)`.
     - In the login method's catch/failure path (around lines 51-54 where no strategy handles): call `AuditService.Emit({ action: 'auth.login.failure', metadata: { username, reason: 'no_matching_strategy' }, ipAddress, userAgent })` — pull IP/userAgent from `RequestMetadataService.get()`
     - In strategy execution catch blocks: emit with `reason: error.message`
-  - Notes: `actorId` and `actorUsername` will be undefined for failed logins. `RequestMetadataService` IS available since `MetaDataInterceptor` runs before auth logic.
+  - Notes: `actorId` and `actorUsername` will be undefined for failed logins. `RequestMetadataService` IS available since `MetaDataInterceptor` runs before auth logic. The `@Optional()` injection prevents audit from being a hard dependency of auth.
 
 - [ ] Task 14: Tag moodle sync endpoints
   - File: `src/modules/moodle/controllers/moodle-sync.controller.ts`
@@ -272,7 +272,7 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
     - Add `@Audited('questionnaire.ingest')` to `POST /ingest`
     - Add `@Audited('questionnaire.submissions.wipe')` to `DELETE /versions/:versionId/submissions`
     - Add `@UseInterceptors(AuditInterceptor)` to tagged methods
-  - Notes: Submission wipe is the highest-risk action — ensure metadata captures `versionId`.
+  - Notes: Submission wipe is the highest-risk action — ensure metadata captures `versionId`. For bulk ingestion (`POST /ingest`), the `@Audited()` interceptor fires **once per HTTP request** (not per record), so this naturally produces one audit event with `metadata: { recordCount }` rather than thousands of individual events. Document this explicitly so nobody adds per-record auditing inside the ingestion engine later.
 
 - [ ] Task 16: Tag analysis endpoints
   - File: `src/modules/analysis/analysis.controller.ts`

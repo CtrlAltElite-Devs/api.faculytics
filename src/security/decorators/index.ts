@@ -7,6 +7,7 @@ import { RolesGuard } from 'src/security/guards/roles.guard';
 import { ROLES_KEY } from './roles.decorator';
 
 export { Roles, ROLES_KEY } from './roles.decorator';
+export { Throttle, SkipThrottle } from '@nestjs/throttler';
 
 export function UseJwtGuard(...roles: UserRole[]) {
   if (roles.length > 0) {

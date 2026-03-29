@@ -21,9 +21,14 @@ import { DimensionsModule } from './dimensions/dimensions.module';
 import { FacultyModule } from './faculty/faculty.module';
 import { CurriculumModule } from './curriculum/curriculum.module';
 import { AdminModule } from './admin/admin.module';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { LoggerModule } from 'nestjs-pino';
 import { ClsModule } from 'nestjs-cls';
+import type { StringValue } from 'ms';
 import { v4 } from 'uuid';
+
+const asJwtExpiresIn = (value: string): StringValue => value as StringValue;
 
 export const ApplicationModules = [
   HealthModule,
@@ -51,7 +56,7 @@ export const InfrastructureModules = [
     global: true,
     secret: env.JWT_SECRET,
     signOptions: {
-      expiresIn: '300s',
+      expiresIn: asJwtExpiresIn(env.JWT_ACCESS_TOKEN_EXPIRY),
     },
   }),
   ClsModule.forRoot({
@@ -60,6 +65,18 @@ export const InfrastructureModules = [
   }),
   ScheduleModule.forRoot(),
   BullModule.forRoot({ connection: { url: env.REDIS_URL } }),
+  ThrottlerModule.forRootAsync({
+    useFactory: () => ({
+      throttlers: [
+        {
+          ttl: env.THROTTLE_TTL_SECONDS * 1000, // v6 uses milliseconds
+          limit: env.THROTTLE_LIMIT,
+        },
+      ],
+      storage: new ThrottlerStorageRedisService(env.REDIS_URL),
+      errorMessage: 'Too Many Requests',
+    }),
+  }),
   CacheModule.registerAsync({
     isGlobal: true,
     useFactory: (): CacheOptions => {

@@ -1,8 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  QuestionnaireStatus,
-  QuestionnaireType,
-} from '../../lib/questionnaire.types';
+import { QuestionnaireStatus } from '../../lib/questionnaire.types';
 import type { QuestionnaireSchemaSnapshot } from '../../lib/questionnaire.types';
 import type { QuestionnaireVersion } from 'src/entities/questionnaire-version.entity';
 
@@ -16,8 +13,8 @@ export class QuestionnaireVersionDetailResponse {
   @ApiProperty()
   questionnaireTitle: string;
 
-  @ApiProperty({ enum: QuestionnaireType })
-  questionnaireType: QuestionnaireType;
+  @ApiProperty()
+  questionnaireType: { id: string; name: string; code: string };
 
   @ApiProperty()
   versionNumber: number;
@@ -47,7 +44,11 @@ export class QuestionnaireVersionDetailResponse {
       id: version.id,
       questionnaireId: version.questionnaire.id,
       questionnaireTitle: version.questionnaire.title,
-      questionnaireType: version.questionnaire.type,
+      questionnaireType: {
+        id: version.questionnaire.type.id,
+        name: version.questionnaire.type.name,
+        code: version.questionnaire.type.code,
+      },
       versionNumber: version.versionNumber,
       status: version.status,
       isActive: version.isActive,

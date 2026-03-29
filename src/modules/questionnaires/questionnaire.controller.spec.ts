@@ -14,7 +14,6 @@ import { IngestionResultDto } from './ingestion/dto/ingestion-result.dto';
 import {
   QuestionnaireSchemaSnapshot,
   QuestionnaireStatus,
-  QuestionnaireType,
 } from './lib/questionnaire.types';
 import { RolesGuard } from 'src/security/guards/roles.guard';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
@@ -43,6 +42,8 @@ describe('QuestionnaireController - checkSubmission', () => {
             UpdateDraftVersion: jest.fn(),
             submitQuestionnaire: jest.fn(),
             CheckSubmission: jest.fn(),
+            UpdateTitle: jest.fn(),
+            ArchiveQuestionnaire: jest.fn(),
             SaveOrUpdateDraft: jest.fn(),
             GetDraft: jest.fn(),
             ListMyDrafts: jest.fn(),
@@ -709,10 +710,16 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
     sections: [],
   };
 
+  const mockTypeEntity = {
+    id: 'type-1',
+    name: 'Faculty In-Classroom',
+    code: 'FACULTY_IN_CLASSROOM',
+  };
+
   const mockQuestionnaire = {
     id: 'q-1',
     title: 'Test Questionnaire',
-    type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+    type: mockTypeEntity,
     status: QuestionnaireStatus.DRAFT,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -752,6 +759,8 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
             UpdateDraftVersion: jest.fn(),
             submitQuestionnaire: jest.fn(),
             CheckSubmission: jest.fn(),
+            UpdateTitle: jest.fn(),
+            ArchiveQuestionnaire: jest.fn(),
             SaveOrUpdateDraft: jest.fn(),
             GetDraft: jest.fn(),
             ListMyDrafts: jest.fn(),
@@ -790,13 +799,13 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
 
     const result = await controller.createQuestionnaire({
       title: 'Test Questionnaire',
-      type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      typeId: 'type-1',
     });
 
     expect(result).toEqual({
       id: 'q-1',
       title: 'Test Questionnaire',
-      type: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      type: mockTypeEntity,
       status: QuestionnaireStatus.DRAFT,
     });
     expect(result).not.toHaveProperty('createdAt');
@@ -815,7 +824,7 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
       id: 'v-1',
       questionnaireId: 'q-1',
       questionnaireTitle: 'Test Questionnaire',
-      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      questionnaireType: mockTypeEntity,
       versionNumber: 1,
       status: QuestionnaireStatus.DRAFT,
       isActive: false,
@@ -845,7 +854,7 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
       id: 'v-1',
       questionnaireId: 'q-1',
       questionnaireTitle: 'Test Questionnaire',
-      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      questionnaireType: mockTypeEntity,
       versionNumber: 1,
       status: QuestionnaireStatus.ACTIVE,
       isActive: true,
@@ -874,7 +883,7 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
       id: 'v-1',
       questionnaireId: 'q-1',
       questionnaireTitle: 'Test Questionnaire',
-      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      questionnaireType: mockTypeEntity,
       versionNumber: 1,
       status: QuestionnaireStatus.DEPRECATED,
       isActive: false,
@@ -885,5 +894,64 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
     });
     expect(result).not.toHaveProperty('deletedAt');
     expect(result).not.toHaveProperty('questionnaire');
+  });
+
+  it('updateTitle should return QuestionnaireResponseDto', async () => {
+    const mockQuestionnaire = {
+      id: 'q-1',
+      title: 'Updated Title',
+      status: QuestionnaireStatus.ACTIVE,
+      type: mockTypeEntity,
+    };
+    questionnaireService.UpdateTitle.mockResolvedValue(
+      mockQuestionnaire as any,
+    );
+
+    const result = await controller.updateTitle('q-1', {
+      title: 'Updated Title',
+    });
+
+    expect(result).toEqual({
+      id: 'q-1',
+      title: 'Updated Title',
+      type: {
+        id: mockTypeEntity.id,
+        name: mockTypeEntity.name,
+        code: mockTypeEntity.code,
+      },
+      status: QuestionnaireStatus.ACTIVE,
+    });
+    expect(questionnaireService.UpdateTitle).toHaveBeenCalledWith(
+      'q-1',
+      'Updated Title',
+    );
+  });
+
+  it('archiveQuestionnaire should return QuestionnaireResponseDto', async () => {
+    const mockQuestionnaire = {
+      id: 'q-1',
+      title: 'Test Questionnaire',
+      status: QuestionnaireStatus.ARCHIVED,
+      type: mockTypeEntity,
+    };
+    questionnaireService.ArchiveQuestionnaire.mockResolvedValue(
+      mockQuestionnaire as any,
+    );
+
+    const result = await controller.archiveQuestionnaire('q-1');
+
+    expect(result).toEqual({
+      id: 'q-1',
+      title: 'Test Questionnaire',
+      type: {
+        id: mockTypeEntity.id,
+        name: mockTypeEntity.name,
+        code: mockTypeEntity.code,
+      },
+      status: QuestionnaireStatus.ARCHIVED,
+    });
+    expect(questionnaireService.ArchiveQuestionnaire).toHaveBeenCalledWith(
+      'q-1',
+    );
   });
 });

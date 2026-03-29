@@ -1,5 +1,6 @@
 import { EntityManager } from '@mikro-orm/core';
 import { InfrastructureSeeder } from '../infrastructure/infrastructure.seeder';
+import { QuestionnaireTypeSeeder } from '../infrastructure/questionnaire-type.seeder';
 import { DimensionSeeder } from '../infrastructure/dimension.seeder';
 import { UserSeeder } from '../infrastructure/user.seeder';
 import { SystemConfigSeeder } from '../infrastructure/system-config.seeder';
@@ -7,6 +8,7 @@ import { QuestionnaireSeeder } from '../infrastructure/questionnaire.seeder';
 import { User } from '../../entities/user.entity';
 import { SystemConfig } from '../../entities/system-config.entity';
 import { Questionnaire } from '../../entities/questionnaire.entity';
+import { QuestionnaireType } from '../../entities/questionnaire-type.entity';
 import { UserRole } from '../../modules/auth/roles.enum';
 
 describe('DatabaseSeeders', () => {
@@ -80,7 +82,17 @@ describe('DatabaseSeeders', () => {
   describe('QuestionnaireSeeder', () => {
     it('should create 3 questionnaires and 3 versions when none exist', async () => {
       const seeder = new QuestionnaireSeeder();
-      em.findOne.mockResolvedValue(null);
+      const mockType = new QuestionnaireType();
+      mockType.code = 'MOCK';
+
+      // For each seed: findOne(QuestionnaireType) returns entity, findOne(Questionnaire) returns null
+      em.findOne
+        .mockResolvedValueOnce(mockType) // type lookup for seed 1
+        .mockResolvedValueOnce(null) // questionnaire lookup for seed 1
+        .mockResolvedValueOnce(mockType) // type lookup for seed 2
+        .mockResolvedValueOnce(null) // questionnaire lookup for seed 2
+        .mockResolvedValueOnce(mockType) // type lookup for seed 3
+        .mockResolvedValueOnce(null); // questionnaire lookup for seed 3
 
       await seeder.run(em);
 
@@ -91,9 +103,9 @@ describe('DatabaseSeeders', () => {
       expect(em.persist).toHaveBeenCalledWith(expect.any(Questionnaire));
     });
 
-    it('should skip when questionnaires already exist', async () => {
+    it('should skip when questionnaire type not found', async () => {
       const seeder = new QuestionnaireSeeder();
-      em.findOne.mockResolvedValue(new Questionnaire());
+      em.findOne.mockResolvedValue(null);
 
       await seeder.run(em);
 
@@ -112,6 +124,7 @@ describe('DatabaseSeeders', () => {
       await infraSeeder.run(em);
 
       expect(callSpy).toHaveBeenCalledWith(em, [
+        QuestionnaireTypeSeeder,
         DimensionSeeder,
         UserSeeder,
         SystemConfigSeeder,

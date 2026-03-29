@@ -1,6 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsEnum, IsNotEmpty } from 'class-validator';
-import { QuestionnaireType } from '../../lib/questionnaire.types';
+import { IsString, IsNotEmpty, IsUUID } from 'class-validator';
 
 export class CreateQuestionnaireRequest {
   @ApiProperty()
@@ -8,17 +7,8 @@ export class CreateQuestionnaireRequest {
   @IsNotEmpty()
   title!: string;
 
-  @ApiProperty({
-    enum: [
-      'FACULTY_IN_CLASSROOM',
-      'FACULTY_OUT_OF_CLASSROOM',
-      'FACULTY_FEEDBACK',
-    ],
-  })
-  @IsEnum([
-    'FACULTY_IN_CLASSROOM',
-    'FACULTY_OUT_OF_CLASSROOM',
-    'FACULTY_FEEDBACK',
-  ])
-  type!: QuestionnaireType;
+  @ApiProperty({ description: 'UUID of the questionnaire type' })
+  @IsUUID()
+  @IsNotEmpty()
+  typeId!: string;
 }

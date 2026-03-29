@@ -1,8 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  QuestionnaireStatus,
-  QuestionnaireType,
-} from '../../lib/questionnaire.types';
+import { QuestionnaireStatus } from '../../lib/questionnaire.types';
 import type { Questionnaire } from 'src/entities/questionnaire.entity';
 
 export class QuestionnaireResponseDto {
@@ -12,8 +9,8 @@ export class QuestionnaireResponseDto {
   @ApiProperty()
   title: string;
 
-  @ApiProperty({ enum: QuestionnaireType })
-  type: QuestionnaireType;
+  @ApiProperty()
+  type: { id: string; name: string; code: string };
 
   @ApiProperty({ enum: QuestionnaireStatus })
   status: QuestionnaireStatus;
@@ -22,7 +19,11 @@ export class QuestionnaireResponseDto {
     return {
       id: entity.id,
       title: entity.title,
-      type: entity.type,
+      type: {
+        id: entity.type.id,
+        name: entity.type.name,
+        code: entity.type.code,
+      },
       status: entity.status,
     };
   }

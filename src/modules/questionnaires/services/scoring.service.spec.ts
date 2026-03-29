@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ScoringService } from './scoring.service';
 import {
   QuestionnaireSchemaSnapshot,
-  QuestionnaireType,
   QuestionType,
 } from '../lib/questionnaire.types';
 
@@ -23,7 +22,7 @@ describe('ScoringService', () => {
 
   const schema: QuestionnaireSchemaSnapshot = {
     meta: {
-      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      questionnaireType: 'FACULTY_IN_CLASSROOM',
       scoringModel: 'SECTION_WEIGHTED',
       version: 1,
       maxScore: 5,

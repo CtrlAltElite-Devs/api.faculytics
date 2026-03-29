@@ -1,12 +1,11 @@
 import {
   QuestionnaireSchemaSnapshot,
-  QuestionnaireType,
   QuestionType,
 } from '../questionnaire.types';
 
 export const FACULTY_FEEDBACK_SCHEMA_V1: QuestionnaireSchemaSnapshot = {
   meta: {
-    questionnaireType: QuestionnaireType.FACULTY_FEEDBACK,
+    questionnaireType: 'FACULTY_FEEDBACK',
     scoringModel: 'SECTION_WEIGHTED',
     version: 1,
     maxScore: 5,

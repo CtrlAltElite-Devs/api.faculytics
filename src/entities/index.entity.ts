@@ -11,6 +11,7 @@ import { Program } from './program.entity';
 import { Semester } from './semester.entity';
 import { Enrollment } from './enrollment.entity';
 import { Dimension } from './dimension.entity';
+import { QuestionnaireType } from './questionnaire-type.entity';
 import { Questionnaire } from './questionnaire.entity';
 import { QuestionnaireVersion } from './questionnaire-version.entity';
 import { QuestionnaireSubmission } from './questionnaire-submission.entity';
@@ -36,6 +37,7 @@ export {
   MoodleToken,
   User,
   Dimension,
+  QuestionnaireType,
   Questionnaire,
   QuestionnaireVersion,
   QuestionnaireSubmission,
@@ -79,6 +81,7 @@ export const entities = [
   Enrollment,
   Section,
   Dimension,
+  QuestionnaireType,
   Questionnaire,
   QuestionnaireVersion,
   QuestionnaireSubmission,

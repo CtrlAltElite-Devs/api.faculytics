@@ -1,4 +1,5 @@
 import { Body, Controller, Post } from '@nestjs/common';
+import { Throttle } from 'src/security/decorators';
 import { LoginMoodleRequest } from './dto/requests/login-moodle.request.dto';
 import { MoodleService } from './moodle.service';
 import { GetSiteInfoRequest } from './dto/requests/get-site-info.request.dto';
@@ -13,6 +14,7 @@ export class MoodleController {
   constructor(private readonly moodleService: MoodleService) {}
 
   @Post('login')
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   async Login(@Body() body: LoginMoodleRequest) {
     return await this.moodleService.Login(body);
   }

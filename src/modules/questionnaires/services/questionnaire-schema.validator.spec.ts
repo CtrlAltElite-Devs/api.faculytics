@@ -3,7 +3,6 @@ import { QuestionnaireSchemaValidator } from './questionnaire-schema.validator';
 import { DimensionRepository } from '../../../repositories/dimension.repository';
 import {
   QuestionnaireSchemaSnapshot,
-  QuestionnaireType,
   QuestionType,
 } from '../lib/questionnaire.types';
 
@@ -36,7 +35,7 @@ describe('QuestionnaireSchemaValidator', () => {
 
   const validSchema: QuestionnaireSchemaSnapshot = {
     meta: {
-      questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+      questionnaireType: 'FACULTY_IN_CLASSROOM',
       scoringModel: 'SECTION_WEIGHTED',
       version: 1,
       maxScore: 5,
@@ -91,7 +90,7 @@ describe('QuestionnaireSchemaValidator', () => {
   it('should throw if a non-leaf section has a weight', async () => {
     const invalidSchema: QuestionnaireSchemaSnapshot = {
       meta: {
-        questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+        questionnaireType: 'FACULTY_IN_CLASSROOM',
         scoringModel: 'SECTION_WEIGHTED',
         version: 1,
         maxScore: 5,

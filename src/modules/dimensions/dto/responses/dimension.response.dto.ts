@@ -1,6 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Dimension } from 'src/entities/dimension.entity';
-import { QuestionnaireType } from 'src/modules/questionnaires/lib/questionnaire.types';
 
 export class DimensionResponseDto {
   @ApiProperty()
@@ -12,8 +11,8 @@ export class DimensionResponseDto {
   @ApiProperty()
   displayName: string;
 
-  @ApiProperty({ enum: QuestionnaireType })
-  questionnaireType: QuestionnaireType;
+  @ApiProperty()
+  questionnaireType: { id: string; name: string; code: string };
 
   @ApiProperty()
   active: boolean;
@@ -29,7 +28,11 @@ export class DimensionResponseDto {
       id: dimension.id,
       code: dimension.code,
       displayName: dimension.displayName,
-      questionnaireType: dimension.questionnaireType,
+      questionnaireType: {
+        id: dimension.questionnaireType.id,
+        name: dimension.questionnaireType.name,
+        code: dimension.questionnaireType.code,
+      },
       active: dimension.active,
       createdAt: dimension.createdAt.toISOString(),
       updatedAt: dimension.updatedAt.toISOString(),

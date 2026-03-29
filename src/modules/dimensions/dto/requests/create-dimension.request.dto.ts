@@ -1,12 +1,11 @@
 import {
-  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
 } from 'class-validator';
-import { QuestionnaireType } from 'src/modules/questionnaires/lib/questionnaire.types';
 
 export class CreateDimensionRequestDto {
   @IsString()
@@ -22,6 +21,7 @@ export class CreateDimensionRequestDto {
   @MaxLength(255)
   displayName: string;
 
-  @IsEnum(QuestionnaireType)
-  questionnaireType: QuestionnaireType;
+  @IsUUID()
+  @IsNotEmpty()
+  questionnaireTypeId: string;
 }

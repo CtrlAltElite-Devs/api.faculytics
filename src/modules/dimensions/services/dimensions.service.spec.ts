@@ -8,7 +8,8 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { UniqueConstraintViolationException } from '@mikro-orm/postgresql';
 import { DimensionsService } from './dimensions.service';
 import { DimensionRepository } from 'src/repositories/dimension.repository';
-import { QuestionnaireType } from 'src/modules/questionnaires/lib/questionnaire.types';
+import { QuestionnaireType } from 'src/entities/questionnaire-type.entity';
+import { getRepositoryToken } from '@mikro-orm/nestjs';
 
 describe('DimensionsService', () => {
   let service: DimensionsService;
@@ -16,17 +17,26 @@ describe('DimensionsService', () => {
     findOne: jest.Mock;
     findAndCount: jest.Mock;
   };
+  let questionnaireTypeRepository: {
+    findOne: jest.Mock;
+  };
   let em: {
     create: jest.Mock;
     persist: jest.Mock;
     flush: jest.Mock;
   };
 
+  const mockTypeEntity = {
+    id: 'type-1',
+    name: 'Faculty In-Classroom',
+    code: 'FACULTY_IN_CLASSROOM',
+  };
+
   const mockDimension = {
     id: 'dim-1',
     code: 'TEACHING_QUALITY',
     displayName: 'Teaching Quality',
-    questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+    questionnaireType: mockTypeEntity,
     active: true,
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
@@ -36,6 +46,9 @@ describe('DimensionsService', () => {
     dimensionRepository = {
       findOne: jest.fn(),
       findAndCount: jest.fn(),
+    };
+    questionnaireTypeRepository = {
+      findOne: jest.fn(),
     };
 
     const flushMock = jest.fn();
@@ -49,6 +62,10 @@ describe('DimensionsService', () => {
       providers: [
         DimensionsService,
         { provide: DimensionRepository, useValue: dimensionRepository },
+        {
+          provide: getRepositoryToken(QuestionnaireType),
+          useValue: questionnaireTypeRepository,
+        },
         { provide: EntityManager, useValue: em },
       ],
     }).compile();
@@ -58,10 +75,11 @@ describe('DimensionsService', () => {
 
   describe('create', () => {
     it('should create a dimension with explicit code', async () => {
+      questionnaireTypeRepository.findOne.mockResolvedValue(mockTypeEntity);
       const dto = {
         code: 'COURSE_CONTENT',
         displayName: 'Course Content',
-        questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+        questionnaireTypeId: 'type-1',
       };
 
       const result = await service.create(dto);
@@ -69,7 +87,7 @@ describe('DimensionsService', () => {
       expect(em.create).toHaveBeenCalledWith(expect.anything(), {
         code: 'COURSE_CONTENT',
         displayName: 'Course Content',
-        questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+        questionnaireType: mockTypeEntity,
         active: true,
       });
       expect(em.persist).toHaveBeenCalled();
@@ -77,9 +95,10 @@ describe('DimensionsService', () => {
     });
 
     it('should auto-generate code from displayName when code is omitted', async () => {
+      questionnaireTypeRepository.findOne.mockResolvedValue(mockTypeEntity);
       const dto = {
         displayName: 'Teaching Quality',
-        questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+        questionnaireTypeId: 'type-1',
       };
 
       await service.create(dto);
@@ -87,12 +106,13 @@ describe('DimensionsService', () => {
       expect(em.create).toHaveBeenCalledWith(expect.anything(), {
         code: 'TEACHING_QUALITY',
         displayName: 'Teaching Quality',
-        questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+        questionnaireType: mockTypeEntity,
         active: true,
       });
     });
 
     it('should throw ConflictException on duplicate [code, questionnaireType]', async () => {
+      questionnaireTypeRepository.findOne.mockResolvedValue(mockTypeEntity);
       const rejectingFlush = jest
         .fn()
         .mockRejectedValue(
@@ -104,7 +124,7 @@ describe('DimensionsService', () => {
         service.create({
           code: 'TEACHING_QUALITY',
           displayName: 'Teaching Quality',
-          questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+          questionnaireTypeId: 'type-1',
         }),
       ).rejects.toThrow(ConflictException);
     });
@@ -126,17 +146,17 @@ describe('DimensionsService', () => {
       });
     });
 
-    it('should apply questionnaireType filter', async () => {
+    it('should apply questionnaireTypeId filter', async () => {
       dimensionRepository.findAndCount.mockResolvedValue([[], 0]);
 
       await service.findAll({
-        questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM,
+        questionnaireTypeId: 'type-1',
         page: 1,
         limit: 20,
       });
 
       expect(dimensionRepository.findAndCount).toHaveBeenCalledWith(
-        { questionnaireType: QuestionnaireType.FACULTY_IN_CLASSROOM },
+        { questionnaireType: 'type-1' },
         expect.objectContaining({ limit: 20, offset: 0 }),
       );
     });

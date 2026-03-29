@@ -3,19 +3,37 @@ title: 'Audit Trail MVP'
 slug: 'audit-trail-mvp'
 created: '2026-03-29'
 status: 'in-progress'
-stepsCompleted: [1]
-tech_stack: ['NestJS', 'BullMQ', 'MikroORM', 'PostgreSQL', 'nestjs-cls']
+stepsCompleted: [1, 2]
+tech_stack: ['NestJS', 'BullMQ', 'MikroORM', 'PostgreSQL', 'nestjs-cls', 'Zod', 'Passport/JWT']
 files_to_modify:
   - 'src/configurations/common/queue-names.ts'
   - 'src/modules/index.module.ts'
+  - 'src/entities/audit-log.entity.ts (NEW)'
+  - 'src/modules/audit/audit.module.ts (NEW)'
+  - 'src/modules/audit/audit.service.ts (NEW)'
+  - 'src/modules/audit/audit.processor.ts (NEW)'
+  - 'src/modules/audit/decorators/audited.decorator.ts (NEW)'
+  - 'src/modules/audit/interceptors/audit.interceptor.ts (NEW)'
+  - 'src/modules/auth/auth.service.ts'
+  - 'src/modules/auth/auth.controller.ts'
+  - 'src/modules/moodle/controllers/moodle-sync.controller.ts'
+  - 'src/modules/questionnaires/questionnaire.controller.ts'
+  - 'src/modules/analysis/analysis.controller.ts'
+  - 'migration file (NEW)'
 code_patterns:
-  - 'BullMQ queue-per-type (analysis module)'
-  - 'WorkerHost processor (sentiment.processor.ts)'
-  - 'CLS context (CurrentUserService, RequestMetadataService)'
-  - 'Append-only entity without soft delete (SyncLog)'
-  - '@Audited() decorator + interceptor pattern'
+  - 'BullMQ queue-per-type: QueueName const enum in queue-names.ts, BullModule.registerQueue() in module'
+  - 'Processor: @Processor(QueueName.X, { concurrency }) extends WorkerHost, em.fork().persistAndFlush()'
+  - 'CLS context: CurrentUserService.get() for user, RequestMetadataService.get() for IP/browser/OS'
+  - 'Append-only entity: SyncLog pattern — no CustomBaseEntity, no soft delete, own PK/timestamps'
+  - 'Custom decorator: SetMetadata(KEY, value) with exported KEY constant'
+  - 'Composite decorator: applyDecorators() to combine multiple decorators'
+  - 'Job enqueueing: @InjectQueue(QueueName.X), queue.add(name, envelope, { jobId, attempts, backoff })'
+  - 'Direct emit for non-interceptor contexts (auth failures in catch blocks)'
 test_patterns:
-  - 'NestJS TestingModule with Jest mocks'
+  - 'NestJS TestingModule with Jest mocks: { provide: Dep, useValue: { method: jest.fn() } }'
+  - 'Auth tests mock CustomJwtService, UnitOfWork, CurrentUserService, RequestMetadataService'
+  - 'Controller tests override JWT/role guards'
+  - 'Strategy tests validate error handling paths'
 ---
 
 # Tech-Spec: Audit Trail MVP
@@ -72,17 +90,27 @@ Both paths feed the same queue, processor, and entity. Write-only pipeline for t
 
 | File | Purpose |
 | ---- | ------- |
-| `src/configurations/common/queue-names.ts` | Queue name enum — add `AUDIT` here |
-| `src/modules/analysis/analysis.module.ts` | Pattern for `BullModule.registerQueue()` registration |
-| `src/modules/analysis/processors/sentiment.processor.ts` | Pattern for `@Processor()` decorator and `WorkerHost` extension |
-| `src/modules/analysis/analysis.service.ts` | Pattern for `@InjectQueue()` and job enqueueing |
-| `src/entities/sync-log.entity.ts` | Append-only entity pattern (no soft delete, own schema) |
+| `src/configurations/common/queue-names.ts` | Queue name enum — add `AUDIT` here. Uses `as const` pattern with derived type. |
+| `src/modules/analysis/analysis.module.ts` | Pattern for `BullModule.registerQueue({ name: QueueName.X })` and provider registration |
+| `src/modules/analysis/processors/sentiment.processor.ts` | Pattern for `@Processor(QueueName.X, { concurrency })`, `WorkerHost` extension, `em.fork()` |
+| `src/modules/analysis/analysis.service.ts` | Pattern for `@InjectQueue()`, envelope format `{ jobId, version, type, metadata, publishedAt }`, job options |
+| `src/entities/sync-log.entity.ts` | **Primary pattern**: append-only entity, no `CustomBaseEntity`, no soft delete, own `@PrimaryKey()` + timestamps |
 | `src/entities/base.entity.ts` | `CustomBaseEntity` — audit entity does NOT extend this |
-| `src/modules/common/interceptors/metadata.interceptor.ts` | Pattern for request metadata extraction |
-| `src/modules/common/interceptors/current-user.interceptor.ts` | Pattern for CLS-based user context |
-| `src/modules/common/cls/request-metadata.service.ts` | `RequestMetadata` type and CLS access |
-| `src/modules/common/cls/current-user.service.ts` | Current user CLS access |
-| `src/modules/index.module.ts` | Application module registration |
+| `src/modules/common/interceptors/metadata.interceptor.ts` | Extracts IP (x-forwarded-for fallback), browser, OS via UAParser; stores in CLS |
+| `src/modules/common/interceptors/current-user.interceptor.ts` | Loads User entity from DataLoader, stores in CLS via `CurrentUserService.set()` |
+| `src/modules/common/cls/request-metadata.service.ts` | `RequestMetadata = { browserName, os, ipAddress }`, wraps `ClsService` with typed get/set |
+| `src/modules/common/cls/current-user.service.ts` | `get()` returns `User \| null`, `getUserId()` extracts from JWT payload |
+| `src/modules/common/cls/cls.module.ts` | `AppClsModule` exports both CLS services |
+| `src/modules/index.module.ts` | `ApplicationModules` array — add `AuditModule` here |
+| `src/security/decorators/roles.decorator.ts` | Pattern for `SetMetadata(KEY, value)` custom decorator |
+| `src/security/decorators/index.ts` | Pattern for `applyDecorators()` composite decorator (`UseJwtGuard`) |
+| `src/modules/auth/auth.controller.ts` | MVP endpoints: `POST /login`, `POST /logout`, `POST /refresh` |
+| `src/modules/auth/auth.service.ts` | Login strategy execution, failure paths at lines 51-54 (no strategy match), refresh token validation |
+| `src/modules/auth/strategies/local-login.strategy.ts` | Throws `UnauthorizedException` on invalid credentials — direct emit audit point |
+| `src/modules/auth/strategies/moodle-login.strategy.ts` | Catches `MoodleConnectivityError` — direct emit audit point |
+| `src/modules/moodle/controllers/moodle-sync.controller.ts` | MVP endpoints: `POST /moodle/sync` (manual trigger, superadmin), `PUT /moodle/sync/schedule` (superadmin) |
+| `src/modules/questionnaires/questionnaire.controller.ts` | MVP endpoints: `POST /submissions`, `POST /ingest` (bulk CSV, superadmin), `DELETE /versions/:id/submissions` (wipe, superadmin) |
+| `src/modules/analysis/analysis.controller.ts` | MVP endpoints: `POST /pipelines` (create), `POST /pipelines/:id/confirm`, `POST /pipelines/:id/cancel` |
 
 ### Technical Decisions
 
@@ -114,7 +142,16 @@ _To be populated in Step 3 (Generate)_
 
 ### Testing Strategy
 
-_To be populated in Step 2 (Deep Investigation)_
+**Unit Tests (NestJS TestingModule + Jest):**
+
+- `audit.service.spec.ts` — Test `Emit()` enqueues correct envelope to AUDIT queue; test error handling for Redis connection failures
+- `audit.processor.spec.ts` — Test `process()` persists `AuditLog` entity with correct fields via `em.fork().persistAndFlush()`; test malformed job data handling
+- `audit.interceptor.spec.ts` — Test interceptor reads `@Audited()` metadata, calls `AuditService.Emit()` post-response with correct action/context; test no-op when decorator is absent
+
+**Integration Points (existing test files to update):**
+
+- `auth.service.spec.ts` — Verify `AuditService.Emit()` is called on login success, login failure, logout, and refresh
+- Controller tests — Verify `@Audited()` decorator is present on tagged endpoints (metadata reflection test)
 
 ### Notes
 

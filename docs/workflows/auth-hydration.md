@@ -25,7 +25,11 @@ flowchart TD
 
     G --> N[Issue JWT + RefreshToken]
     L --> N
-    N --> O[200 OK Tokens]
+    N --> P[Audit: auth.login.success]
+    P --> O[200 OK Tokens]
+
+    J --> Q[Audit: auth.login.failure]
+    M --> Q
 ```
 
 ## Moodle Login Flow (Detail)
@@ -71,6 +75,22 @@ sequenceDiagram
     AuthService-->>AuthController: JWT + RefreshToken
     AuthController-->>Client: 200 OK (Tokens)
 ```
+
+## Audit Events
+
+Auth events are captured via the direct emit path (not the interceptor) because CLS user context is unavailable during login. All emits are fire-and-forget (`void`) and occur **outside** the database transaction.
+
+| Event                          | Action Code          | When                         | Metadata                                            |
+| ------------------------------ | -------------------- | ---------------------------- | --------------------------------------------------- |
+| Login success                  | `auth.login.success` | After transaction commits    | `{ strategyUsed }`                                  |
+| Login failure (no strategy)    | `auth.login.failure` | After transaction rejects    | `{ username, reason: 'no_matching_strategy' }`      |
+| Login failure (strategy threw) | `auth.login.failure` | After transaction rejects    | `{ username, reason: 'strategy_execution_failed' }` |
+| Token refresh                  | `auth.token.refresh` | After transaction commits    | _(none)_                                            |
+| Logout                         | `auth.logout`        | Via `@Audited()` interceptor | _(route params)_                                    |
+
+`AuditService` is injected with `@Optional()` — auth works even if the audit module fails to bootstrap.
+
+See [Audit Trail Architecture](../architecture/audit-trail.md) for the full audit system design.
 
 ## Institutional Role Resolution
 

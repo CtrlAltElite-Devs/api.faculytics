@@ -10,6 +10,8 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { RefreshToken } from '../../entities/refresh-token.entity';
 import { CurrentUserService } from '../common/cls/current-user.service';
 import { RequestMetadataService } from '../common/cls/request-metadata.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditAction } from '../audit/audit-action.enum';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import { LoginRequest } from './dto/requests/login.request.dto';
@@ -32,6 +34,7 @@ describe('AuthService', () => {
   let unitOfWork: UnitOfWork;
   let mockLocalStrategy: jest.Mocked<LoginStrategy>;
   let mockMoodleStrategy: jest.Mocked<LoginStrategy>;
+  let mockAuditService: { Emit: jest.Mock };
 
   beforeEach(async () => {
     mockLocalStrategy = {
@@ -45,6 +48,8 @@ describe('AuthService', () => {
       CanHandle: jest.fn(),
       Execute: jest.fn(),
     };
+
+    mockAuditService = { Emit: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -89,6 +94,10 @@ describe('AuthService', () => {
         {
           provide: RequestMetadataService,
           useValue: mockRequestMetadataService,
+        },
+        {
+          provide: AuditService,
+          useValue: mockAuditService,
         },
       ],
     }).compile();
@@ -296,6 +305,102 @@ describe('AuthService', () => {
         service.Login({ username: 'admin', password: 'wrong-password' }),
       ).rejects.toThrow(UnauthorizedException);
     });
+
+    it('should emit auth.login.failure audit event when no strategy matches', async () => {
+      const mockEm = { findOne: jest.fn().mockResolvedValue(null) };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      mockLocalStrategy.CanHandle.mockReturnValue(false);
+      mockMoodleStrategy.CanHandle.mockReturnValue(false);
+
+      await expect(
+        service.Login({ username: 'unknown', password: 'password' }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockAuditService.Emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AuditAction.AUTH_LOGIN_FAILURE,
+          metadata: expect.objectContaining({
+            username: 'unknown',
+            reason: 'no_matching_strategy',
+          }) as Record<string, unknown>,
+        }),
+      );
+    });
+
+    it('should emit auth.login.failure audit event when strategy throws', async () => {
+      const mockUser = new User();
+      mockUser.userName = 'admin';
+      mockUser.password = 'hashed';
+
+      const mockEm = { findOne: jest.fn().mockResolvedValue(mockUser) };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      mockLocalStrategy.CanHandle.mockReturnValue(true);
+      mockLocalStrategy.Execute.mockRejectedValue(
+        new UnauthorizedException('Invalid credentials'),
+      );
+
+      await expect(
+        service.Login({ username: 'admin', password: 'wrong' }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockAuditService.Emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AuditAction.AUTH_LOGIN_FAILURE,
+          metadata: expect.objectContaining({
+            username: 'admin',
+            reason: 'strategy_execution_failed',
+          }) as Record<string, unknown>,
+        }),
+      );
+    });
+
+    it('should emit auth.login.success audit event after transaction completes', async () => {
+      const mockUser = new User();
+      mockUser.id = 'user-id';
+      mockUser.userName = 'admin';
+      mockUser.moodleUserId = 1;
+
+      const mockEm = {
+        findOne: jest.fn().mockResolvedValue(mockUser),
+        getRepository: jest.fn().mockReturnValue({}),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      mockLocalStrategy.CanHandle.mockReturnValue(true);
+      mockLocalStrategy.Execute.mockResolvedValue({ user: mockUser });
+
+      (jwtService.CreateSignedTokens as jest.Mock).mockResolvedValue({
+        token: 'access',
+        refreshToken: 'refresh',
+      });
+
+      await service.Login({ username: 'admin', password: 'password123' });
+
+      expect(mockAuditService.Emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AuditAction.AUTH_LOGIN_SUCCESS,
+          actorId: 'user-id',
+          actorUsername: 'admin',
+          metadata: expect.objectContaining({
+            strategyUsed: expect.any(String) as string,
+          }) as Record<string, unknown>,
+        }),
+      );
+    });
   });
 
   describe('RefreshToken', () => {
@@ -363,11 +468,9 @@ describe('AuthService', () => {
       });
 
       const mockEm = {
-        getRepository: jest
-          .fn()
-          .mockReturnValue({
-            find: jest.fn().mockResolvedValue([storedToken]),
-          }),
+        getRepository: jest.fn().mockReturnValue({
+          find: jest.fn().mockResolvedValue([storedToken]),
+        }),
         findOneOrFail: jest.fn(),
       };
 
@@ -397,6 +500,42 @@ describe('AuthService', () => {
       await expect(
         service.RefreshToken(userId, rawRefreshToken),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should emit auth.token.refresh audit event after transaction completes', async () => {
+      const hashedToken = await bcrypt.hash(rawRefreshToken, 10);
+      const storedToken = createMockToken({ tokenHash: hashedToken });
+
+      const mockUser = new User();
+      mockUser.id = userId;
+      mockUser.userName = 'admin';
+      mockUser.moodleUserId = 1;
+
+      const mockFind = jest.fn().mockResolvedValue([storedToken]);
+      const mockEm = {
+        getRepository: jest.fn().mockReturnValue({ find: mockFind }),
+        findOneOrFail: jest.fn().mockResolvedValue(mockUser),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      (jwtService.CreateSignedTokens as jest.Mock).mockResolvedValue({
+        token: 'new-access',
+        refreshToken: 'new-refresh',
+      });
+
+      await service.RefreshToken(userId, rawRefreshToken);
+
+      expect(mockAuditService.Emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AuditAction.AUTH_TOKEN_REFRESH,
+          actorId: userId,
+          actorUsername: 'admin',
+        }),
+      );
     });
 
     it('should not use synchronous bcrypt.compareSync', async () => {
@@ -429,6 +568,205 @@ describe('AuthService', () => {
       expect(result).toBeInstanceOf(Promise);
       await result;
     });
+  });
+});
+
+describe('AuthService without AuditService', () => {
+  it('should complete login successfully when AuditService is not provided', async () => {
+    const mockUser = new User();
+    mockUser.id = 'user-id';
+    mockUser.userName = 'admin';
+    mockUser.moodleUserId = 1;
+
+    const mockLocalStrategy: jest.Mocked<LoginStrategy> = {
+      priority: 10,
+      CanHandle: jest.fn().mockReturnValue(true),
+      Execute: jest.fn().mockResolvedValue({ user: mockUser }),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        {
+          provide: LOGIN_STRATEGIES,
+          useValue: [mockLocalStrategy],
+        },
+        {
+          provide: CustomJwtService,
+          useValue: {
+            CreateSignedTokens: jest.fn().mockResolvedValue({
+              token: 'access',
+              refreshToken: 'refresh',
+            }),
+          },
+        },
+        {
+          provide: UnitOfWork,
+          useValue: {
+            runInTransaction: jest
+              .fn()
+              .mockImplementation((cb: (em: EntityManager) => unknown) =>
+                cb({
+                  findOne: jest.fn().mockResolvedValue(mockUser),
+                } as unknown as EntityManager),
+              ),
+          },
+        },
+        {
+          provide: CurrentUserService,
+          useValue: {
+            get: jest.fn(),
+            getOrFail: jest.fn().mockReturnValue(mockUser),
+            getUserId: jest.fn().mockReturnValue('user-id'),
+            set: jest.fn(),
+            setJwtPayload: jest.fn(),
+          },
+        },
+        {
+          provide: RequestMetadataService,
+          useValue: mockRequestMetadataService,
+        },
+        // AuditService intentionally NOT provided
+      ],
+    }).compile();
+
+    const svc = module.get<AuthService>(AuthService);
+    const result = await svc.Login({
+      username: 'admin',
+      password: 'password123',
+    });
+
+    expect(result).toBeDefined();
+    expect(result.token).toBe('access');
+  });
+
+  it('should complete refresh successfully when AuditService is not provided', async () => {
+    const mockUser = new User();
+    mockUser.id = 'user-id';
+    mockUser.userName = 'admin';
+    mockUser.moodleUserId = 1;
+
+    const rawRefreshToken = 'raw-refresh-token';
+    const hashedToken = await bcrypt.hash(rawRefreshToken, 10);
+
+    const storedToken = new RefreshToken();
+    storedToken.id = 'token-id';
+    storedToken.tokenHash = hashedToken;
+    storedToken.userId = 'user-id';
+    storedToken.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    storedToken.isActive = true;
+    storedToken.browserName = 'test';
+    storedToken.os = 'test';
+    storedToken.ipAddress = '127.0.0.1';
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        {
+          provide: LOGIN_STRATEGIES,
+          useValue: [],
+        },
+        {
+          provide: CustomJwtService,
+          useValue: {
+            CreateSignedTokens: jest.fn().mockResolvedValue({
+              token: 'new-access',
+              refreshToken: 'new-refresh',
+            }),
+          },
+        },
+        {
+          provide: UnitOfWork,
+          useValue: {
+            runInTransaction: jest
+              .fn()
+              .mockImplementation((cb: (em: EntityManager) => unknown) =>
+                cb({
+                  getRepository: jest.fn().mockReturnValue({
+                    find: jest.fn().mockResolvedValue([storedToken]),
+                  }),
+                  findOneOrFail: jest.fn().mockResolvedValue(mockUser),
+                } as unknown as EntityManager),
+              ),
+          },
+        },
+        {
+          provide: CurrentUserService,
+          useValue: {
+            get: jest.fn(),
+            getOrFail: jest.fn().mockReturnValue(mockUser),
+            getUserId: jest.fn().mockReturnValue('user-id'),
+            set: jest.fn(),
+            setJwtPayload: jest.fn(),
+          },
+        },
+        {
+          provide: RequestMetadataService,
+          useValue: mockRequestMetadataService,
+        },
+        // AuditService intentionally NOT provided
+      ],
+    }).compile();
+
+    const svc = module.get<AuthService>(AuthService);
+    const result = await svc.RefreshToken('user-id', rawRefreshToken);
+
+    expect(result).toBeDefined();
+    expect(result.token).toBe('new-access');
+  });
+
+  it('should still throw UnauthorizedException on login failure when AuditService is not provided', async () => {
+    const mockLocalStrategy: jest.Mocked<LoginStrategy> = {
+      priority: 10,
+      CanHandle: jest.fn().mockReturnValue(false),
+      Execute: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        {
+          provide: LOGIN_STRATEGIES,
+          useValue: [mockLocalStrategy],
+        },
+        {
+          provide: CustomJwtService,
+          useValue: { CreateSignedTokens: jest.fn() },
+        },
+        {
+          provide: UnitOfWork,
+          useValue: {
+            runInTransaction: jest
+              .fn()
+              .mockImplementation((cb: (em: EntityManager) => unknown) =>
+                cb({
+                  findOne: jest.fn().mockResolvedValue(null),
+                } as unknown as EntityManager),
+              ),
+          },
+        },
+        {
+          provide: CurrentUserService,
+          useValue: {
+            get: jest.fn(),
+            getOrFail: jest.fn(),
+            getUserId: jest.fn(),
+            set: jest.fn(),
+            setJwtPayload: jest.fn(),
+          },
+        },
+        {
+          provide: RequestMetadataService,
+          useValue: mockRequestMetadataService,
+        },
+        // AuditService intentionally NOT provided
+      ],
+    }).compile();
+
+    const svc = module.get<AuthService>(AuthService);
+    await expect(
+      svc.Login({ username: 'bad', password: 'bad' }),
+    ).rejects.toThrow(UnauthorizedException);
   });
 });
 

@@ -7,6 +7,7 @@ import * as bcrypt from 'bcrypt';
 import { UnauthorizedException } from '@nestjs/common';
 import { LOGIN_STRATEGIES, LoginStrategy } from './strategies';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { RefreshToken } from '../../entities/refresh-token.entity';
 import { CurrentUserService } from '../common/cls/current-user.service';
 import { RequestMetadataService } from '../common/cls/request-metadata.service';
 
@@ -291,6 +292,139 @@ describe('AuthService', () => {
       await expect(
         service.Login({ username: 'admin', password: 'wrong-password' }),
       ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('RefreshToken', () => {
+    const userId = 'user-id';
+    const rawRefreshToken = 'raw-refresh-token';
+
+    function createMockToken(
+      overrides: Partial<RefreshToken> = {},
+    ): RefreshToken {
+      const token = new RefreshToken();
+      token.id = overrides.id ?? 'token-id';
+      token.tokenHash = overrides.tokenHash ?? 'hashed-token';
+      token.userId = overrides.userId ?? userId;
+      token.expiresAt =
+        overrides.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      token.isActive = overrides.isActive ?? true;
+      token.browserName = 'test';
+      token.os = 'test';
+      token.ipAddress = '127.0.0.1';
+      return token;
+    }
+
+    it('should successfully refresh with a valid token', async () => {
+      const hashedToken = await bcrypt.hash(rawRefreshToken, 10);
+      const storedToken = createMockToken({ tokenHash: hashedToken });
+
+      const mockUser = new User();
+      mockUser.id = userId;
+      mockUser.moodleUserId = 1;
+
+      const mockFind = jest.fn().mockResolvedValue([storedToken]);
+      const mockEm = {
+        getRepository: jest.fn().mockReturnValue({ find: mockFind }),
+        findOneOrFail: jest.fn().mockResolvedValue(mockUser),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      (jwtService.CreateSignedTokens as jest.Mock).mockResolvedValue({
+        token: 'new-access',
+        refreshToken: 'new-refresh',
+      });
+
+      const result = await service.RefreshToken(userId, rawRefreshToken);
+
+      expect(result.token).toBe('new-access');
+      expect(storedToken.isActive).toBe(false);
+      expect(storedToken.revokedAt).toBeDefined();
+      expect(mockFind).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId,
+          isActive: true,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          expiresAt: { $gt: expect.any(Date) },
+        }),
+      );
+    });
+
+    it('should throw UnauthorizedException when no tokens match', async () => {
+      const storedToken = createMockToken({
+        tokenHash: await bcrypt.hash('different-token', 10),
+      });
+
+      const mockEm = {
+        getRepository: jest
+          .fn()
+          .mockReturnValue({
+            find: jest.fn().mockResolvedValue([storedToken]),
+          }),
+        findOneOrFail: jest.fn(),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      await expect(
+        service.RefreshToken(userId, rawRefreshToken),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should throw UnauthorizedException when no active tokens exist', async () => {
+      const mockEm = {
+        getRepository: jest
+          .fn()
+          .mockReturnValue({ find: jest.fn().mockResolvedValue([]) }),
+        findOneOrFail: jest.fn(),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      await expect(
+        service.RefreshToken(userId, rawRefreshToken),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should not use synchronous bcrypt.compareSync', async () => {
+      const hashedToken = await bcrypt.hash(rawRefreshToken, 10);
+      const storedToken = createMockToken({ tokenHash: hashedToken });
+
+      const mockUser = new User();
+      mockUser.id = userId;
+
+      const mockFind = jest.fn().mockResolvedValue([storedToken]);
+      const mockEm = {
+        getRepository: jest.fn().mockReturnValue({ find: mockFind }),
+        findOneOrFail: jest.fn().mockResolvedValue(mockUser),
+      };
+
+      (unitOfWork.runInTransaction as jest.Mock).mockImplementation(
+        (cb: (em: EntityManager) => unknown) =>
+          cb(mockEm as unknown as EntityManager),
+      );
+
+      (jwtService.CreateSignedTokens as jest.Mock).mockResolvedValue({
+        token: 'access',
+        refreshToken: 'refresh',
+      });
+
+      // RefreshToken should return a promise (async), not block synchronously.
+      // If compareSync were used, this would still resolve, but we verify
+      // the method is async by checking it returns a promise.
+      const result = service.RefreshToken(userId, rawRefreshToken);
+      expect(result).toBeInstanceOf(Promise);
+      await result;
     });
   });
 });

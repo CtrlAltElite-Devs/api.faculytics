@@ -87,13 +87,18 @@ export class AuthService {
       const storedTokens = await refreshTokenRepository.find({
         userId,
         isActive: true,
+        expiresAt: { $gt: new Date() },
       });
 
-      const matchingToken = storedTokens.find((token) =>
-        bcrypt.compareSync(refreshToken, token.tokenHash),
+      const comparisons = await Promise.all(
+        storedTokens.map(async (token) => ({
+          token,
+          isMatch: await bcrypt.compare(refreshToken, token.tokenHash),
+        })),
       );
+      const matchingToken = comparisons.find((c) => c.isMatch)?.token;
 
-      if (!matchingToken || matchingToken.expiresAt < new Date()) {
+      if (!matchingToken) {
         throw new UnauthorizedException();
       }
 

@@ -10,6 +10,9 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { RefreshToken } from '../../entities/refresh-token.entity';
 import { CurrentUserService } from '../common/cls/current-user.service';
 import { RequestMetadataService } from '../common/cls/request-metadata.service';
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
+import { LoginRequest } from './dto/requests/login.request.dto';
 
 const mockMetadata = {
   browserName: 'test',
@@ -426,5 +429,47 @@ describe('AuthService', () => {
       expect(result).toBeInstanceOf(Promise);
       await result;
     });
+  });
+});
+
+describe('LoginRequest DTO validation', () => {
+  const toDto = (plain: Record<string, unknown>) =>
+    plainToInstance(LoginRequest, plain);
+
+  it('should pass with valid username and password', async () => {
+    const errors = await validate(
+      toDto({ username: 'admin', password: 'password123' }),
+    );
+    expect(errors).toHaveLength(0);
+  });
+
+  it('should fail when username is empty', async () => {
+    const errors = await validate(
+      toDto({ username: '', password: 'password123' }),
+    );
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe('username');
+  });
+
+  it('should fail when password is empty', async () => {
+    const errors = await validate(toDto({ username: 'admin', password: '' }));
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe('password');
+  });
+
+  it('should fail when username exceeds max length', async () => {
+    const errors = await validate(
+      toDto({ username: 'a'.repeat(101), password: 'password123' }),
+    );
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe('username');
+  });
+
+  it('should fail when password exceeds max length', async () => {
+    const errors = await validate(
+      toDto({ username: 'admin', password: 'a'.repeat(256) }),
+    );
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].property).toBe('password');
   });
 });

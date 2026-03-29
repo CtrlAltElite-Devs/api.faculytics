@@ -48,6 +48,9 @@ openapi.yaml
 .temp
 .tmp
 
+# Audit output (ephemeral — real output is GitHub issues)
+/audit/
+
 # Runtime data
 pids
 *.pid

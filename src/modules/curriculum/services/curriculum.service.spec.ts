@@ -10,7 +10,7 @@ import { ScopeResolverService } from 'src/modules/common/services/scope-resolver
 
 describe('CurriculumService', () => {
   let service: CurriculumService;
-  let em: { findOne: jest.Mock; find: jest.Mock };
+  let em: { findOne: jest.Mock; findAndCount: jest.Mock };
   let scopeResolver: { ResolveDepartmentIds: jest.Mock };
 
   const semesterId = 'semester-1';
@@ -22,7 +22,7 @@ describe('CurriculumService', () => {
   beforeEach(async () => {
     em = {
       findOne: jest.fn(),
-      find: jest.fn(),
+      findAndCount: jest.fn(),
     };
 
     scopeResolver = {
@@ -44,6 +44,14 @@ describe('CurriculumService', () => {
     em.findOne.mockResolvedValueOnce({ id: semesterId });
   }
 
+  const emptyMeta = (page = 1, limit = 10) => ({
+    totalItems: 0,
+    itemCount: 0,
+    itemsPerPage: limit,
+    totalPages: 0,
+    currentPage: page,
+  });
+
   // ─── ListDepartments ──────────────────────────────────────────────
 
   describe('ListDepartments', () => {
@@ -55,14 +63,16 @@ describe('CurriculumService', () => {
         { id: deptId, code: 'CCS', name: 'College of Computer Studies' },
         { id: deptId2, code: 'CBA', name: 'College of Business Admin' },
       ];
-      em.find.mockResolvedValue(departments);
+      em.findAndCount.mockResolvedValue([departments, 2]);
 
       const result = await service.ListDepartments({ semesterId });
 
-      expect(result).toHaveLength(2);
-      expect(result[0].id).toBe(deptId);
-      expect(result[0].code).toBe('CCS');
-      expect(result[0].name).toBe('College of Computer Studies');
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].id).toBe(deptId);
+      expect(result.data[0].code).toBe('CCS');
+      expect(result.data[0].name).toBe('College of Computer Studies');
+      expect(result.meta.totalItems).toBe(2);
+      expect(result.meta.currentPage).toBe(1);
       expect(scopeResolver.ResolveDepartmentIds).toHaveBeenCalledWith(
         semesterId,
       );
@@ -75,37 +85,38 @@ describe('CurriculumService', () => {
       const departments = [
         { id: deptId, code: 'CCS', name: 'College of Computer Studies' },
       ];
-      em.find.mockResolvedValue(departments);
+      em.findAndCount.mockResolvedValue([departments, 1]);
 
       const result = await service.ListDepartments({ semesterId });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].code).toBe('CCS');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].code).toBe('CCS');
       // Verify scope filter was applied
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({ id: { $in: [deptId] } }),
       );
     });
 
-    it('should return [] when dean has empty scope', async () => {
+    it('should return empty page when dean has empty scope', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([]);
 
       const result = await service.ListDepartments({ semesterId });
 
-      expect(result).toEqual([]);
-      expect(em.find).not.toHaveBeenCalled();
+      expect(result.data).toEqual([]);
+      expect(result.meta).toEqual(emptyMeta());
+      expect(em.findAndCount).not.toHaveBeenCalled();
     });
 
     it('should filter by search on code and name (OR, ILIKE)', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       await service.ListDepartments({ semesterId, search: 'Comp' });
 
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({
           $and: [
@@ -123,11 +134,11 @@ describe('CurriculumService', () => {
     it('should escape LIKE wildcards in search', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       await service.ListDepartments({ semesterId, search: '%admin_test' });
 
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({
           $and: [
@@ -150,24 +161,25 @@ describe('CurriculumService', () => {
       );
     });
 
-    it('should return [] when no departments match', async () => {
+    it('should return empty page when no departments match', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       const result = await service.ListDepartments({ semesterId });
 
-      expect(result).toEqual([]);
+      expect(result.data).toEqual([]);
+      expect(result.meta.totalItems).toBe(0);
     });
 
     it('should apply both scope restriction and search simultaneously', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       await service.ListDepartments({ semesterId, search: 'CCS' });
 
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({
           id: { $in: [deptId] },
@@ -186,11 +198,64 @@ describe('CurriculumService', () => {
     it('should handle department with null name', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([{ id: deptId, code: 'CCS', name: undefined }]);
+      em.findAndCount.mockResolvedValue([
+        [{ id: deptId, code: 'CCS', name: undefined }],
+        1,
+      ]);
 
       const result = await service.ListDepartments({ semesterId });
 
-      expect(result[0].name).toBeNull();
+      expect(result.data[0].name).toBeNull();
+    });
+
+    it('should pass limit and offset to findAndCount with default pagination', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+      em.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.ListDepartments({ semesterId });
+
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
+      expect(findCall[2]).toEqual(
+        expect.objectContaining({ limit: 10, offset: 0 }),
+      );
+    });
+
+    it('should pass custom page and limit to findAndCount', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+      em.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.ListDepartments({ semesterId, page: 3, limit: 5 });
+
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
+      expect(findCall[2]).toEqual(
+        expect.objectContaining({ limit: 5, offset: 10 }),
+      );
+    });
+
+    it('should compute pagination meta correctly', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+
+      const departments = [
+        { id: deptId, code: 'CCS', name: 'College of Computer Studies' },
+      ];
+      em.findAndCount.mockResolvedValue([departments, 25]);
+
+      const result = await service.ListDepartments({
+        semesterId,
+        page: 2,
+        limit: 10,
+      });
+
+      expect(result.meta).toEqual({
+        totalItems: 25,
+        itemCount: 1,
+        itemsPerPage: 10,
+        totalPages: 3,
+        currentPage: 2,
+      });
     });
   });
 
@@ -215,27 +280,28 @@ describe('CurriculumService', () => {
           department: { id: deptId },
         },
       ];
-      em.find.mockResolvedValue(programs);
+      em.findAndCount.mockResolvedValue([programs, 2]);
 
       const result = await service.ListPrograms({ semesterId });
 
-      expect(result).toHaveLength(2);
-      expect(result[0].departmentId).toBe(deptId);
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].departmentId).toBe(deptId);
+      expect(result.meta.totalItems).toBe(2);
     });
 
-    it('should return [] for super admin with non-existent departmentId', async () => {
+    it('should return empty page for super admin with non-existent departmentId', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       const result = await service.ListPrograms({
         semesterId,
         departmentId: 'non-existent',
       });
 
-      expect(result).toEqual([]);
+      expect(result.data).toEqual([]);
       // Verify filter includes the departmentId
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -256,21 +322,21 @@ describe('CurriculumService', () => {
           department: { id: deptId },
         },
       ];
-      em.find.mockResolvedValue(programs);
+      em.findAndCount.mockResolvedValue([programs, 1]);
 
       const result = await service.ListPrograms({ semesterId });
 
-      expect(result).toHaveLength(1);
+      expect(result.data).toHaveLength(1);
     });
 
     it('should narrow results with departmentId within scope', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId, deptId2]);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       await service.ListPrograms({ semesterId, departmentId: deptId });
 
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -291,11 +357,11 @@ describe('CurriculumService', () => {
     it('should filter by search on code and name (OR)', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       await service.ListPrograms({ semesterId, search: 'BS' });
 
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({
           $and: [
@@ -307,24 +373,39 @@ describe('CurriculumService', () => {
       );
     });
 
-    it('should return [] when no programs match', async () => {
+    it('should return empty page when no programs match', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       const result = await service.ListPrograms({ semesterId });
 
-      expect(result).toEqual([]);
+      expect(result.data).toEqual([]);
+      expect(result.meta.totalItems).toBe(0);
     });
 
-    it('should return [] when dean has empty scope and no departmentId', async () => {
+    it('should return empty page when dean has empty scope and no departmentId', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([]);
 
       const result = await service.ListPrograms({ semesterId });
 
-      expect(result).toEqual([]);
-      expect(em.find).not.toHaveBeenCalled();
+      expect(result.data).toEqual([]);
+      expect(result.meta).toEqual(emptyMeta());
+      expect(em.findAndCount).not.toHaveBeenCalled();
+    });
+
+    it('should pass limit and offset with custom pagination', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+      em.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.ListPrograms({ semesterId, page: 2, limit: 15 });
+
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
+      expect(findCall[2]).toEqual(
+        expect.objectContaining({ limit: 15, offset: 15 }),
+      );
     });
   });
 
@@ -359,15 +440,16 @@ describe('CurriculumService', () => {
           isActive: false,
         },
       ];
-      em.find.mockResolvedValue(courses);
+      em.findAndCount.mockResolvedValue([courses, 2]);
 
       const result = await service.ListCourses({
         semesterId,
         departmentId: deptId,
       });
 
-      expect(result).toHaveLength(2);
-      expect(result[0].programId).toBe(programId);
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].programId).toBe(programId);
+      expect(result.meta.totalItems).toBe(2);
     });
 
     it('should return courses for dean with programId within scope', async () => {
@@ -388,14 +470,14 @@ describe('CurriculumService', () => {
           isActive: true,
         },
       ];
-      em.find.mockResolvedValue(courses);
+      em.findAndCount.mockResolvedValue([courses, 1]);
 
       const result = await service.ListCourses({
         semesterId,
         programId,
       });
 
-      expect(result).toHaveLength(1);
+      expect(result.data).toHaveLength(1);
     });
 
     it('should throw 403 when dean provides programId outside scope', async () => {
@@ -444,7 +526,7 @@ describe('CurriculumService', () => {
     it('should filter by search on shortname and fullname (OR)', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       await service.ListCourses({
         semesterId,
@@ -452,7 +534,7 @@ describe('CurriculumService', () => {
         search: 'NET',
       });
 
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({
           $and: [
@@ -487,19 +569,19 @@ describe('CurriculumService', () => {
           isActive: false,
         },
       ];
-      em.find.mockResolvedValue(courses);
+      em.findAndCount.mockResolvedValue([courses, 2]);
 
       const result = await service.ListCourses({
         semesterId,
         departmentId: deptId,
       });
 
-      expect(result).toHaveLength(2);
-      expect(result[0].isActive).toBe(true);
-      expect(result[1].isActive).toBe(false);
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0].isActive).toBe(true);
+      expect(result.data[1].isActive).toBe(false);
 
       // Verify no isActive filter was applied
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).not.toHaveProperty('isActive');
     });
 
@@ -526,17 +608,18 @@ describe('CurriculumService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('should return [] when no courses match', async () => {
+    it('should return empty page when no courses match', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.find.mockResolvedValue([]);
+      em.findAndCount.mockResolvedValue([[], 0]);
 
       const result = await service.ListCourses({
         semesterId,
         departmentId: deptId,
       });
 
-      expect(result).toEqual([]);
+      expect(result.data).toEqual([]);
+      expect(result.meta.totalItems).toBe(0);
     });
 
     it('should throw 404 for non-existent semesterId', async () => {
@@ -547,7 +630,7 @@ describe('CurriculumService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should return [] when dean has empty scope with departmentId', async () => {
+    it('should return empty page when dean has empty scope with departmentId', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([]);
 
@@ -588,7 +671,7 @@ describe('CurriculumService', () => {
           isActive: true,
         },
       ];
-      em.find.mockResolvedValue(courses);
+      em.findAndCount.mockResolvedValue([courses, 1]);
 
       const result = await service.ListCourses({
         semesterId,
@@ -596,17 +679,66 @@ describe('CurriculumService', () => {
         programId,
       });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].shortname).toBe('FREAI');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].shortname).toBe('FREAI');
 
       // Verify filter includes both constraints
-      const findCall = em.find.mock.calls[0] as unknown[];
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
       expect(findCall[1]).toEqual(
         expect.objectContaining({
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           program: expect.objectContaining({ id: programId }),
         }),
       );
+    });
+
+    it('should pass limit and offset with custom pagination', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+      em.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.ListCourses({
+        semesterId,
+        departmentId: deptId,
+        page: 4,
+        limit: 25,
+      });
+
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
+      expect(findCall[2]).toEqual(
+        expect.objectContaining({ limit: 25, offset: 75 }),
+      );
+    });
+
+    it('should compute pagination meta correctly for courses', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+
+      const courses = [
+        {
+          id: 'c1',
+          shortname: 'FREAI',
+          fullname: 'Free Elective AI',
+          program: { id: programId },
+          isActive: true,
+        },
+      ];
+      em.findAndCount.mockResolvedValue([courses, 50]);
+
+      const result = await service.ListCourses({
+        semesterId,
+        departmentId: deptId,
+        page: 3,
+        limit: 10,
+      });
+
+      expect(result.meta).toEqual({
+        totalItems: 50,
+        itemCount: 1,
+        itemsPerPage: 10,
+        totalPages: 5,
+        currentPage: 3,
+      });
     });
   });
 });

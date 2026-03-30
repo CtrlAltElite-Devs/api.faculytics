@@ -6,8 +6,9 @@ import {
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PaginationQueryDto } from 'src/modules/common/dto/pagination-query.dto';
 
-export class ListDepartmentsQueryDto {
+export class ListDepartmentsQueryDto extends PaginationQueryDto {
   @ApiProperty({ description: 'Semester UUID to scope department list' })
   @IsUUID()
   @IsNotEmpty()

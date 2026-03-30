@@ -30,6 +30,7 @@ import { TopicAssignment } from './topic-assignment.entity';
 import { Section } from './section.entity';
 import { TopicModelRun } from './topic-model-run.entity';
 import { SyncLog } from './sync-log.entity';
+import { AuditLog } from './audit-log.entity';
 
 export {
   ChatKitThread,
@@ -64,6 +65,7 @@ export {
   TopicAssignment,
   TopicModelRun,
   SyncLog,
+  AuditLog,
 };
 
 export const entities = [
@@ -99,4 +101,5 @@ export const entities = [
   TopicAssignment,
   TopicModelRun,
   SyncLog,
+  AuditLog,
 ];

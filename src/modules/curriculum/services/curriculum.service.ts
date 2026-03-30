@@ -15,8 +15,11 @@ import { ListDepartmentsQueryDto } from '../dto/requests/list-departments-query.
 import { ListProgramsQueryDto } from '../dto/requests/list-programs-query.dto';
 import { ListCoursesQueryDto } from '../dto/requests/list-courses-query.dto';
 import { DepartmentItemResponseDto } from '../dto/responses/department-item.response.dto';
+import { DepartmentListResponseDto } from '../dto/responses/department-list.response.dto';
 import { ProgramItemResponseDto } from '../dto/responses/program-item.response.dto';
+import { ProgramListResponseDto } from '../dto/responses/program-list.response.dto';
 import { CourseItemResponseDto } from '../dto/responses/course-item.response.dto';
+import { CourseListResponseDto } from '../dto/responses/course-list.response.dto';
 
 @Injectable()
 export class CurriculumService {
@@ -27,8 +30,12 @@ export class CurriculumService {
 
   async ListDepartments(
     query: ListDepartmentsQueryDto,
-  ): Promise<DepartmentItemResponseDto[]> {
+  ): Promise<DepartmentListResponseDto> {
     await this.ValidateSemester(query.semesterId);
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const offset = (page - 1) * limit;
 
     const departmentIds = await this.scopeResolverService.ResolveDepartmentIds(
       query.semesterId,
@@ -40,36 +47,43 @@ export class CurriculumService {
 
     if (departmentIds !== null) {
       if (departmentIds.length === 0) {
-        return [];
+        return this.BuildEmptyPage(page, limit);
       }
       Object.assign(filter, { id: { $in: departmentIds } });
     }
 
-    if (query.search) {
-      const escaped = this.EscapeLikeWildcards(query.search);
-      Object.assign(filter, {
-        $and: [
-          {
-            $or: [
-              { code: { $ilike: `%${escaped}%` } },
-              { name: { $ilike: `%${escaped}%` } },
-            ],
-          },
-        ],
-      });
-    }
+    this.ApplySearchFilter(filter, query.search, ['code', 'name']);
 
-    const departments = await this.em.find(Department, filter, {
-      orderBy: { name: QueryOrder.ASC_NULLS_LAST },
-    });
+    const [departments, totalItems] = await this.em.findAndCount(
+      Department,
+      filter,
+      {
+        orderBy: { name: QueryOrder.ASC_NULLS_LAST },
+        limit,
+        offset,
+      },
+    );
 
-    return departments.map((d) => DepartmentItemResponseDto.Map(d));
+    return {
+      data: departments.map((d) => DepartmentItemResponseDto.Map(d)),
+      meta: {
+        totalItems,
+        itemCount: departments.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   async ListPrograms(
     query: ListProgramsQueryDto,
-  ): Promise<ProgramItemResponseDto[]> {
+  ): Promise<ProgramListResponseDto> {
     await this.ValidateSemester(query.semesterId);
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const offset = (page - 1) * limit;
 
     const departmentIds = await this.scopeResolverService.ResolveDepartmentIds(
       query.semesterId,
@@ -83,7 +97,7 @@ export class CurriculumService {
       }
     }
 
-    const departmentFilter: Record<string, unknown> = {
+    const departmentFilter: FilterQuery<Department> = {
       semester: query.semesterId,
     };
 
@@ -91,40 +105,39 @@ export class CurriculumService {
       departmentFilter.id = query.departmentId;
     } else if (departmentIds !== null) {
       if (departmentIds.length === 0) {
-        return [];
+        return this.BuildEmptyPage(page, limit);
       }
       departmentFilter.id = { $in: departmentIds };
     }
 
     const filter: FilterQuery<Program> = {
       department: departmentFilter,
-    } as FilterQuery<Program>;
+    };
 
-    if (query.search) {
-      const escaped = this.EscapeLikeWildcards(query.search);
-      Object.assign(filter, {
-        $and: [
-          {
-            $or: [
-              { code: { $ilike: `%${escaped}%` } },
-              { name: { $ilike: `%${escaped}%` } },
-            ],
-          },
-        ],
-      });
-    }
+    this.ApplySearchFilter(filter, query.search, ['code', 'name']);
 
-    const programs = await this.em.find(Program, filter, {
+    const [programs, totalItems] = await this.em.findAndCount(Program, filter, {
       populate: ['department'],
       orderBy: { name: QueryOrder.ASC_NULLS_LAST },
+      limit,
+      offset,
     });
 
-    return programs.map((p) => ProgramItemResponseDto.Map(p));
+    return {
+      data: programs.map((p) => ProgramItemResponseDto.Map(p)),
+      meta: {
+        totalItems,
+        itemCount: programs.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   async ListCourses(
     query: ListCoursesQueryDto,
-  ): Promise<CourseItemResponseDto[]> {
+  ): Promise<CourseListResponseDto> {
     await this.ValidateSemester(query.semesterId);
 
     if (!query.programId && !query.departmentId) {
@@ -132,6 +145,10 @@ export class CurriculumService {
         'At least one of programId or departmentId is required.',
       );
     }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const offset = (page - 1) * limit;
 
     const departmentIds = await this.scopeResolverService.ResolveDepartmentIds(
       query.semesterId,
@@ -177,7 +194,7 @@ export class CurriculumService {
     }
 
     // Build filter
-    const departmentFilter: Record<string, unknown> = {
+    const departmentFilter: FilterQuery<Department> = {
       semester: query.semesterId,
     };
 
@@ -185,12 +202,12 @@ export class CurriculumService {
       departmentFilter.id = query.departmentId;
     } else if (departmentIds !== null) {
       if (departmentIds.length === 0) {
-        return [];
+        return this.BuildEmptyPage(page, limit);
       }
       departmentFilter.id = { $in: departmentIds };
     }
 
-    const programFilter: Record<string, unknown> = {
+    const programFilter: FilterQuery<Program> = {
       department: departmentFilter,
     };
 
@@ -200,28 +217,27 @@ export class CurriculumService {
 
     const filter: FilterQuery<Course> = {
       program: programFilter,
-    } as FilterQuery<Course>;
+    };
 
-    if (query.search) {
-      const escaped = this.EscapeLikeWildcards(query.search);
-      Object.assign(filter, {
-        $and: [
-          {
-            $or: [
-              { shortname: { $ilike: `%${escaped}%` } },
-              { fullname: { $ilike: `%${escaped}%` } },
-            ],
-          },
-        ],
-      });
-    }
+    this.ApplySearchFilter(filter, query.search, ['shortname', 'fullname']);
 
-    const courses = await this.em.find(Course, filter, {
+    const [courses, totalItems] = await this.em.findAndCount(Course, filter, {
       populate: ['program'],
       orderBy: { shortname: QueryOrder.ASC },
+      limit,
+      offset,
     });
 
-    return courses.map((c) => CourseItemResponseDto.Map(c));
+    return {
+      data: courses.map((c) => CourseItemResponseDto.Map(c)),
+      meta: {
+        totalItems,
+        itemCount: courses.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
   }
 
   private async ValidateSemester(semesterId: string): Promise<void> {
@@ -233,10 +249,41 @@ export class CurriculumService {
     }
   }
 
+  private ApplySearchFilter(
+    filter: Record<string, unknown>,
+    search: string | undefined,
+    fields: [string, string],
+  ): void {
+    if (!search) return;
+    const escaped = this.EscapeLikeWildcards(search);
+    Object.assign(filter, {
+      $and: [
+        {
+          $or: fields.map((field) => ({
+            [field]: { $ilike: `%${escaped}%` },
+          })),
+        },
+      ],
+    });
+  }
+
   private EscapeLikeWildcards(input: string): string {
     return input
       .replace(/\\/g, '\\\\')
       .replace(/%/g, '\\%')
       .replace(/_/g, '\\_');
+  }
+
+  private BuildEmptyPage(page: number, limit: number) {
+    return {
+      data: [],
+      meta: {
+        totalItems: 0,
+        itemCount: 0,
+        itemsPerPage: limit,
+        totalPages: 0,
+        currentPage: page,
+      },
+    };
   }
 }

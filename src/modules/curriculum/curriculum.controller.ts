@@ -7,9 +7,9 @@ import { CurriculumService } from './services/curriculum.service';
 import { ListDepartmentsQueryDto } from './dto/requests/list-departments-query.dto';
 import { ListProgramsQueryDto } from './dto/requests/list-programs-query.dto';
 import { ListCoursesQueryDto } from './dto/requests/list-courses-query.dto';
-import { DepartmentItemResponseDto } from './dto/responses/department-item.response.dto';
-import { ProgramItemResponseDto } from './dto/responses/program-item.response.dto';
-import { CourseItemResponseDto } from './dto/responses/course-item.response.dto';
+import { DepartmentListResponseDto } from './dto/responses/department-list.response.dto';
+import { ProgramListResponseDto } from './dto/responses/program-list.response.dto';
+import { CourseListResponseDto } from './dto/responses/course-list.response.dto';
 
 @ApiTags('Curriculum')
 @Controller('curriculum')
@@ -20,28 +20,28 @@ export class CurriculumController {
 
   @Get('departments')
   @ApiOperation({ summary: 'List departments scoped to caller role' })
-  @ApiResponse({ status: 200, type: [DepartmentItemResponseDto] })
+  @ApiResponse({ status: 200, type: DepartmentListResponseDto })
   async ListDepartments(
     @Query() query: ListDepartmentsQueryDto,
-  ): Promise<DepartmentItemResponseDto[]> {
+  ): Promise<DepartmentListResponseDto> {
     return this.curriculumService.ListDepartments(query);
   }
 
   @Get('programs')
   @ApiOperation({ summary: 'List programs scoped to caller role' })
-  @ApiResponse({ status: 200, type: [ProgramItemResponseDto] })
+  @ApiResponse({ status: 200, type: ProgramListResponseDto })
   async ListPrograms(
     @Query() query: ListProgramsQueryDto,
-  ): Promise<ProgramItemResponseDto[]> {
+  ): Promise<ProgramListResponseDto> {
     return this.curriculumService.ListPrograms(query);
   }
 
   @Get('courses')
   @ApiOperation({ summary: 'List courses scoped to caller role' })
-  @ApiResponse({ status: 200, type: [CourseItemResponseDto] })
+  @ApiResponse({ status: 200, type: CourseListResponseDto })
   async ListCourses(
     @Query() query: ListCoursesQueryDto,
-  ): Promise<CourseItemResponseDto[]> {
+  ): Promise<CourseListResponseDto> {
     return this.curriculumService.ListCourses(query);
   }
 }

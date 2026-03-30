@@ -237,6 +237,36 @@ The `MoodleSyncScheduler` was rewritten from a static `@Cron(CronExpression.EVER
 - **Soft-delete filter bypass:** Since `SyncLog` has no `deletedAt` column, MikroORM's global `softDelete` filter would fail at query time. Queries must use `filters: { softDelete: false }`. The `@Filter` decorator approach (`cond: {}, default: false`) was found to be insufficient at runtime.
 - **Trade-off:** Admin schedule changes don't survive process restarts unless persisted to the database (which they are, via `SystemConfig`). The scheduler reads from DB on init, so restarts pick up the latest admin-configured interval.
 
+## 34. Append-Only Audit Entity (No CustomBaseEntity)
+
+The `AuditLog` entity does not extend `CustomBaseEntity`. It has no `updatedAt` or `deletedAt` — records are immutable and never soft-deleted. The `actorId` column is a plain string, not a `@ManyToOne` FK, so audit records survive user deletion.
+
+- **Rationale:** Audit logs must be tamper-evident and permanent. Soft delete semantics would allow "hiding" audit records. FK constraints would cause cascade failures when users are deleted, creating a perverse incentive to retain user data solely for audit integrity.
+- **Precedent:** Follows the `SyncLog` entity pattern. Queries must use `filters: { softDelete: false }` to bypass the global filter.
+- **Trade-off:** No ORM-level relationship to `User` — joins require manual `actorId` matching. Acceptable because audit query endpoints (future) will use raw SQL or query builder, not entity relationships.
+
+## 35. Global AuditModule with @Global() Decorator
+
+`AuditModule` uses the `@Global()` class decorator — the only application module to do so. Infrastructure modules achieve global scope via config options (`isGlobal: true`), but `@Global()` is appropriate here because audit is a cross-cutting concern consumed by many modules.
+
+- **Rationale:** Without `@Global()`, every module that uses `@Audited()` endpoints would need to explicitly import `AuditModule`. Since the interceptor is applied per-endpoint (not per-module), this friction discourages adoption with no compensating benefit.
+- **Trade-off:** `AuditService` is injectable everywhere, which could lead to misuse. Mitigated by the fire-and-forget API — `Emit()` has no return value and catches all errors internally.
+
+## 36. Dual Audit Emission Paths (Interceptor + Direct)
+
+Audit events are captured through two paths: an interceptor for standard authenticated endpoints, and direct `AuditService.Emit()` calls for auth events.
+
+- **Rationale:** The interceptor path requires CLS context (`CurrentUserService`, `RequestMetadataService`), which is unavailable during login (no JWT yet) and inconsistently available during token refresh. Rather than forcing all audit events through one path, two paths allow each context to use the most natural capture mechanism.
+- **Convergence:** Both paths feed the same `AuditService.Emit()` → AUDIT queue → `AuditProcessor` → `audit_log` table pipeline. The entity schema is identical regardless of emission path.
+- **Trade-off:** Two integration patterns to understand. Mitigated by clear separation — interceptor path is decorator-driven (declarative), direct path is explicit method calls in `AuthService` only.
+
+## 37. Sanitized Audit Metadata (No Raw Error Messages)
+
+Login failure audit events store a fixed reason code (`no_matching_strategy`, `strategy_execution_failed`) instead of the raw `error.message`.
+
+- **Rationale:** Raw error messages may contain connection strings, hostnames, SQL fragments, or stack traces — especially from Moodle connectivity errors or database driver failures. Persisting these in an immutable, append-only table creates a permanent information disclosure risk.
+- **Trade-off:** Less diagnostic detail in audit logs. Full error details are still available in application logs (which are rotatable and not permanent).
+
 ## 30. Semester Code Parsing for Display Labels
 
 The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.

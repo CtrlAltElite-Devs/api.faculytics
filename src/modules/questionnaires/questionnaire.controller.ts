@@ -44,6 +44,10 @@ import { IngestionResultDto } from './ingestion/dto/ingestion-result.dto';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from '../auth/roles.enum';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
+import { MetaDataInterceptor } from '../common/interceptors/metadata.interceptor';
+import { AuditInterceptor } from '../audit/interceptors/audit.interceptor';
+import { Audited } from '../audit/decorators/audited.decorator';
+import { AuditAction } from '../audit/audit-action.enum';
 import { IngestionEngine } from './ingestion/services/ingestion-engine.service';
 import { CSVAdapter } from './ingestion/adapters/csv.adapter';
 import { CSVAdapterConfig } from './ingestion/types/csv-adapter-config.type';
@@ -273,6 +277,15 @@ export class QuestionnaireController {
 
   @Post('submissions')
   @UseJwtGuard()
+  @Audited({
+    action: AuditAction.QUESTIONNAIRE_SUBMIT,
+    resource: 'QuestionnaireSubmission',
+  })
+  @UseInterceptors(
+    MetaDataInterceptor,
+    CurrentUserInterceptor,
+    AuditInterceptor,
+  )
   @ApiOperation({ summary: 'Submit a completed questionnaire' })
   async submitQuestionnaire(
     @Body() data: SubmitQuestionnaireRequest,
@@ -348,11 +361,17 @@ export class QuestionnaireController {
     UserRole.DEAN,
     UserRole.CHAIRPERSON,
   )
+  @Audited({
+    action: AuditAction.QUESTIONNAIRE_INGEST,
+    resource: 'QuestionnaireSubmission',
+  })
   @UseInterceptors(
+    MetaDataInterceptor,
     FileInterceptor('file', {
       fileFilter: csvFileFilter,
       limits: { fileSize: 5 * 1024 * 1024 },
     }),
+    AuditInterceptor,
   )
   @ApiOperation({ summary: 'Ingest questionnaire submissions from CSV' })
   @ApiConsumes('multipart/form-data')
@@ -427,6 +446,11 @@ export class QuestionnaireController {
 
   @Delete('versions/:versionId/submissions')
   @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @Audited({
+    action: AuditAction.QUESTIONNAIRE_SUBMISSIONS_WIPE,
+    resource: 'QuestionnaireVersion',
+  })
+  @UseInterceptors(MetaDataInterceptor, AuditInterceptor)
   @ApiOperation({ summary: 'Wipe all submissions for a version' })
   @ApiResponse({
     status: 200,

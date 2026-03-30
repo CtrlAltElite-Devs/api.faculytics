@@ -5,6 +5,7 @@ export const QueueName = {
   RECOMMENDATIONS: 'recommendations',
   MOODLE_SYNC: 'moodle-sync',
   ANALYTICS_REFRESH: 'analytics-refresh',
+  AUDIT: 'audit',
 } as const;
 
 export type QueueName = (typeof QueueName)[keyof typeof QueueName];

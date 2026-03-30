@@ -12,6 +12,9 @@ import { LoginRequest } from './dto/requests/login.request.dto';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
 import { Throttle, UseJwtGuard } from 'src/security/decorators';
 import { MetaDataInterceptor } from '../common/interceptors/metadata.interceptor';
+import { AuditInterceptor } from '../audit/interceptors/audit.interceptor';
+import { Audited } from '../audit/decorators/audited.decorator';
+import { AuditAction } from '../audit/audit-action.enum';
 import { JwtRefreshGuard } from 'src/security/guards/refresh-jwt-auth.guard';
 import type { RefreshTokenRequest } from '../common/interceptors/http/refresh-token-request';
 import { RefreshTokenRequestBody } from './dto/requests/refresh-token.request.dto';
@@ -50,7 +53,12 @@ export class AuthController {
 
   @Post('logout')
   @UseJwtGuard()
-  @UseInterceptors(CurrentUserInterceptor)
+  @Audited({ action: AuditAction.AUTH_LOGOUT, resource: 'User' })
+  @UseInterceptors(
+    MetaDataInterceptor,
+    CurrentUserInterceptor,
+    AuditInterceptor,
+  )
   async Logout() {
     await this.authService.Logout();
     return { message: 'Logged out successfully' };

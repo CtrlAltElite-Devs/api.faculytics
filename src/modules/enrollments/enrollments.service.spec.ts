@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EnrollmentsService } from './enrollments.service';
 import { EntityManager } from '@mikro-orm/core';
 import { User } from 'src/entities/user.entity';
+import { Enrollment } from 'src/entities/enrollment.entity';
+import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
 import { CacheService } from '../common/cache/cache.service';
 import { CurrentUserService } from '../common/cls/current-user.service';
 
@@ -92,10 +94,11 @@ describe('EnrollmentsService', () => {
     ];
 
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
-    // Promise.all order: getFacultyByCourseIds first, getSubmissionStatusByCourseIds second
-    (em.find as jest.Mock)
-      .mockResolvedValueOnce(mockFacultyEnrollments)
-      .mockResolvedValueOnce([]);
+    (em.find as jest.Mock).mockImplementation((entity: unknown) => {
+      if (entity === Enrollment) return Promise.resolve(mockFacultyEnrollments);
+      if (entity === QuestionnaireSubmission) return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
 
     const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
@@ -156,9 +159,12 @@ describe('EnrollmentsService', () => {
     const mockSubmissions = [{ course: { id: 'c1' }, submittedAt }];
 
     (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
-    (em.find as jest.Mock)
-      .mockResolvedValueOnce([]) // faculty
-      .mockResolvedValueOnce(mockSubmissions); // submissions
+    (em.find as jest.Mock).mockImplementation((entity: unknown) => {
+      if (entity === Enrollment) return Promise.resolve([]);
+      if (entity === QuestionnaireSubmission)
+        return Promise.resolve(mockSubmissions);
+      return Promise.resolve([]);
+    });
 
     const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
@@ -223,6 +229,58 @@ describe('EnrollmentsService', () => {
     const result = await service.getMyEnrollments({ page: 1, limit: 10 });
 
     expect(result.data[0].semester).toBeNull();
+  });
+
+  it('should return faculty data for teacher role (not just editingteacher)', async () => {
+    const mockEnrollments = [
+      {
+        id: 'e1',
+        role: 'student',
+        course: {
+          id: 'c1',
+          moodleCourseId: 101,
+          shortname: 'CS101',
+          fullname: 'Intro to CS',
+          courseImage: null,
+          program: {
+            department: {
+              semester: {
+                id: 'sem-1',
+                code: 'S12526',
+                label: '1st Semester',
+                academicYear: '2025-2026',
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    const mockFacultyEnrollments = [
+      {
+        course: { id: 'c1' },
+        user: {
+          id: 'faculty-2',
+          fullName: 'Prof. Jones',
+          userName: 'EMP002',
+          userProfilePicture: null,
+        },
+      },
+    ];
+
+    (em.findAndCount as jest.Mock).mockResolvedValue([mockEnrollments, 1]);
+    (em.find as jest.Mock)
+      .mockResolvedValueOnce(mockFacultyEnrollments)
+      .mockResolvedValueOnce([]);
+
+    const result = await service.getMyEnrollments({ page: 1, limit: 10 });
+
+    expect(result.data[0].faculty).toEqual({
+      id: 'faculty-2',
+      fullName: 'Prof. Jones',
+      employeeNumber: 'EMP002',
+      profilePicture: undefined,
+    });
   });
 
   it('should not query faculty or submissions when no enrollments exist', async () => {

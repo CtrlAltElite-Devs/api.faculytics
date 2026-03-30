@@ -7,6 +7,10 @@ import { QueueName } from 'src/configurations/common/queue-names';
 import { RolesGuard } from 'src/security/guards/roles.guard';
 import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-user.interceptor';
+import {
+  auditTestProviders,
+  overrideAuditInterceptors,
+} from 'src/modules/audit/testing/audit-test.helpers';
 import { validate } from 'class-validator';
 import { MoodleSyncController } from './moodle-sync.controller';
 import { MoodleSyncScheduler } from '../schedulers/moodle-sync.scheduler';
@@ -60,7 +64,7 @@ describe('MoodleSyncController', () => {
       getOrFail: jest.fn().mockReturnValue({ id: 'user-1' }),
     };
 
-    const module: TestingModule = await Test.createTestingModule({
+    const builder = Test.createTestingModule({
       controllers: [MoodleSyncController],
       providers: [
         {
@@ -79,18 +83,22 @@ describe('MoodleSyncController', () => {
           provide: CurrentUserService,
           useValue: mockCurrentUserService,
         },
+        ...auditTestProviders(),
       ],
-    })
-      .overrideGuard(AuthGuard('jwt'))
-      .useValue({ canActivate: () => true })
-      .overrideGuard(RolesGuard)
-      .useValue({ canActivate: () => true })
-      .overrideInterceptor(CurrentUserInterceptor)
-      .useValue({
-        intercept: (_ctx: unknown, next: { handle: () => unknown }) =>
-          next.handle(),
-      })
-      .compile();
+    });
+
+    const module: TestingModule = await overrideAuditInterceptors(
+      builder
+        .overrideGuard(AuthGuard('jwt'))
+        .useValue({ canActivate: () => true })
+        .overrideGuard(RolesGuard)
+        .useValue({ canActivate: () => true })
+        .overrideInterceptor(CurrentUserInterceptor)
+        .useValue({
+          intercept: (_ctx: unknown, next: { handle: () => unknown }) =>
+            next.handle(),
+        }),
+    ).compile();
 
     controller = module.get(MoodleSyncController);
   });

@@ -17,6 +17,7 @@ import { FacultyCardResponseDto } from '../dto/responses/faculty-card.response.d
 import { SubmissionCountResponseDto } from '../dto/responses/submission-count.response.dto';
 import { Course } from 'src/entities/course.entity';
 import { FilterQuery } from '@mikro-orm/core';
+import { EnrollmentRole } from 'src/modules/questionnaires/lib/questionnaire.types';
 
 @Injectable()
 export class FacultyService {
@@ -127,7 +128,9 @@ export class FacultyService {
         Enrollment,
         {
           user: { $in: userIds },
-          role: { $in: ['editingteacher', 'teacher'] },
+          role: {
+            $in: [EnrollmentRole.EDITING_TEACHER, EnrollmentRole.TEACHER],
+          },
           isActive: true,
           course: this.BuildCourseFilter(query, departmentIds),
         },

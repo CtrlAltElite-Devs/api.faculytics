@@ -17,6 +17,10 @@ import {
 } from './lib/questionnaire.types';
 import { RolesGuard } from 'src/security/guards/roles.guard';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
+import {
+  auditTestProviders,
+  overrideAuditInterceptors,
+} from '../audit/testing/audit-test.helpers';
 import { AuthGuard } from '@nestjs/passport';
 
 describe('QuestionnaireController - checkSubmission', () => {
@@ -24,7 +28,7 @@ describe('QuestionnaireController - checkSubmission', () => {
   let questionnaireService: jest.Mocked<QuestionnaireService>;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    const builder = Test.createTestingModule({
       controllers: [QuestionnaireController],
       providers: [
         {
@@ -58,17 +62,21 @@ describe('QuestionnaireController - checkSubmission', () => {
           provide: CSVAdapter,
           useValue: new CSVAdapter(),
         },
+        ...auditTestProviders(),
       ],
-    })
-      .overrideGuard(AuthGuard('jwt'))
-      .useValue({ canActivate: () => true })
-      .overrideGuard(RolesGuard)
-      .useValue({ canActivate: () => true })
-      .overrideInterceptor(CurrentUserInterceptor)
-      .useValue({
-        intercept: (_ctx: ExecutionContext, next: CallHandler) => next.handle(),
-      })
-      .compile();
+    });
+    const module: TestingModule = await overrideAuditInterceptors(
+      builder
+        .overrideGuard(AuthGuard('jwt'))
+        .useValue({ canActivate: () => true })
+        .overrideGuard(RolesGuard)
+        .useValue({ canActivate: () => true })
+        .overrideInterceptor(CurrentUserInterceptor)
+        .useValue({
+          intercept: (_ctx: ExecutionContext, next: CallHandler) =>
+            next.handle(),
+        }),
+    ).compile();
 
     controller = module.get(QuestionnaireController);
     questionnaireService = module.get(QuestionnaireService);
@@ -188,7 +196,7 @@ describe('QuestionnaireController - IngestCsv', () => {
     }) as Express.Multer.File;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    const builder = Test.createTestingModule({
       controllers: [QuestionnaireController],
       providers: [
         {
@@ -221,17 +229,21 @@ describe('QuestionnaireController - IngestCsv', () => {
           provide: CSVAdapter,
           useValue: new CSVAdapter(),
         },
+        ...auditTestProviders(),
       ],
-    })
-      .overrideGuard(AuthGuard('jwt'))
-      .useValue({ canActivate: () => true })
-      .overrideGuard(RolesGuard)
-      .useValue({ canActivate: () => true })
-      .overrideInterceptor(CurrentUserInterceptor)
-      .useValue({
-        intercept: (_ctx: ExecutionContext, next: CallHandler) => next.handle(),
-      })
-      .compile();
+    });
+    const module: TestingModule = await overrideAuditInterceptors(
+      builder
+        .overrideGuard(AuthGuard('jwt'))
+        .useValue({ canActivate: () => true })
+        .overrideGuard(RolesGuard)
+        .useValue({ canActivate: () => true })
+        .overrideInterceptor(CurrentUserInterceptor)
+        .useValue({
+          intercept: (_ctx: ExecutionContext, next: CallHandler) =>
+            next.handle(),
+        }),
+    ).compile();
 
     controller = module.get(QuestionnaireController);
     questionnaireService = module.get(QuestionnaireService);
@@ -437,7 +449,7 @@ describe('QuestionnaireController - wipeSubmissions', () => {
   const VERSION_ID = '550e8400-e29b-41d4-a716-446655440000';
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    const builder = Test.createTestingModule({
       controllers: [QuestionnaireController],
       providers: [
         {
@@ -469,17 +481,21 @@ describe('QuestionnaireController - wipeSubmissions', () => {
           provide: CSVAdapter,
           useValue: new CSVAdapter(),
         },
+        ...auditTestProviders(),
       ],
-    })
-      .overrideGuard(AuthGuard('jwt'))
-      .useValue({ canActivate: () => true })
-      .overrideGuard(RolesGuard)
-      .useValue({ canActivate: () => true })
-      .overrideInterceptor(CurrentUserInterceptor)
-      .useValue({
-        intercept: (_ctx: ExecutionContext, next: CallHandler) => next.handle(),
-      })
-      .compile();
+    });
+    const module: TestingModule = await overrideAuditInterceptors(
+      builder
+        .overrideGuard(AuthGuard('jwt'))
+        .useValue({ canActivate: () => true })
+        .overrideGuard(RolesGuard)
+        .useValue({ canActivate: () => true })
+        .overrideInterceptor(CurrentUserInterceptor)
+        .useValue({
+          intercept: (_ctx: ExecutionContext, next: CallHandler) =>
+            next.handle(),
+        }),
+    ).compile();
 
     controller = module.get(QuestionnaireController);
     questionnaireService = module.get(QuestionnaireService);
@@ -567,7 +583,7 @@ describe('QuestionnaireController - GetCsvTemplate', () => {
   };
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    const builder = Test.createTestingModule({
       controllers: [QuestionnaireController],
       providers: [
         {
@@ -598,17 +614,21 @@ describe('QuestionnaireController - GetCsvTemplate', () => {
           provide: CSVAdapter,
           useValue: new CSVAdapter(),
         },
+        ...auditTestProviders(),
       ],
-    })
-      .overrideGuard(AuthGuard('jwt'))
-      .useValue({ canActivate: () => true })
-      .overrideGuard(RolesGuard)
-      .useValue({ canActivate: () => true })
-      .overrideInterceptor(CurrentUserInterceptor)
-      .useValue({
-        intercept: (_ctx: ExecutionContext, next: CallHandler) => next.handle(),
-      })
-      .compile();
+    });
+    const module: TestingModule = await overrideAuditInterceptors(
+      builder
+        .overrideGuard(AuthGuard('jwt'))
+        .useValue({ canActivate: () => true })
+        .overrideGuard(RolesGuard)
+        .useValue({ canActivate: () => true })
+        .overrideInterceptor(CurrentUserInterceptor)
+        .useValue({
+          intercept: (_ctx: ExecutionContext, next: CallHandler) =>
+            next.handle(),
+        }),
+    ).compile();
 
     controller = module.get(QuestionnaireController);
     questionnaireService = module.get(QuestionnaireService);
@@ -741,7 +761,7 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
   };
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    const builder = Test.createTestingModule({
       controllers: [QuestionnaireController],
       providers: [
         {
@@ -776,17 +796,21 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
           provide: CSVAdapter,
           useValue: new CSVAdapter(),
         },
+        ...auditTestProviders(),
       ],
-    })
-      .overrideGuard(AuthGuard('jwt'))
-      .useValue({ canActivate: () => true })
-      .overrideGuard(RolesGuard)
-      .useValue({ canActivate: () => true })
-      .overrideInterceptor(CurrentUserInterceptor)
-      .useValue({
-        intercept: (_ctx: ExecutionContext, next: CallHandler) => next.handle(),
-      })
-      .compile();
+    });
+    const module: TestingModule = await overrideAuditInterceptors(
+      builder
+        .overrideGuard(AuthGuard('jwt'))
+        .useValue({ canActivate: () => true })
+        .overrideGuard(RolesGuard)
+        .useValue({ canActivate: () => true })
+        .overrideInterceptor(CurrentUserInterceptor)
+        .useValue({
+          intercept: (_ctx: ExecutionContext, next: CallHandler) =>
+            next.handle(),
+        }),
+    ).compile();
 
     controller = module.get(QuestionnaireController);
     questionnaireService = module.get(QuestionnaireService);

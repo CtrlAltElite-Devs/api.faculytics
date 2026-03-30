@@ -55,6 +55,7 @@ classDiagram
         DimensionsModule
         FacultyModule
         CurriculumModule
+        AuditModule
     }
 
     AppModule --> InfrastructureModules : "imports"
@@ -68,6 +69,8 @@ classDiagram
     QuestionnaireModule --> CommonModule : "uses UnitOfWork"
     AnalysisModule --> BullModule : "uses BullMQ queues"
     AnalyticsModule --> BullModule : "uses BullMQ queue"
+    AuditModule --> BullModule : "uses BullMQ queue"
+    AuthModule --> AuditModule : "uses AuditService"
     AnalyticsModule --> CommonModule : "uses ScopeResolverService"
     FacultyModule --> CommonModule : "uses ScopeResolverService"
     CurriculumModule --> CommonModule : "uses ScopeResolverService"
@@ -117,6 +120,13 @@ classDiagram
         +QuestionnaireSchemaValidator
         +IngestionEngine
         +IngestionMapperService
+    }
+
+    class AuditModule {
+        <<Global>>
+        +AuditService
+        +AuditProcessor
+        +AuditInterceptor
     }
 ```
 
@@ -205,7 +215,7 @@ Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMP
 
 ### Queue Architecture
 
-Six BullMQ queues with independent concurrency. Queue names are centralized in `src/configurations/common/queue-names.ts`.
+Seven BullMQ queues with independent concurrency. Queue names are centralized in `src/configurations/common/queue-names.ts`.
 
 | Queue               | Processor                   | Concurrency Default | Module          |
 | ------------------- | --------------------------- | ------------------- | --------------- |
@@ -215,6 +225,7 @@ Six BullMQ queues with independent concurrency. Queue names are centralized in `
 | `topic-model`       | `TopicModelProcessor`       | 1                   | AnalysisModule  |
 | `recommendations`   | `RecommendationsProcessor`  | 1                   | AnalysisModule  |
 | `analytics-refresh` | `AnalyticsRefreshProcessor` | 1                   | AnalyticsModule |
+| `audit`             | `AuditProcessor`            | 1                   | AuditModule     |
 
 ### REST Endpoints
 

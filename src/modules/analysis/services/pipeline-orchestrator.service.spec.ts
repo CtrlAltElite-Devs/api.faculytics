@@ -454,6 +454,32 @@ describe('PipelineOrchestratorService', () => {
   });
 
   describe('GetPipelineStatus', () => {
+    const basePipeline = {
+      id: 'p1',
+      status: PipelineStatus.SENTIMENT_ANALYSIS,
+      semester: { id: 's1', code: 'S2026' },
+      faculty: null,
+      questionnaireVersion: null,
+      department: { code: 'CCS' },
+      program: null,
+      campus: null,
+      course: null,
+      totalEnrolled: 100,
+      submissionCount: 50,
+      commentCount: 40,
+      responseRate: 0.5,
+      warnings: [],
+      errorMessage: null,
+      sentimentGateIncluded: null,
+      sentimentGateExcluded: null,
+      createdAt: new Date('2026-03-13'),
+      updatedAt: new Date('2026-03-13T12:00:00Z'),
+      confirmedAt: new Date('2026-03-13'),
+      completedAt: null,
+    };
+
+    const sentimentRunCreatedAt = new Date('2026-03-13T10:00:00Z');
+
     it('should throw NotFoundException if pipeline not found', async () => {
       mockFork.findOne.mockResolvedValue(null);
 
@@ -462,36 +488,24 @@ describe('PipelineOrchestratorService', () => {
       );
     });
 
-    it('should return composed pipeline status', async () => {
-      const pipeline = {
-        id: 'p1',
-        status: PipelineStatus.SENTIMENT_ANALYSIS,
-        semester: { id: 's1', code: 'S2026' },
-        faculty: null,
-        questionnaireVersion: null,
-        department: { code: 'CCS' },
-        program: null,
-        campus: null,
-        course: null,
-        totalEnrolled: 100,
-        submissionCount: 50,
-        commentCount: 40,
-        responseRate: 0.5,
-        warnings: [],
-        errorMessage: null,
-        sentimentGateIncluded: null,
-        sentimentGateExcluded: null,
-        createdAt: new Date('2026-03-13'),
-        confirmedAt: new Date('2026-03-13'),
+    it('should return reshaped pipeline status with progress and timestamps', async () => {
+      const pipeline = { ...basePipeline };
+      const sentimentRun = {
+        status: RunStatus.PROCESSING,
+        submissionCount: 120,
+        createdAt: sentimentRunCreatedAt,
         completedAt: null,
       };
 
       mockFork.findOne
         .mockResolvedValueOnce(pipeline)
-        .mockResolvedValueOnce({ status: RunStatus.PROCESSING })
+        .mockResolvedValueOnce(sentimentRun) // sentiment run
         .mockResolvedValueOnce(null) // topic model run
         .mockResolvedValueOnce(null) // recommendation run
         .mockResolvedValueOnce({ updatedAt: new Date() }); // enrollment for lastSyncAt
+
+      // count: sentiment results
+      mockFork.count.mockResolvedValueOnce(47);
 
       // find: submissions for course scoping
       mockFork.find.mockResolvedValueOnce([{ course: { id: 'c1' } }]);
@@ -503,8 +517,187 @@ describe('PipelineOrchestratorService', () => {
       expect(status.scope.semester).toBe('S2026');
       expect(status.scope.department).toBe('CCS');
       expect(status.coverage.totalEnrolled).toBe(100);
+      expect(status.updatedAt).toBe('2026-03-13T12:00:00.000Z');
+
+      // Sentiment stage: real progress
       expect(status.stages.sentiment.status).toBe('processing');
+      expect(status.stages.sentiment.progress).toEqual({
+        current: 47,
+        total: 120,
+      });
+      expect(status.stages.sentiment.startedAt).toBe(
+        sentimentRunCreatedAt.toISOString(),
+      );
+      expect(status.stages.sentiment.completedAt).toBeNull();
+
+      // Binary stages: null progress
       expect(status.stages.topicModeling.status).toBe('pending');
+      expect(status.stages.topicModeling.progress).toBeNull();
+      expect(status.stages.embeddings.progress).toBeNull();
+      expect(status.stages.recommendations.progress).toBeNull();
+
+      // All stage fields present (no undefined)
+      for (const stage of Object.values(status.stages)) {
+        expect(stage).toHaveProperty('status');
+        expect(stage).toHaveProperty('progress');
+        expect(stage).toHaveProperty('startedAt');
+        expect(stage).toHaveProperty('completedAt');
+      }
+    });
+
+    it('should return retryable: true when pipeline FAILED', async () => {
+      const pipeline = {
+        ...basePipeline,
+        status: PipelineStatus.FAILED,
+        errorMessage: 'Worker crashed',
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(null) // sentiment run
+        .mockResolvedValueOnce(null) // topic model run
+        .mockResolvedValueOnce(null); // recommendation run
+
+      // find: submissions for course scoping (no courses)
+      mockFork.find.mockResolvedValueOnce([]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      expect(status.retryable).toBe(true);
+    });
+
+    it('should return retryable: false when pipeline not FAILED', async () => {
+      const pipeline = { ...basePipeline, status: PipelineStatus.COMPLETED };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(null) // sentiment run
+        .mockResolvedValueOnce(null) // topic model run
+        .mockResolvedValueOnce(null); // recommendation run
+
+      mockFork.find.mockResolvedValueOnce([]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      expect(status.retryable).toBe(false);
+    });
+
+    it('should return sentiment progress.current matching result count', async () => {
+      const pipeline = { ...basePipeline };
+      const sentimentRun = {
+        status: RunStatus.PROCESSING,
+        submissionCount: 120,
+        createdAt: sentimentRunCreatedAt,
+        completedAt: null,
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(sentimentRun)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+
+      mockFork.count.mockResolvedValueOnce(47);
+      mockFork.find.mockResolvedValueOnce([]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      expect(status.stages.sentiment.progress).toEqual({
+        current: 47,
+        total: 120,
+      });
+    });
+
+    it('should return zero progress when sentiment run is PROCESSING with no results yet', async () => {
+      const pipeline = { ...basePipeline };
+      const sentimentRun = {
+        status: RunStatus.PROCESSING,
+        submissionCount: 80,
+        createdAt: sentimentRunCreatedAt,
+        completedAt: null,
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(sentimentRun)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+
+      mockFork.count.mockResolvedValueOnce(0);
+      mockFork.find.mockResolvedValueOnce([]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      expect(status.stages.sentiment.progress).toEqual({
+        current: 0,
+        total: 80,
+      });
+    });
+
+    it('should return skipped stages and retryable: false for CANCELLED pipeline', async () => {
+      const pipeline = {
+        ...basePipeline,
+        status: PipelineStatus.CANCELLED,
+        sentimentGateIncluded: null,
+        sentimentGateExcluded: null,
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(null) // sentiment run
+        .mockResolvedValueOnce(null) // topic model run
+        .mockResolvedValueOnce(null); // recommendation run
+
+      mockFork.find.mockResolvedValueOnce([]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      expect(status.retryable).toBe(false);
+      expect(status.stages.embeddings.status).toBe('skipped');
+      expect(status.stages.sentimentGate.status).toBe('skipped');
+    });
+
+    it('should return embeddings failed when pipeline FAILED with no sentiment run', async () => {
+      const pipeline = {
+        ...basePipeline,
+        status: PipelineStatus.FAILED,
+        errorMessage: 'Embedding check failed',
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(null) // sentiment run (none = embedding likely failed)
+        .mockResolvedValueOnce(null) // topic model run
+        .mockResolvedValueOnce(null); // recommendation run
+
+      mockFork.find.mockResolvedValueOnce([]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      expect(status.stages.embeddings.status).toBe('failed');
+    });
+
+    it('should return sentiment gate included/excluded with completed status', async () => {
+      const pipeline = {
+        ...basePipeline,
+        status: PipelineStatus.TOPIC_MODELING,
+        sentimentGateIncluded: 80,
+        sentimentGateExcluded: 40,
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(null) // sentiment run
+        .mockResolvedValueOnce(null) // topic model run
+        .mockResolvedValueOnce(null); // recommendation run
+
+      mockFork.find.mockResolvedValueOnce([]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      expect(status.stages.sentimentGate.status).toBe('completed');
+      expect(status.stages.sentimentGate.included).toBe(80);
+      expect(status.stages.sentimentGate.excluded).toBe(40);
     });
   });
 });

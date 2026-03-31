@@ -3,11 +3,23 @@ title: 'Frontend Pipeline Polling'
 slug: 'frontend-pipeline-polling'
 created: '2026-03-31'
 status: 'in-progress'
-stepsCompleted: [1]
-tech_stack: []
-files_to_modify: []
-code_patterns: []
-test_patterns: []
+stepsCompleted: [1, 2]
+tech_stack: ['NestJS', 'MikroORM', 'PostgreSQL', 'BullMQ', 'Zod', 'Jest', 'Passport JWT']
+files_to_modify:
+  - 'src/modules/analysis/dto/pipeline-status.dto.ts'
+  - 'src/modules/analysis/services/pipeline-orchestrator.service.ts'
+  - 'src/modules/analysis/services/pipeline-orchestrator.service.spec.ts'
+  - 'src/modules/analysis/analysis.controller.spec.ts'
+code_patterns:
+  - 'PascalCase public service methods'
+  - 'Zod schemas for response DTOs'
+  - 'EntityManager.fork() for isolated DB context'
+  - 'CustomBaseEntity provides id, createdAt, updatedAt, deletedAt'
+test_patterns:
+  - 'Test.createTestingModule with useValue mocks'
+  - 'jest.fn() for service/repo method mocks'
+  - 'makeMockPipeline() factory pattern for test data'
+  - 'Tests co-located with source as .spec.ts'
 ---
 
 # Tech-Spec: Frontend Pipeline Polling
@@ -44,14 +56,34 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 
 ### Codebase Patterns
 
-_To be filled in Step 2_
+- **Response DTOs use Zod schemas** — `pipeline-status.dto.ts` defines `pipelineStatusSchema` and `stageStatusSchema` with Zod, then exports inferred TypeScript types. Changes to the response shape must update both the Zod schema and the service that constructs the response.
+- **PascalCase public methods** — `GetPipelineStatus()`, `CreatePipeline()`, etc.
+- **EntityManager.fork()** — `GetPipelineStatus()` forks the EM at the start for an isolated DB context, then runs all queries on the fork.
+- **Stage status derivation** — stage statuses are computed from run entity statuses (or defaulted to `'pending'` if no run exists). There is a private `getEmbeddingStageStatus()` method for embedding-specific logic.
+- **Current `StageStatus` shape uses optional fields** — `total?`, `completed?`, `processed?`, `included?`, `excluded?`. These fields appear/disappear depending on the stage, which is the core polling consistency problem to fix.
+
+### Enums
+
+- **`PipelineStatus`** (9 values): `AWAITING_CONFIRMATION`, `EMBEDDING_CHECK`, `SENTIMENT_ANALYSIS`, `SENTIMENT_GATE`, `TOPIC_MODELING`, `GENERATING_RECOMMENDATIONS`, `COMPLETED`, `FAILED`, `CANCELLED`
+- **`RunStatus`** (4 values): `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`
+- Terminal statuses: `COMPLETED`, `FAILED`, `CANCELLED`
 
 ### Files to Reference
 
 | File | Purpose |
 | ---- | ------- |
-
-_To be filled in Step 2_
+| `src/modules/analysis/dto/pipeline-status.dto.ts` | Zod schema for status response — `pipelineStatusSchema`, `stageStatusSchema`, `PipelineStatusResponse` type |
+| `src/modules/analysis/services/pipeline-orchestrator.service.ts` | `GetPipelineStatus()` at ~line 438 — constructs response from pipeline + run entities (7 DB queries) |
+| `src/modules/analysis/analysis.controller.ts` | Status endpoint at line 69 — `GET pipelines/:id/status`, delegates to orchestrator |
+| `src/entities/analysis-pipeline.entity.ts` | Pipeline entity — has `updatedAt` (inherited from CustomBaseEntity), `status`, `commentCount`, `sentimentGateIncluded/Excluded` |
+| `src/entities/sentiment-run.entity.ts` | SentimentRun — `status: RunStatus`, `submissionCount`, has `results` collection |
+| `src/entities/sentiment-result.entity.ts` | Individual result per submission — COUNT of these gives sentiment progress |
+| `src/entities/topic-model-run.entity.ts` | TopicModelRun — `status: RunStatus` |
+| `src/entities/recommendation-run.entity.ts` | RecommendationRun — `status: RunStatus` |
+| `src/modules/analysis/enums/pipeline-status.enum.ts` | `PipelineStatus` enum definition |
+| `src/modules/analysis/enums/run-status.enum.ts` | `RunStatus` enum definition |
+| `src/modules/analysis/services/pipeline-orchestrator.service.spec.ts` | Service tests — uses `makeMockPipeline()`, mocked EM fork |
+| `src/modules/analysis/analysis.controller.spec.ts` | Controller tests — mocks orchestrator with `jest.fn()` |
 
 ### Technical Decisions
 
@@ -76,7 +108,9 @@ _To be filled in Step 3_
 
 ### Dependencies
 
-_To be filled in Step 2_
+- No new packages required. All changes use existing NestJS, MikroORM, and Zod infrastructure.
+- Sentiment progress count requires a `COUNT` query on `SentimentResult` for the active run — this is a new query addition to `GetPipelineStatus()`.
+- `AnalysisPipeline.updatedAt` already exists via `CustomBaseEntity` and is auto-managed by MikroORM's `onUpdate` hook — no entity changes needed.
 
 ### Testing Strategy
 

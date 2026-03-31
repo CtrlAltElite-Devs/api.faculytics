@@ -6,7 +6,7 @@ status: 'ready-for-dev'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack: ['NestJS', 'MikroORM', 'PostgreSQL', 'BullMQ', 'Zod', 'Jest', 'Passport JWT']
 files_to_modify:
-  - 'src/entities/base.entity.ts'
+  - 'src/entities/analysis-pipeline.entity.ts'
   - 'src/modules/analysis/dto/pipeline-status.dto.ts'
   - 'src/modules/analysis/services/pipeline-orchestrator.service.ts'
   - 'src/modules/analysis/services/pipeline-orchestrator.service.spec.ts'
@@ -73,8 +73,8 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 | File | Purpose |
 | ---- | ------- |
 | `src/modules/analysis/dto/pipeline-status.dto.ts` | Zod schema for status response — `pipelineStatusSchema`, `stageStatusSchema`, `PipelineStatusResponse` type |
-| `src/entities/base.entity.ts` | `CustomBaseEntity` — needs `onUpdate` hook added to `updatedAt` property |
-| `src/modules/analysis/services/pipeline-orchestrator.service.ts` | `GetPipelineStatus()` at ~line 438 — constructs response from pipeline + run entities (8 DB queries after adding sentiment COUNT) |
+| `src/entities/base.entity.ts` | `CustomBaseEntity` — defines shared `updatedAt` without `onUpdate` hook (Task 0 overrides on pipeline entity instead) |
+| `src/modules/analysis/services/pipeline-orchestrator.service.ts` | `GetPipelineStatus()` at ~line 438 — constructs response from pipeline + run entities (up to 8 DB queries after adding sentiment COUNT) |
 | `src/modules/analysis/analysis.controller.ts` | Status endpoint at line 69 — `GET pipelines/:id/status`, delegates to orchestrator |
 | `src/entities/analysis-pipeline.entity.ts` | Pipeline entity — has `updatedAt` (inherited from CustomBaseEntity), `status`, `commentCount`, `sentimentGateIncluded/Excluded` |
 | `src/entities/sentiment-run.entity.ts` | SentimentRun — `status: RunStatus`, `submissionCount`, has `results` collection |
@@ -91,17 +91,22 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 - **No denormalization** — query run tables directly on each poll. With only a handful of privileged users polling concurrently, the join cost is negligible.
 - **No WebSocket/SSE** — pipelines run for minutes. A 3-second REST polling interval via React Query is simpler, more resilient, and operationally trivial.
 - **`null` over omission** — every field in the response is always present. Use `null` for absent optional values. This ensures React Query's referential comparison works correctly and avoids unnecessary re-renders from shape changes.
-- **Sentiment gets real progress, others are binary** — derive sentiment `progress.current` from `SentimentResult` row count vs `progress.total` from pipeline comment count. Topic modeling and recommendations are single-batch, so progress is effectively `null` (binary processing/done).
-- **`retryable` flag** — top-level boolean on failed pipelines so the frontend knows whether to show "Retry" vs "Contact admin".
+- **Sentiment gets real progress, others are binary** — derive sentiment `progress.current` from `SentimentResult` row count vs `progress.total` from `sentimentRun.submissionCount`. Topic modeling and recommendations are single-batch, so progress is effectively `null` (binary processing/done).
+- **`retryable` flag** — top-level boolean on failed pipelines so the frontend knows whether to show "Retry" vs "Contact admin". Currently equivalent to `status === FAILED` but provides intent signaling for future error categorization.
+- **Pre-existing DTO issue (out of scope)**: The top-level `status` field in `pipelineStatusSchema` is `z.string()` instead of `z.nativeEnum(PipelineStatus)`. This predates this spec and should be addressed separately.
 
 ## Implementation Plan
 
 ### Tasks
 
-- [ ] Task 0: Fix `CustomBaseEntity.updatedAt` — add `onUpdate` hook
-  - File: `src/entities/base.entity.ts`
-  - Action: Change the `updatedAt` property decorator from `@Property()` to `@Property({ onUpdate: () => new Date() })`. This ensures MikroORM automatically sets `updatedAt` before every flush that modifies the entity.
-  - Notes: This is a prerequisite for the entire spec. Without it, `updatedAt` is set once at creation and never updated. No migration needed — `onUpdate` is an ORM-layer hook, not a DB schema change. This is a cross-cutting fix that benefits all entities inheriting from `CustomBaseEntity`.
+- [ ] Task 0: Fix `AnalysisPipeline.updatedAt` — add `onUpdate` hook (scoped to pipeline only)
+  - File: `src/entities/analysis-pipeline.entity.ts`
+  - Action: Override `updatedAt` on `AnalysisPipeline` with `onUpdate`:
+    ```typescript
+    @Property({ onUpdate: () => new Date() })
+    override updatedAt: Date & Opt = new Date();
+    ```
+  - Notes: This is a prerequisite for the entire spec. Without it, `updatedAt` is set once at creation and never updated. Scoped to `AnalysisPipeline` only (not `CustomBaseEntity`) to avoid cross-cutting impact — other entities like `Enrollment` use `updatedAt` for sync tracking and could be affected by unrelated cascade flushes. Promoting `onUpdate` to `CustomBaseEntity` can be done as a separate, properly-analyzed change. No migration needed — `onUpdate` is an ORM-layer hook, not a DB schema change.
 
 - [ ] Task 1: Reshape `stageStatusSchema` for consistent field presence
   - File: `src/modules/analysis/dto/pipeline-status.dto.ts`
@@ -151,12 +156,13 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 
 - [ ] Task 5: Update `GetPipelineStatus()` — reshape return object to match new DTO
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.ts`
+  - **Ordering dependency**: Tasks 1-3 (DTO changes) must be completed before Tasks 4-6 (service changes). Do not implement in isolation — the intermediate state where the schema is updated but the service is not (or vice versa) will produce a compile error.
   - Action: Replace the `stageStatus` helper and reshape the return object. Key changes:
     1. Remove the `stageStatus()` and `getRunStageStatus()` helpers. Replace with a new helper:
        ```typescript
        const buildStage = (
          status: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped',
-         run: { createdAt: Date; completedAt?: Date } | null,
+         run: { createdAt: Date; completedAt?: Date | null } | null,
          progress: { current: number; total: number } | null = null,
        ) => ({
          status,
@@ -165,22 +171,29 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
          completedAt: run?.completedAt?.toISOString() ?? null,
        });
        ```
-    2. Derive `gateStatus` before building the return block:
+    2. Add a `getRunStatus` helper with a comment about enum coupling:
+       ```typescript
+       // If RunStatus gains new values, update this mapping to match the stage status union
+       const getRunStatus = (run: SentimentRun | TopicModelRun | RecommendationRun | null) =>
+         run ? (run.status.toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed') : 'pending';
+       ```
+    3. Derive `gateStatus` before building the return block (handles terminal pipeline states):
        ```typescript
        const gateStatus = pipeline.sentimentGateIncluded != null ? 'completed'
          : pipeline.status === PipelineStatus.SENTIMENT_GATE ? 'processing'
+         : pipeline.status === PipelineStatus.CANCELLED ? 'skipped'
          : 'pending';
        ```
-    3. Update each stage in the return block:
+    4. Update each stage in the return block:
        - `embeddings`: `buildStage(this.getEmbeddingStageStatus(pipeline), null)` — no run entity, no progress. Note: `startedAt` and `completedAt` will always be `null` for this stage since there is no run entity. Frontend should use `pipeline.confirmedAt` as a proxy if timing is needed.
-       - `sentiment`: `buildStage(getRunStatus(sentimentRun), sentimentRun, { current: sentimentCompleted, total: pipeline.commentCount })` — real progress
-       - `sentimentGate`: `{ ...buildStage(gateStatus, null), included: pipeline.sentimentGateIncluded ?? null, excluded: pipeline.sentimentGateExcluded ?? null }`
+       - `sentiment`: `buildStage(getRunStatus(sentimentRun), sentimentRun, { current: sentimentCompleted, total: sentimentRun?.submissionCount ?? pipeline.commentCount })` — real progress, uses run's own `submissionCount` as total for tighter coupling
+       - `sentimentGate`: `{ ...buildStage(gateStatus, null), included: pipeline.sentimentGateIncluded ?? null, excluded: pipeline.sentimentGateExcluded ?? null }` — note: `startedAt`/`completedAt` always `null` (no run entity, same as embeddings)
        - `topicModeling`: `buildStage(getRunStatus(topicModelRun), topicModelRun)`
        - `recommendations`: `buildStage(getRunStatus(recommendationRun), recommendationRun)`
-    3. Add to the top-level return: `updatedAt: pipeline.updatedAt.toISOString()` and `retryable: pipeline.status === PipelineStatus.FAILED`
+    5. Add to the top-level return: `updatedAt: pipeline.updatedAt.toISOString()` and `retryable: pipeline.status === PipelineStatus.FAILED`
+    6. Optional runtime safety net — add `return pipelineStatusSchema.parse(response)` at the end to catch schema/implementation drift at runtime (the Zod schema is currently only used for type inference via `z.infer`, not runtime validation)
   - Notes:
-    - `getRunStatus()` is a simple inline: `(run) => run ? run.status.toLowerCase() : 'pending'`
-    - For `retryable`, all current failure modes are transient (worker timeouts, network errors), so `status === FAILED` is sufficient. The flag provides intent signaling — when error categories are added later, `retryable` becomes meaningful without a frontend change. Revisit if data validation failures become a distinct failure mode.
+    - For `retryable`, all current failure modes are transient (worker timeouts, network errors), so `status === FAILED` is sufficient. The flag provides intent signaling — when error categories are added later, `retryable` becomes meaningful without a frontend change. Add a code comment: `// Intent signal for future error categorization — currently equivalent to status === FAILED`
     - `startedAt` uses `run.createdAt` as a proxy — this is the best available approximation since run entities don't have a dedicated `startedAt` field. Runs are created at enqueue time, which is close to processing start for the polling UI's purposes.
   - **Commit strategy**: Split this task into two commits for reviewability: (a) replace helpers + reshape return block, (b) add `updatedAt` + `retryable` top-level fields.
 
@@ -224,15 +237,15 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 
 - [ ] AC 9: Given a pipeline that does not exist, when `GET /analysis/pipelines/:id/status` is called, then a `404 Not Found` is returned (existing behavior preserved).
 
-- [ ] AC 10: Given a pipeline in `CANCELLED` status, when `GET /analysis/pipelines/:id/status` is called, then `retryable` is `false` and `stages.embeddings.status` is `"skipped"`.
+- [ ] AC 10: Given a pipeline in `CANCELLED` status, when `GET /analysis/pipelines/:id/status` is called, then `retryable` is `false`, `stages.embeddings.status` is `"skipped"`, and `stages.sentimentGate.status` is `"skipped"`.
 
 ## Additional Context
 
 ### Dependencies
 
 - No new packages required. All changes use existing NestJS, MikroORM, and Zod infrastructure.
-- Sentiment progress count requires a `COUNT` query on `SentimentResult` for the active run — this is a new query addition to `GetPipelineStatus()` (total: 8 DB queries per poll). The COUNT scopes to the latest run via `{ run: sentimentRun }`, so progress cannot regress across retries (new runs get new result rows).
-- **Task 0 is a prerequisite**: `CustomBaseEntity.updatedAt` currently has no `onUpdate` hook — it is set once at creation and never updated. Task 0 fixes this by adding `onUpdate: () => new Date()` to the property decorator. No migration needed.
+- Sentiment progress count requires a `COUNT` query on `SentimentResult` for the active run — this is a new query addition to `GetPipelineStatus()` (up to 8 DB queries per poll; fewer when conditional queries are skipped, e.g., no courseIds → enrollment query skipped). The COUNT scopes to the latest run via `{ run: sentimentRun }`, so progress cannot regress across retries (new runs get new result rows).
+- **Task 0 is a prerequisite**: `CustomBaseEntity.updatedAt` currently has no `onUpdate` hook — it is set once at creation and never updated. Task 0 fixes this by overriding `updatedAt` on `AnalysisPipeline` with `onUpdate: () => new Date()`. Scoped to pipeline only to avoid cross-cutting impact on entities like `Enrollment` whose `updatedAt` is used for sync tracking. No migration needed.
 
 ### Testing Strategy
 
@@ -240,7 +253,7 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 - `pipeline-orchestrator.service.spec.ts`:
   - Test reshaped response has all fields present (no undefined keys)
   - Test sentiment `progress.current` matches mocked `SentimentResult` count
-  - Test sentiment `progress.total` matches `pipeline.commentCount`
+  - Test sentiment `progress.total` matches `sentimentRun.submissionCount` (falls back to `pipeline.commentCount` if no run)
   - Test binary stages (embedding, topicModeling, recommendations) have `progress: null`
   - Test `retryable: true` when `FAILED`, `false` otherwise
   - Test `updatedAt` is present and matches pipeline entity
@@ -259,10 +272,10 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 ### Notes
 
 - **Breaking change**: The response shape of `GET /analysis/pipelines/:id/status` changes. The old `total`, `completed`, `processed` fields on stages are replaced with a `progress: { current, total } | null` object, and `startedAt`/`completedAt` are added. **Atomic deploy required** — backend and frontend must deploy in the same release window. Deploying backend first will break active polling sessions immediately.
-- **No migration needed**: No database schema changes. Task 0 modifies `CustomBaseEntity` (ORM-layer `onUpdate` hook), and the rest are DTO/service layer changes.
+- **No migration needed**: No database schema changes. Task 0 overrides `updatedAt` on `AnalysisPipeline` only (ORM-layer `onUpdate` hook), and the rest are DTO/service layer changes.
 - **Frontend null-safety**: The frontend must null-check `progress` before accessing `.current`/`.total`. Consider sharing the Zod schema or generating OpenAPI types to keep the contract in sync.
 - **Staleness detection (frontend concern)**: The frontend should compute staleness from `updatedAt` and `stages.*.startedAt` — e.g., if a stage has been `processing` for >10 minutes with no `updatedAt` change, display a "pipeline may be stuck" warning. No backend changes needed for this.
-- **Embedding stage timing**: The embedding stage has no run entity, so `startedAt` and `completedAt` will always be `null`. The frontend should use `confirmedAt` from the top-level response as a proxy if timing info is needed for this stage.
+- **Embedding and sentiment gate timing**: Both the embedding stage and sentiment gate stage have no run entity, so `startedAt` and `completedAt` will always be `null` for these stages. The frontend should use `confirmedAt` from the top-level response as a proxy if timing info is needed.
 - **`startedAt` approximation**: For stages with run entities, `startedAt` uses `run.createdAt` (entity creation time) as a proxy since runs don't have a dedicated `startedAt` field. This is close to processing start and sufficient for the polling UI.
 - **Future scaling**: If pipeline comment counts grow beyond ~5K, the per-poll `SentimentResult` COUNT query should be revisited (cache on `SentimentRun.completedCount`). Current volumes don't warrant this.
 - Frontend polling pattern (illustrative only, not a contract — frontend implementation is out of scope):

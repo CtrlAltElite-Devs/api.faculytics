@@ -42,7 +42,7 @@ describe('SemestersService', () => {
     it('should return all semesters with campus info', async () => {
       em.find.mockResolvedValue(mockSemesters);
 
-      const result = await service.listSemesters();
+      const result = await service.listSemesters({});
 
       expect(result.data).toHaveLength(2);
       expect(result.data[0]).toEqual({
@@ -55,10 +55,10 @@ describe('SemestersService', () => {
       expect(result.data[1].campus.code).toBe('UCB');
     });
 
-    it('should call find with correct options', async () => {
+    it('should call find without campus filter when campusId is omitted', async () => {
       em.find.mockResolvedValue([]);
 
-      await service.listSemesters();
+      await service.listSemesters({});
 
       expect(em.find).toHaveBeenCalledWith(
         Semester,
@@ -70,10 +70,27 @@ describe('SemestersService', () => {
       );
     });
 
+    it('should filter by campus when campusId is provided', async () => {
+      em.find.mockResolvedValue([mockSemesters[0]]);
+
+      const result = await service.listSemesters({ campusId: 'campus-1' });
+
+      expect(em.find).toHaveBeenCalledWith(
+        Semester,
+        { campus: 'campus-1' },
+        {
+          populate: ['campus'],
+          orderBy: { createdAt: 'DESC' },
+        },
+      );
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].campus.code).toBe('UCMN');
+    });
+
     it('should return empty data when no semesters exist', async () => {
       em.find.mockResolvedValue([]);
 
-      const result = await service.listSemesters();
+      const result = await service.listSemesters({});
 
       expect(result.data).toEqual([]);
     });

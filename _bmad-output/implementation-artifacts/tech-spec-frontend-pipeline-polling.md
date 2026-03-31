@@ -2,8 +2,8 @@
 title: 'Frontend Pipeline Polling'
 slug: 'frontend-pipeline-polling'
 created: '2026-03-31'
-status: 'review'
-stepsCompleted: [1, 2, 3]
+status: 'ready-for-dev'
+stepsCompleted: [1, 2, 3, 4]
 tech_stack: ['NestJS', 'MikroORM', 'PostgreSQL', 'BullMQ', 'Zod', 'Jest', 'Passport JWT']
 files_to_modify:
   - 'src/modules/analysis/dto/pipeline-status.dto.ts'

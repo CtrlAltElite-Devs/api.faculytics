@@ -117,8 +117,17 @@
     "@rushstack/node-core-library": {
       "ajv": "8.18.0"
     },
+    "brace-expansion@^1.1.7": "1.1.13",
+    "brace-expansion@^2.0.1": "2.0.3",
+    "brace-expansion@^2.0.2": "2.0.3",
+    "brace-expansion@^5.0.2": "5.0.5",
     "handlebars": "^4.7.9",
-    "path-to-regexp": "8.4.1"
+    "picomatch@^2.0.4": "2.3.2",
+    "picomatch@^2.3.1": "2.3.2",
+    "picomatch@^4.0.2": "4.0.4",
+    "picomatch@^4.0.3": "4.0.4",
+    "path-to-regexp": "8.4.1",
+    "yaml": "2.8.3"
   },
   "jest": {
     "moduleFileExtensions": [

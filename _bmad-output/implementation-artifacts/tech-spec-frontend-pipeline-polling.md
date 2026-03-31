@@ -10,6 +10,7 @@ files_to_modify:
   - 'src/modules/analysis/dto/pipeline-status.dto.ts'
   - 'src/modules/analysis/services/pipeline-orchestrator.service.ts'
   - 'src/modules/analysis/services/pipeline-orchestrator.service.spec.ts'
+  - 'src/modules/analysis/analysis.controller.spec.ts'
 code_patterns:
   - 'PascalCase public service methods'
   - 'Zod schemas for response DTOs'
@@ -74,7 +75,7 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 | ---- | ------- |
 | `src/modules/analysis/dto/pipeline-status.dto.ts` | Zod schema for status response — `pipelineStatusSchema`, `stageStatusSchema`, `PipelineStatusResponse` type |
 | `src/entities/base.entity.ts` | `CustomBaseEntity` — defines shared `updatedAt` without `onUpdate` hook (Task 0 overrides on pipeline entity instead) |
-| `src/modules/analysis/services/pipeline-orchestrator.service.ts` | `GetPipelineStatus()` at ~line 438 — constructs response from pipeline + run entities (up to 8 DB queries after adding sentiment COUNT) |
+| `src/modules/analysis/services/pipeline-orchestrator.service.ts` | `GetPipelineStatus()` at ~line 438 — constructs response from pipeline + run entities (up to 7 DB queries after adding sentiment COUNT; some conditional) |
 | `src/modules/analysis/analysis.controller.ts` | Status endpoint at line 69 — `GET pipelines/:id/status`, delegates to orchestrator |
 | `src/entities/analysis-pipeline.entity.ts` | Pipeline entity — has `updatedAt` (inherited from CustomBaseEntity), `status`, `commentCount`, `sentimentGateIncluded/Excluded` |
 | `src/entities/sentiment-run.entity.ts` | SentimentRun — `status: RunStatus`, `submissionCount`, has `results` collection |
@@ -122,7 +123,7 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
       completedAt: z.string().datetime().nullable(),
     });
     ```
-  - Notes: This removes the old `total`, `completed`, `processed`, `included`, `excluded` optional fields. The `progress` object is either fully present or `null`. `startedAt` and `completedAt` give the frontend elapsed-time signal.
+  - Notes: This removes the old `total`, `completed`, `processed`, `included`, `excluded` optional fields. The `progress` object is either fully present or `null`. `startedAt` and `completedAt` give the frontend elapsed-time signal. **Preserve all existing top-level fields** (`confirmedAt`, `completedAt`, `createdAt`, `scope`, `coverage`, `warnings`). Only the `stages` shape, `errorMessage` optionality, and new fields (`retryable`, `updatedAt`) change.
 
 - [ ] Task 2: Add `retryable` and `updatedAt` to `pipelineStatusSchema`
   - File: `src/modules/analysis/dto/pipeline-status.dto.ts`
@@ -141,7 +142,16 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
       excluded: z.number().int().nullable(),
     });
     ```
-  - Update `stages` in `pipelineStatusSchema` to use `sentimentGateSchema` for the `sentimentGate` field.
+  - Update `stages` in `pipelineStatusSchema` — change the `sentimentGate` field from `stageStatusSchema` to `sentimentGateSchema`:
+    ```typescript
+    stages: z.object({
+      embeddings: stageStatusSchema,
+      sentiment: stageStatusSchema,
+      sentimentGate: sentimentGateSchema,  // ← changed from stageStatusSchema
+      topicModeling: stageStatusSchema,
+      recommendations: stageStatusSchema,
+    }),
+    ```
 
 - [ ] Task 4: Update `GetPipelineStatus()` — add sentiment progress count query
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.ts`
@@ -156,9 +166,10 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 
 - [ ] Task 5: Update `GetPipelineStatus()` — reshape return object to match new DTO
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.ts`
-  - **Ordering dependency**: Tasks 1-3 (DTO changes) must be completed before Tasks 4-6 (service changes). Do not implement in isolation — the intermediate state where the schema is updated but the service is not (or vice versa) will produce a compile error.
-  - Action: Replace the `stageStatus` helper and reshape the return object. Key changes:
-    1. Remove the `stageStatus()` and `getRunStageStatus()` helpers. Replace with a new helper:
+  - **Ordering dependency**: Tasks 1-3 (DTO changes) must be completed before Tasks 4-5 (service changes). Do not implement in isolation — the intermediate state where the schema is updated but the service is not (or vice versa) will produce a compile error.
+  - Action: Replace the `stageStatus` helper, update `getEmbeddingStageStatus()`, and reshape the return object. Key changes:
+    1. **First**, update `getEmbeddingStageStatus()` (currently at line 937): change return type from `{ status }` object to bare status string. Verify it has only one call site (line 518) by grepping for `getEmbeddingStageStatus`. This must be done before step 4 below, which consumes it as a string.
+    2. Remove the `stageStatus()` and `getRunStageStatus()` helpers. Replace with a new helper:
        ```typescript
        const buildStage = (
          status: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped',
@@ -171,38 +182,37 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
          completedAt: run?.completedAt?.toISOString() ?? null,
        });
        ```
-    2. Add a `getRunStatus` helper with a comment about enum coupling:
+    3. Add a `getRunStatus` helper with a comment about enum coupling:
        ```typescript
        // If RunStatus gains new values, update this mapping to match the stage status union
        const getRunStatus = (run: SentimentRun | TopicModelRun | RecommendationRun | null) =>
          run ? (run.status.toLowerCase() as 'pending' | 'processing' | 'completed' | 'failed') : 'pending';
        ```
-    3. Derive `gateStatus` before building the return block (handles terminal pipeline states):
+    4. Derive `gateStatus` before building the return block (handles terminal pipeline states):
        ```typescript
+       // Gate either completed (has data) or didn't. Top-level pipeline.status
+       // handles failure attribution — no per-stage failure tracking for MVP.
+       // FAILED pipelines: gate shows 'pending' (never completed) which is correct.
+       // CANCELLED pipelines: gate shows 'skipped' (explicitly not attempted).
        const gateStatus = pipeline.sentimentGateIncluded != null ? 'completed'
          : pipeline.status === PipelineStatus.SENTIMENT_GATE ? 'processing'
          : pipeline.status === PipelineStatus.CANCELLED ? 'skipped'
          : 'pending';
        ```
-    4. Update each stage in the return block:
+    5. Update each stage in the return block:
        - `embeddings`: `buildStage(this.getEmbeddingStageStatus(pipeline), null)` — no run entity, no progress. Note: `startedAt` and `completedAt` will always be `null` for this stage since there is no run entity. Frontend should use `pipeline.confirmedAt` as a proxy if timing is needed.
-       - `sentiment`: `buildStage(getRunStatus(sentimentRun), sentimentRun, { current: sentimentCompleted, total: sentimentRun?.submissionCount ?? pipeline.commentCount })` — real progress, uses run's own `submissionCount` as total for tighter coupling
+       - `sentiment`: when `sentimentRun` exists → `buildStage(getRunStatus(sentimentRun), sentimentRun, { current: sentimentCompleted, total: sentimentRun.submissionCount })` — real progress using run's own `submissionCount` as total. When `sentimentRun` is `null` → `buildStage('pending', null)` — no progress (consistent with binary "not started" pattern)
        - `sentimentGate`: `{ ...buildStage(gateStatus, null), included: pipeline.sentimentGateIncluded ?? null, excluded: pipeline.sentimentGateExcluded ?? null }` — note: `startedAt`/`completedAt` always `null` (no run entity, same as embeddings)
        - `topicModeling`: `buildStage(getRunStatus(topicModelRun), topicModelRun)`
        - `recommendations`: `buildStage(getRunStatus(recommendationRun), recommendationRun)`
-    5. Add to the top-level return: `updatedAt: pipeline.updatedAt.toISOString()` and `retryable: pipeline.status === PipelineStatus.FAILED`
-    6. Optional runtime safety net — add `return pipelineStatusSchema.parse(response)` at the end to catch schema/implementation drift at runtime (the Zod schema is currently only used for type inference via `z.infer`, not runtime validation)
+    6. Add to the top-level return: `updatedAt: pipeline.updatedAt.toISOString()` and `retryable: pipeline.status === PipelineStatus.FAILED`
+    7. Optional runtime safety net — add `return pipelineStatusSchema.parse(response)` at the end to catch schema/implementation drift at runtime (the Zod schema is currently only used for type inference via `z.infer`, not runtime validation)
   - Notes:
     - For `retryable`, all current failure modes are transient (worker timeouts, network errors), so `status === FAILED` is sufficient. The flag provides intent signaling — when error categories are added later, `retryable` becomes meaningful without a frontend change. Add a code comment: `// Intent signal for future error categorization — currently equivalent to status === FAILED`
     - `startedAt` uses `run.createdAt` as a proxy — this is the best available approximation since run entities don't have a dedicated `startedAt` field. Runs are created at enqueue time, which is close to processing start for the polling UI's purposes.
   - **Commit strategy**: Split this task into two commits for reviewability: (a) replace helpers + reshape return block, (b) add `updatedAt` + `retryable` top-level fields.
 
-- [ ] Task 6: Update `getEmbeddingStageStatus()` return type
-  - File: `src/modules/analysis/services/pipeline-orchestrator.service.ts`
-  - Action: The private method at line 937 currently returns `{ status }`. Since the `buildStage` helper in Task 5 only needs the status string, change the return type to just return the status string. Call site becomes `buildStage(this.getEmbeddingStageStatus(pipeline), null)`.
-  - Notes: **Before changing**, verify this method has only one call site (currently line 518). Grep for `getEmbeddingStageStatus` to confirm no other callers depend on the object shape.
-
-- [ ] Task 7: Update service tests for reshaped response
+- [ ] Task 6: Update service tests for reshaped response
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.spec.ts`
   - Action: Update the `GetPipelineStatus` test cases:
     1. Add mock for `fork.count(SentimentResult, ...)` returning a number (e.g., `47`)
@@ -212,14 +222,14 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
     5. Add a test case verifying sentiment `progress.current` equals the mocked count
     6. Add a test case for sentiment start: `sentimentRun` exists with status `PROCESSING` and zero results → `progress: { current: 0, total: N }`
 
-- [ ] Task 8 (optional): Update controller tests for reshaped response
+- [ ] Task 7: Update controller tests for reshaped response
   - File: `src/modules/analysis/analysis.controller.spec.ts`
-  - Action: Update the `GetPipelineStatus` test's `mockStatus` object to match the new response shape (add `retryable`, `updatedAt`, update stage shapes). The controller test is a pass-through, so this is mainly updating the mock data shape.
-  - Notes: **Optional** — the controller is a pure pass-through. This test only verifies delegation, not response correctness. Not listed in `files_to_modify` — skip unless the test fails due to type changes.
+  - Action: Update the `GetPipelineStatus` test's `mockStatus` object to match the new response shape (add `retryable`, `updatedAt`, update stage shapes). The controller test is a pass-through, but the `PipelineStatusResponse` type change will cause TypeScript compile errors in mock data.
+  - Notes: Required because `PipelineStatusResponse` (inferred from the reshaped Zod schema) is used to type mock data in the controller spec.
 
 ### Acceptance Criteria
 
-- [ ] AC 1: Given a pipeline in `SENTIMENT_ANALYSIS` status with 120 comments and 47 sentiment results, when `GET /analysis/pipelines/:id/status` is called, then the response `stages.sentiment.progress` is `{ current: 47, total: 120 }` and `stages.sentiment.status` is `"processing"`.
+- [ ] AC 1: Given a pipeline in `SENTIMENT_ANALYSIS` status with a `SentimentRun` where `submissionCount` is 120 and 47 `SentimentResult` rows exist for that run, when `GET /analysis/pipelines/:id/status` is called, then `stages.sentiment.progress` is `{ current: 47, total: 120 }` and `stages.sentiment.status` is `"processing"`.
 
 - [ ] AC 2: Given a pipeline in `TOPIC_MODELING` status, when `GET /analysis/pipelines/:id/status` is called, then `stages.topicModeling.progress` is `null` and `stages.topicModeling.status` is `"processing"`.
 
@@ -237,14 +247,14 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 
 - [ ] AC 9: Given a pipeline that does not exist, when `GET /analysis/pipelines/:id/status` is called, then a `404 Not Found` is returned (existing behavior preserved).
 
-- [ ] AC 10: Given a pipeline in `CANCELLED` status, when `GET /analysis/pipelines/:id/status` is called, then `retryable` is `false`, `stages.embeddings.status` is `"skipped"`, and `stages.sentimentGate.status` is `"skipped"`.
+- [ ] AC 10: Given a pipeline in `CANCELLED` status with `sentimentGateIncluded` as `null` (gate never completed), when `GET /analysis/pipelines/:id/status` is called, then `retryable` is `false`, `stages.embeddings.status` is `"skipped"`, and `stages.sentimentGate.status` is `"skipped"`. (Note: if a pipeline is cancelled *after* the gate completed, `sentimentGate.status` would correctly be `"completed"` since the gate data is real.)
 
 ## Additional Context
 
 ### Dependencies
 
 - No new packages required. All changes use existing NestJS, MikroORM, and Zod infrastructure.
-- Sentiment progress count requires a `COUNT` query on `SentimentResult` for the active run — this is a new query addition to `GetPipelineStatus()` (up to 8 DB queries per poll; fewer when conditional queries are skipped, e.g., no courseIds → enrollment query skipped). The COUNT scopes to the latest run via `{ run: sentimentRun }`, so progress cannot regress across retries (new runs get new result rows).
+- Sentiment progress count requires a `COUNT` query on `SentimentResult` for the active run — this is a new query addition to `GetPipelineStatus()` (up to 7 DB queries per poll; fewer when conditional queries are skipped, e.g., no courseIds → enrollment query skipped, no sentimentRun → COUNT skipped). The COUNT scopes to the latest run via `{ run: sentimentRun }`, so progress cannot regress across retries (new runs get new result rows).
 - **Task 0 is a prerequisite**: `CustomBaseEntity.updatedAt` currently has no `onUpdate` hook — it is set once at creation and never updated. Task 0 fixes this by overriding `updatedAt` on `AnalysisPipeline` with `onUpdate: () => new Date()`. Scoped to pipeline only to avoid cross-cutting impact on entities like `Enrollment` whose `updatedAt` is used for sync tracking. No migration needed.
 
 ### Testing Strategy

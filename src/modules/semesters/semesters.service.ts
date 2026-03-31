@@ -1,28 +1,34 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/core';
 import { Semester } from '../../entities/semester.entity';
-import { SemesterShortResponseDto } from '../enrollments/dto/responses/semester-short.response.dto';
+import { SemesterListResponseDto } from './dto/responses/semester-list.response.dto';
 
 @Injectable()
 export class SemestersService {
   constructor(private readonly em: EntityManager) {}
 
-  async getCurrentSemester(): Promise<SemesterShortResponseDto> {
-    const semester = await this.em.findOne(
+  async listSemesters(): Promise<SemesterListResponseDto> {
+    const semesters = await this.em.find(
       Semester,
       {},
-      { orderBy: { createdAt: 'DESC' } },
+      {
+        populate: ['campus'],
+        orderBy: { createdAt: 'DESC' },
+      },
     );
 
-    if (!semester) {
-      throw new NotFoundException('No active semester found');
-    }
-
     return {
-      id: semester.id,
-      code: semester.code,
-      label: semester.label,
-      academicYear: semester.academicYear,
+      data: semesters.map((s) => ({
+        id: s.id,
+        code: s.code,
+        label: s.label,
+        academicYear: s.academicYear,
+        campus: {
+          id: s.campus.id,
+          code: s.campus.code,
+          name: s.campus.name,
+        },
+      })),
     };
   }
 }

@@ -117,7 +117,8 @@
     "@rushstack/node-core-library": {
       "ajv": "8.18.0"
     },
-    "handlebars": "^4.7.9"
+    "handlebars": "^4.7.9",
+    "path-to-regexp": "8.4.1"
   },
   "jest": {
     "moduleFileExtensions": [

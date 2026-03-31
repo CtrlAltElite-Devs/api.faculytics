@@ -167,6 +167,7 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
        - `recommendations`: `buildStage(getRunStatus(recommendationRun), recommendationRun)`
     3. Add to the top-level return: `updatedAt: pipeline.updatedAt.toISOString()` and `retryable: pipeline.status === PipelineStatus.FAILED`
   - Notes: `getRunStatus()` is a simple inline: `(run) => run ? run.status.toLowerCase() : 'pending'`. For `retryable`, all current failure modes are transient (worker timeouts, network errors), so `status === FAILED` is sufficient. Revisit if data validation failures become a distinct failure mode — may need an `errorCategory` field.
+  - **Commit strategy**: Split this task into two commits for reviewability: (a) replace helpers + reshape return block, (b) add `updatedAt` + `retryable` top-level fields.
 
 - [ ] Task 6: Update `getEmbeddingStageStatus()` return type
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.ts`
@@ -180,10 +181,12 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
     3. Add a test case for `retryable: true` when pipeline status is `FAILED`
     4. Add a test case for `retryable: false` when pipeline status is not `FAILED`
     5. Add a test case verifying sentiment `progress.current` equals the mocked count
+    6. Add a test case for sentiment start: `sentimentRun` exists with status `PROCESSING` and zero results → `progress: { current: 0, total: N }`
 
-- [ ] Task 8: Update controller tests for reshaped response
+- [ ] Task 8 (low priority): Update controller tests for reshaped response
   - File: `src/modules/analysis/analysis.controller.spec.ts`
   - Action: Update the `GetPipelineStatus` test's `mockStatus` object to match the new response shape (add `retryable`, `updatedAt`, update stage shapes). The controller test is a pass-through, so this is mainly updating the mock data shape.
+  - Notes: Low priority — the controller is a pure pass-through. This test only verifies delegation, not response correctness. Skip if time-constrained.
 
 ### Acceptance Criteria
 
@@ -233,6 +236,7 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 - Start a pipeline via `POST /analysis/pipelines` + confirm
 - Poll `GET /analysis/pipelines/:id/status` and verify response shape consistency across stage transitions
 - Verify sentiment progress increments as results are processed
+- **Transition test**: Poll across a stage transition (e.g., `SENTIMENT_ANALYSIS` → `SENTIMENT_GATE`) and verify that the previous stage flips to `completed` and the next stage updates correctly in the subsequent poll response
 
 ### Notes
 

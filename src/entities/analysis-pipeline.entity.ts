@@ -25,6 +25,9 @@ import { RecommendationRun } from './recommendation-run.entity';
 @Entity({ repository: () => AnalysisPipelineRepository })
 @Index({ properties: ['semester', 'status'] })
 export class AnalysisPipeline extends CustomBaseEntity {
+  @Property({ onUpdate: () => new Date() })
+  override updatedAt: Date & Opt = new Date();
+
   @ManyToOne(() => Semester)
   semester!: Semester;
 

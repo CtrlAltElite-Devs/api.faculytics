@@ -143,6 +143,42 @@ describe('AnalysisController', () => {
         status: PipelineStatus.SENTIMENT_ANALYSIS,
         scope: { semester: 'S2026' },
         coverage: { totalEnrolled: 100, submissionCount: 50 },
+        stages: {
+          embeddings: {
+            status: 'completed',
+            progress: null,
+            startedAt: null,
+            completedAt: null,
+          },
+          sentiment: {
+            status: 'processing',
+            progress: { current: 10, total: 50 },
+            startedAt: '2026-03-13T10:00:00.000Z',
+            completedAt: null,
+          },
+          sentimentGate: {
+            status: 'pending',
+            progress: null,
+            startedAt: null,
+            completedAt: null,
+            included: null,
+            excluded: null,
+          },
+          topicModeling: {
+            status: 'pending',
+            progress: null,
+            startedAt: null,
+            completedAt: null,
+          },
+          recommendations: {
+            status: 'pending',
+            progress: null,
+            startedAt: null,
+            completedAt: null,
+          },
+        },
+        retryable: false,
+        updatedAt: '2026-03-13T12:00:00.000Z',
       };
       mockOrchestrator.GetPipelineStatus.mockResolvedValue(mockStatus);
 

@@ -141,7 +141,7 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
       sentimentCompleted = await fork.count(SentimentResult, { run: sentimentRun });
     }
     ```
-  - Notes: Only queries when a run exists and has started. Returns 0 when pending. This is a cheap indexed COUNT on `sentiment_result.run_id`.
+  - Notes: Only queries when a run exists and has started. Returns 0 when pending. This is a cheap indexed COUNT on `sentiment_result.run_id` (index confirmed on entity). If pipelines scale beyond ~5K comments, consider caching the count on `SentimentRun.completedCount` — out of scope for now.
 
 - [ ] Task 5: Update `GetPipelineStatus()` — reshape return object to match new DTO
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.ts`
@@ -166,7 +166,7 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
        - `topicModeling`: `buildStage(getRunStatus(topicModelRun), topicModelRun)`
        - `recommendations`: `buildStage(getRunStatus(recommendationRun), recommendationRun)`
     3. Add to the top-level return: `updatedAt: pipeline.updatedAt.toISOString()` and `retryable: pipeline.status === PipelineStatus.FAILED`
-  - Notes: `getRunStatus()` is a simple inline: `(run) => run ? run.status.toLowerCase() : 'pending'`
+  - Notes: `getRunStatus()` is a simple inline: `(run) => run ? run.status.toLowerCase() : 'pending'`. For `retryable`, all current failure modes are transient (worker timeouts, network errors), so `status === FAILED` is sufficient. Revisit if data validation failures become a distinct failure mode — may need an `errorCategory` field.
 
 - [ ] Task 6: Update `getEmbeddingStageStatus()` return type
   - File: `src/modules/analysis/services/pipeline-orchestrator.service.ts`
@@ -236,8 +236,11 @@ Reshape the existing status endpoint response into a lean, polling-friendly DTO 
 
 ### Notes
 
-- **Breaking change**: The response shape of `GET /analysis/pipelines/:id/status` changes. The old `total`, `completed`, `processed` fields on stages are replaced with a `progress: { current, total } | null` object, and `startedAt`/`completedAt` are added. Coordinate frontend deployment.
+- **Breaking change**: The response shape of `GET /analysis/pipelines/:id/status` changes. The old `total`, `completed`, `processed` fields on stages are replaced with a `progress: { current, total } | null` object, and `startedAt`/`completedAt` are added. **Atomic deploy recommended** — backend and frontend should deploy together to avoid runtime mismatches.
 - **No migration needed**: No entity or database schema changes. All changes are in the DTO and service layer.
+- **Frontend null-safety**: The frontend must null-check `progress` before accessing `.current`/`.total`. Consider sharing the Zod schema or generating OpenAPI types to keep the contract in sync.
+- **Staleness detection (frontend concern)**: The frontend should compute staleness from `updatedAt` and `stages.*.startedAt` — e.g., if a stage has been `processing` for >10 minutes with no `updatedAt` change, display a "pipeline may be stuck" warning. No backend changes needed for this.
+- **Future scaling**: If pipeline comment counts grow beyond ~5K, the per-poll `SentimentResult` COUNT query should be revisited (cache on `SentimentRun.completedCount`). Current volumes don't warrant this.
 - Frontend polling pattern (for reference, not in backend scope):
   ```typescript
   const { data } = useQuery({

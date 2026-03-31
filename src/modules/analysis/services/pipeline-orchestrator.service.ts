@@ -470,6 +470,14 @@ export class PipelineOrchestratorService {
       { orderBy: { createdAt: 'DESC' } },
     );
 
+    // Sentiment progress count
+    let sentimentCompleted = 0;
+    if (sentimentRun && sentimentRun.status !== RunStatus.PENDING) {
+      sentimentCompleted = await fork.count(SentimentResult, {
+        run: sentimentRun,
+      });
+    }
+
     // Compute lastEnrollmentSyncAt by scoping through courses in submission scope
     const scope = buildSubmissionScope(pipeline);
     let lastEnrollmentSyncAt: Date | null = null;
@@ -497,25 +505,41 @@ export class PipelineOrchestratorService {
       }
     }
 
-    const stageStatus = (status: string, extras?: Record<string, unknown>) => ({
-      status: status as
-        | 'pending'
-        | 'processing'
-        | 'completed'
-        | 'failed'
-        | 'skipped',
-      ...extras,
+    const buildStage = (
+      status: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped',
+      run: { createdAt: Date; completedAt?: Date | null } | null,
+      progress: { current: number; total: number } | null = null,
+    ) => ({
+      status,
+      progress,
+      startedAt: run?.createdAt?.toISOString() ?? null,
+      completedAt: run?.completedAt?.toISOString() ?? null,
     });
 
-    const getRunStageStatus = (
+    // If RunStatus gains new values, update this mapping to match the stage status union
+    const getRunStatus = (
       run: SentimentRun | TopicModelRun | RecommendationRun | null,
-    ) => {
-      if (!run) return stageStatus('pending');
-      return stageStatus(run.status.toLowerCase());
-    };
+    ) =>
+      run
+        ? (run.status.toLowerCase() as
+            | 'pending'
+            | 'processing'
+            | 'completed'
+            | 'failed')
+        : 'pending';
 
-    // Determine embedding stage status based on pipeline status
-    const embeddingStatus = this.getEmbeddingStageStatus(pipeline);
+    // Gate either completed (has data) or didn't. Top-level pipeline.status
+    // handles failure attribution — no per-stage failure tracking for MVP.
+    // FAILED pipelines: gate shows 'pending' (never completed) which is correct.
+    // CANCELLED pipelines: gate shows 'skipped' (explicitly not attempted).
+    const gateStatus =
+      pipeline.sentimentGateIncluded != null
+        ? 'completed'
+        : pipeline.status === PipelineStatus.SENTIMENT_GATE
+          ? 'processing'
+          : pipeline.status === PipelineStatus.CANCELLED
+            ? 'skipped'
+            : 'pending';
 
     return {
       id: pipeline.id,
@@ -537,27 +561,36 @@ export class PipelineOrchestratorService {
         lastEnrollmentSyncAt: lastEnrollmentSyncAt?.toISOString() || null,
       },
       stages: {
-        embeddings: embeddingStatus,
-        sentiment: {
-          ...getRunStageStatus(sentimentRun),
-          total: pipeline.commentCount,
-        },
-        sentimentGate: stageStatus(
-          pipeline.sentimentGateIncluded !== null &&
-            pipeline.sentimentGateIncluded !== undefined
-            ? 'completed'
-            : 'pending',
-          {
-            included: pipeline.sentimentGateIncluded ?? null,
-            excluded: pipeline.sentimentGateExcluded ?? null,
-          },
+        embeddings: buildStage(
+          this.getEmbeddingStageStatus(pipeline, sentimentRun),
+          null,
         ),
-        topicModeling: getRunStageStatus(topicModelRun),
-        recommendations: getRunStageStatus(recommendationRun),
+        sentiment: sentimentRun
+          ? buildStage(getRunStatus(sentimentRun), sentimentRun, {
+              current: Math.min(
+                sentimentCompleted,
+                sentimentRun.submissionCount,
+              ),
+              total: sentimentRun.submissionCount,
+            })
+          : buildStage('pending', null),
+        sentimentGate: {
+          ...buildStage(gateStatus, null),
+          included: pipeline.sentimentGateIncluded ?? null,
+          excluded: pipeline.sentimentGateExcluded ?? null,
+        },
+        topicModeling: buildStage(getRunStatus(topicModelRun), topicModelRun),
+        recommendations: buildStage(
+          getRunStatus(recommendationRun),
+          recommendationRun,
+        ),
       },
       warnings: pipeline.warnings,
-      errorMessage: pipeline.errorMessage || null,
+      errorMessage: pipeline.errorMessage ?? null,
+      // Intent signal for future error categorization — currently equivalent to status === FAILED
+      retryable: pipeline.status === PipelineStatus.FAILED,
       createdAt: pipeline.createdAt.toISOString(),
+      updatedAt: pipeline.updatedAt.toISOString(),
       confirmedAt: pipeline.confirmedAt?.toISOString() || null,
       completedAt: pipeline.completedAt?.toISOString() || null,
     };
@@ -934,19 +967,24 @@ export class PipelineOrchestratorService {
     this.logger.error(`Pipeline ${pipeline.id} failed: ${error}`);
   }
 
-  private getEmbeddingStageStatus(pipeline: AnalysisPipeline): {
-    status: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
-  } {
+  private getEmbeddingStageStatus(
+    pipeline: AnalysisPipeline,
+    sentimentRun: SentimentRun | null,
+  ): 'pending' | 'processing' | 'completed' | 'failed' | 'skipped' {
     if (pipeline.status === PipelineStatus.EMBEDDING_CHECK) {
-      return { status: 'processing' };
+      return 'processing';
     }
     if (pipeline.status === PipelineStatus.AWAITING_CONFIRMATION) {
-      return { status: 'pending' };
+      return 'pending';
     }
     if (pipeline.status === PipelineStatus.CANCELLED) {
-      return { status: 'skipped' };
+      return 'skipped';
+    }
+    // If pipeline failed and never created a sentiment run, embedding is the likely failure point
+    if (pipeline.status === PipelineStatus.FAILED && !sentimentRun) {
+      return 'failed';
     }
     // Past embedding check (sentiment, topic modeling, recommendations, completed, or failed later)
-    return { status: 'completed' };
+    return 'completed';
   }
 }

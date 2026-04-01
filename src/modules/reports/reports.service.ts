@@ -31,6 +31,10 @@ import { CurrentUserService } from 'src/modules/common/cls/current-user.service'
 
 const REPORT_TYPE = 'faculty_evaluation';
 
+function pgArray(arr: string[]): string {
+  return `{${arr.join(',')}}`;
+}
+
 @Injectable()
 export class ReportsService {
   private readonly logger = new Logger(ReportsService.name);
@@ -139,23 +143,19 @@ export class ReportsService {
       if (deptIds.length === 0) {
         return { batchId: v4(), jobCount: 0, skippedCount: 0 };
       }
-      const codeRows: { code: string }[] = await this.em
-        .getConnection()
-        .execute(
-          'SELECT DISTINCT code FROM department WHERE id = ANY($1) AND deleted_at IS NULL',
-          [deptIds],
-        );
+      const codeRows: { code: string }[] = await this.em.execute(
+        'SELECT DISTINCT code FROM department WHERE id = ANY(?) AND deleted_at IS NULL',
+        [pgArray(deptIds)],
+      );
       departmentCodes = codeRows.map((r) => r.code);
     }
 
     // Apply scope filters
     if (dto.departmentId) {
-      const deptCodeRows: { code: string }[] = await this.em
-        .getConnection()
-        .execute(
-          'SELECT code FROM department WHERE id = $1 AND deleted_at IS NULL',
-          [dto.departmentId],
-        );
+      const deptCodeRows: { code: string }[] = await this.em.execute(
+        'SELECT code FROM department WHERE id = ? AND deleted_at IS NULL',
+        [dto.departmentId],
+      );
       if (deptCodeRows.length === 0) {
         throw new NotFoundException('Department not found');
       }
@@ -168,12 +168,10 @@ export class ReportsService {
 
     let programCode: string | null = null;
     if (dto.programId) {
-      const progRows: { code: string }[] = await this.em
-        .getConnection()
-        .execute(
-          'SELECT code FROM program WHERE id = $1 AND deleted_at IS NULL',
-          [dto.programId],
-        );
+      const progRows: { code: string }[] = await this.em.execute(
+        'SELECT code FROM program WHERE id = ? AND deleted_at IS NULL',
+        [dto.programId],
+      );
       if (progRows.length === 0) {
         throw new NotFoundException('Program not found');
       }
@@ -185,16 +183,22 @@ export class ReportsService {
       faculty_id: string;
       first_name: string;
       last_name: string;
-    }[] = await this.em.getConnection().execute(
+    }[] = await this.em.execute(
       `SELECT DISTINCT qs.faculty_id, u.first_name, u.last_name
        FROM questionnaire_submission qs
        JOIN "user" u ON u.id = qs.faculty_id
-       WHERE qs.semester_id = $1
-         AND ($2::text[] IS NULL OR qs.department_code_snapshot = ANY($2))
-         AND ($3::text IS NULL OR qs.program_code_snapshot = $3)
+       WHERE qs.semester_id = ?
+         AND (?::text[] IS NULL OR qs.department_code_snapshot = ANY(?))
+         AND (?::text IS NULL OR qs.program_code_snapshot = ?)
          AND qs.deleted_at IS NULL
          AND u.deleted_at IS NULL`,
-      [dto.semesterId, departmentCodes, programCode],
+      [
+        dto.semesterId,
+        departmentCodes ? pgArray(departmentCodes) : null,
+        departmentCodes ? pgArray(departmentCodes) : null,
+        programCode,
+        programCode,
+      ],
     );
 
     // Enforce batch size cap
@@ -347,10 +351,9 @@ export class ReportsService {
     }
 
     // Aggregate counts via SQL
-    const countRows: { status: string; count: string }[] = await this.em
-      .getConnection()
-      .execute(
-        `SELECT status, COUNT(*)::text AS count FROM report_job WHERE batch_id = $1 AND deleted_at IS NULL GROUP BY status`,
+    const countRows: { status: string; count: string }[] =
+      await this.em.execute(
+        `SELECT status, COUNT(*)::text AS count FROM report_job WHERE batch_id = ? AND deleted_at IS NULL GROUP BY status`,
         [batchId],
       );
     const counts = {
@@ -437,11 +440,10 @@ export class ReportsService {
   }
 
   private async validateSemester(semesterId: string): Promise<void> {
-    const rows = await this.em
-      .getConnection()
-      .execute('SELECT id FROM semester WHERE id = $1 AND deleted_at IS NULL', [
-        semesterId,
-      ]);
+    const rows = await this.em.execute(
+      'SELECT id FROM semester WHERE id = ? AND deleted_at IS NULL',
+      [semesterId],
+    );
     if (rows.length === 0) {
       throw new NotFoundException('Semester not found');
     }
@@ -471,12 +473,10 @@ export class ReportsService {
       return; // super admin — unrestricted
     }
 
-    const userRows: { department_id: string }[] = await this.em
-      .getConnection()
-      .execute(
-        'SELECT u.department_id FROM "user" u WHERE u.id = $1 AND u.deleted_at IS NULL',
-        [facultyId],
-      );
+    const userRows: { department_id: string }[] = await this.em.execute(
+      'SELECT u.department_id FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+      [facultyId],
+    );
 
     if (userRows.length === 0) {
       throw new NotFoundException('Faculty not found');
@@ -490,10 +490,9 @@ export class ReportsService {
   }
 
   private async resolveFacultyName(facultyId: string): Promise<string> {
-    const rows: { first_name: string; last_name: string }[] = await this.em
-      .getConnection()
-      .execute(
-        'SELECT first_name, last_name FROM "user" WHERE id = $1 AND deleted_at IS NULL',
+    const rows: { first_name: string; last_name: string }[] =
+      await this.em.execute(
+        'SELECT first_name, last_name FROM "user" WHERE id = ? AND deleted_at IS NULL',
         [facultyId],
       );
 

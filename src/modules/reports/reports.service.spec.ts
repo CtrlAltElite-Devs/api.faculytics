@@ -26,6 +26,7 @@ describe('ReportsService', () => {
   let mockEntityManager: {
     fork: jest.Mock;
     nativeDelete: jest.Mock;
+    execute: jest.Mock;
     getConnection: jest.Mock;
   };
   let mockStorageProvider: {
@@ -78,6 +79,7 @@ describe('ReportsService', () => {
     mockEntityManager = {
       fork: jest.fn().mockReturnValue(mockForkEm),
       nativeDelete: jest.fn().mockResolvedValue(0),
+      execute: mockConnection.execute,
       getConnection: jest.fn().mockReturnValue(mockConnection),
     };
     mockStorageProvider = {

@@ -14,6 +14,7 @@ describe('AnalyticsService', () => {
     mockExecute = jest.fn().mockResolvedValue([]);
 
     const mockEm = {
+      execute: mockExecute,
       getConnection: jest.fn().mockReturnValue({ execute: mockExecute }),
     };
 

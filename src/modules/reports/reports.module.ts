@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { QueueName } from 'src/configurations/common/queue-names';
 import { ReportJob } from 'src/entities/report-job.entity';
+import { User } from 'src/entities/user.entity';
 import { CommonModule } from '../common/common.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import DataLoaderModule from '../common/data-loaders/index.module';
@@ -17,7 +18,7 @@ import { ReportCleanupJob } from './jobs/report-cleanup.job';
 @Module({
   imports: [
     BullModule.registerQueue({ name: QueueName.REPORT_GENERATION }),
-    MikroOrmModule.forFeature([ReportJob]),
+    MikroOrmModule.forFeature([ReportJob, User]),
     CommonModule,
     AnalyticsModule,
     DataLoaderModule,

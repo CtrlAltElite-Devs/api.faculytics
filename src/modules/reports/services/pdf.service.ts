@@ -102,8 +102,10 @@ export class PdfService implements OnModuleInit, OnModuleDestroy {
   private getCompiledTemplate(): Handlebars.TemplateDelegate {
     if (!this.compiledTemplate) {
       const templatePath = path.join(
-        __dirname,
-        '..',
+        process.cwd(),
+        'dist',
+        'modules',
+        'reports',
         'templates',
         'faculty-evaluation.hbs',
       );
@@ -115,7 +117,14 @@ export class PdfService implements OnModuleInit, OnModuleDestroy {
 
   private getCss(): string {
     if (!this.cssContent) {
-      const cssPath = path.join(__dirname, '..', 'templates', 'report.css');
+      const cssPath = path.join(
+        process.cwd(),
+        'dist',
+        'modules',
+        'reports',
+        'templates',
+        'report.css',
+      );
       this.cssContent = fs.readFileSync(cssPath, 'utf-8');
     }
     return this.cssContent;

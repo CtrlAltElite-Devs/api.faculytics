@@ -21,6 +21,8 @@ This document describes the high-level components, technology stack, and module 
 - **Caching:** `@nestjs/cache-manager` with Redis (`@keyv/redis`)
 - **Job Queue:** BullMQ (`@nestjs/bullmq`) on Redis
 - **Health Checks:** `@nestjs/terminus` with custom indicators
+- **PDF Generation:** Puppeteer (headless Chrome) + Handlebars templates
+- **Object Storage:** Cloudflare R2 via `@aws-sdk/client-s3` with presigned URL downloads
 - **Validation:** Zod (Environment variables), class-validator (DTOs)
 
 ## 3. Module Architecture
@@ -56,6 +58,7 @@ classDiagram
         FacultyModule
         CurriculumModule
         AuditModule
+        ReportsModule
     }
 
     AppModule --> InfrastructureModules : "imports"
@@ -74,6 +77,9 @@ classDiagram
     AnalyticsModule --> CommonModule : "uses ScopeResolverService"
     FacultyModule --> CommonModule : "uses ScopeResolverService"
     CurriculumModule --> CommonModule : "uses ScopeResolverService"
+    ReportsModule --> AnalyticsModule : "uses AnalyticsService"
+    ReportsModule --> CommonModule : "uses ScopeResolverService"
+    ReportsModule --> BullModule : "uses BullMQ queue"
 
     class AnalysisModule {
         +AnalysisService
@@ -128,6 +134,15 @@ classDiagram
         +AuditProcessor
         +AuditInterceptor
     }
+
+    class ReportsModule {
+        +ReportsService
+        +ReportsController
+        +ReportGenerationProcessor
+        +PdfService
+        +R2StorageService
+        +ReportCleanupJob
+    }
 ```
 
 ## 4. Login Strategy Pattern
@@ -160,11 +175,12 @@ Phase dependency: if categories fail, courses and enrollments are skipped. If co
 
 ### Cron Jobs
 
-The only remaining cron job using the `BaseJob` pattern is in `src/crons/jobs/`:
+Cron jobs using the `BaseJob` pattern:
 
-| Job                      | Schedule       | Purpose                                 |
-| ------------------------ | -------------- | --------------------------------------- |
-| `RefreshTokenCleanupJob` | Every 12 hours | Purges refresh tokens older than 7 days |
+| Job                      | Schedule       | Module        | Purpose                                                        |
+| ------------------------ | -------------- | ------------- | -------------------------------------------------------------- |
+| `RefreshTokenCleanupJob` | Every 12 hours | `AllCronJobs` | Purges refresh tokens older than 7 days                        |
+| `ReportCleanupJob`       | Daily at 3 AM  | ReportsModule | Purges expired report jobs + R2 objects, orphaned waiting jobs |
 
 ## 6. Moodle Connectivity & Error Handling
 
@@ -215,7 +231,7 @@ Each stage has a corresponding `RunStatus` (`PENDING` → `PROCESSING` → `COMP
 
 ### Queue Architecture
 
-Seven BullMQ queues with independent concurrency. Queue names are centralized in `src/configurations/common/queue-names.ts`.
+Eight BullMQ queues with independent concurrency. Queue names are centralized in `src/configurations/common/queue-names.ts`.
 
 | Queue               | Processor                   | Concurrency Default | Module          |
 | ------------------- | --------------------------- | ------------------- | --------------- |
@@ -226,6 +242,7 @@ Seven BullMQ queues with independent concurrency. Queue names are centralized in
 | `recommendations`   | `RecommendationsProcessor`  | 1                   | AnalysisModule  |
 | `analytics-refresh` | `AnalyticsRefreshProcessor` | 1                   | AnalyticsModule |
 | `audit`             | `AuditProcessor`            | 1                   | AuditModule     |
+| `report-generation` | `ReportGenerationProcessor` | 2                   | ReportsModule   |
 
 ### REST Endpoints
 
@@ -246,6 +263,17 @@ See [Analytics Module](./analytics.md) for full architecture.
 | GET    | `/analytics/overview`  | Department overview with per-faculty stats        |
 | GET    | `/analytics/attention` | Faculty flagged for review with attention flags   |
 | GET    | `/analytics/trends`    | Faculty trend data with linear regression results |
+
+### Report Generation Endpoints
+
+See [Report Generation Workflow](../workflows/report-generation.md) for the full async flow.
+
+| Method | Path                      | Description                                            |
+| ------ | ------------------------- | ------------------------------------------------------ |
+| POST   | `/reports/generate`       | Queue a single faculty evaluation PDF                  |
+| POST   | `/reports/generate/batch` | Queue batch PDF generation (scope-filtered, throttled) |
+| GET    | `/reports/status/:jobId`  | Poll single report job status + download URL           |
+| GET    | `/reports/batch/:batchId` | Poll batch progress with paginated per-job details     |
 
 **Resilience:** Exponential backoff retries, stall detection, graceful degradation when Redis is unavailable (`ServiceUnavailableException`), HTTP timeout via `AbortController`.
 

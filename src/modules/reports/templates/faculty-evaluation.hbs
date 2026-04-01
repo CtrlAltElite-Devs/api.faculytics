@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>{{css}}</style>
+</head>
+<body>
+  <div class="report">
+    <div class="header">
+      <div class="header-left">
+        <h1>FACULTY EVALUATION REPORT</h1>
+        <p class="questionnaire-type">{{questionnaireType.name}}</p>
+      </div>
+      <div class="header-right">
+        <p class="semester-code">{{semester.code}}</p>
+        <p class="academic-year">AY {{semester.academicYear}}</p>
+      </div>
+    </div>
+
+    <div class="confidential-banner">CONFIDENTIAL</div>
+
+    <div class="teacher-info">
+      <table class="info-table">
+        <tr>
+          <td class="label">Teacher Name:</td>
+          <td class="value">{{faculty.name}}</td>
+          <td class="label">No. of Respondents:</td>
+          <td class="value">{{submissionCount}}</td>
+        </tr>
+      </table>
+    </div>
+
+    {{#each sections}}
+    <table class="section-table">
+      <thead>
+        <tr class="section-header">
+          <th colspan="3">{{title}} (Weight: {{weight}}%)</th>
+        </tr>
+        <tr class="column-header">
+          <th class="col-question">Question</th>
+          <th class="col-average">Average</th>
+          <th class="col-interpretation">Interpretation</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#each questions}}
+        <tr>
+          <td class="col-question">{{order}}. {{text}}</td>
+          <td class="col-average">{{average}}</td>
+          <td class="col-interpretation">{{interpretation}}</td>
+        </tr>
+        {{/each}}
+      </tbody>
+      <tfoot>
+        <tr class="section-footer">
+          <td class="col-question"><strong>Section Average</strong></td>
+          <td class="col-average"><strong>{{sectionAverage}}</strong></td>
+          <td class="col-interpretation"><strong>{{sectionInterpretation}}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+    {{/each}}
+
+    {{#if overallRating}}
+    <table class="overall-table">
+      <tr>
+        <td class="label"><strong>OVERALL WEIGHTED RATING</strong></td>
+        <td class="col-average"><strong>{{overallRating}}</strong></td>
+        <td class="col-interpretation"><strong>{{overallInterpretation}}</strong></td>
+      </tr>
+    </table>
+    {{/if}}
+
+    <div class="comments-section">
+      <h2>Comments / Remarks</h2>
+      {{#if hasComments}}
+      <ul class="comments-list">
+        {{#each comments}}
+        <li>{{text}}</li>
+        {{/each}}
+      </ul>
+      {{else}}
+      <p class="no-comments">No comments submitted.</p>
+      {{/if}}
+    </div>
+  </div>
+</body>
+</html>

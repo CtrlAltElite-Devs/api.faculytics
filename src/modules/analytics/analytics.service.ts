@@ -15,7 +15,9 @@ import {
   FacultyTrendsQueryDto,
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
+  BaseFacultyReportQueryDto,
 } from './dto/analytics-query.dto';
+import { ReportCommentDto } from './dto/responses/faculty-report-comments.response.dto';
 import {
   DepartmentOverviewResponseDto,
   FacultySemesterStatsDto,
@@ -49,6 +51,11 @@ interface SectionMeta {
   weight: number;
 }
 
+/** Convert a JS array to a PG array literal for use with em.execute() + ? bindings */
+function pgArray(arr: string[]): string {
+  return `{${arr.join(',')}}`;
+}
+
 const ATTENTION_THRESHOLDS = {
   MIN_ANALYZED_FOR_GAP: 10,
   QUANT_QUAL_DIVERGENCE: 0.2,
@@ -69,32 +76,28 @@ export class AnalyticsService {
   ): Promise<DepartmentOverviewResponseDto> {
     const deptCodes = await this.ResolveDepartmentCodes(semesterId);
 
-    // F5 fix: pre-compute previous semester ID (same for all rows since semester_id is constant)
-    const prevSemRows: { id: string }[] = await this.em.getConnection().execute(
+    const prevSemRows: { id: string }[] = await this.em.execute(
       `SELECT s2.id FROM semester s2
-         WHERE s2.campus_id = (SELECT s1.campus_id FROM semester s1 WHERE s1.id = $1)
-           AND s2.created_at < (SELECT s1.created_at FROM semester s1 WHERE s1.id = $1)
+         WHERE s2.campus_id = (SELECT s1.campus_id FROM semester s1 WHERE s1.id = ?)
+           AND s2.created_at < (SELECT s1.created_at FROM semester s1 WHERE s1.id = ?)
            AND s2.deleted_at IS NULL
          ORDER BY s2.created_at DESC LIMIT 1`,
-      [semesterId],
+      [semesterId, semesterId],
     );
     const prevSemesterId = prevSemRows[0]?.id ?? null;
 
     const params: unknown[] = [semesterId, prevSemesterId];
-    let paramIdx = 3;
 
     let deptFilter = '';
     if (deptCodes !== null) {
-      deptFilter = ` AND curr.department_code_snapshot = ANY($${paramIdx})`;
-      params.push(deptCodes);
-      paramIdx++;
+      deptFilter = ` AND curr.department_code_snapshot = ANY(?)`;
+      params.push(pgArray(deptCodes));
     }
 
     let programFilter = '';
     if (query.programCode) {
-      programFilter = ` AND curr.program_code_snapshot = $${paramIdx}`;
+      programFilter = ` AND curr.program_code_snapshot = ?`;
       params.push(query.programCode);
-      paramIdx++;
     }
 
     const sql = `
@@ -125,12 +128,14 @@ export class AnalyticsService {
       LEFT JOIN mv_faculty_semester_stats prev
         ON prev.faculty_id = curr.faculty_id
         AND prev.department_code_snapshot = curr.department_code_snapshot
-        AND prev.semester_id = $2
-      WHERE curr.semester_id = $1${deptFilter}${programFilter}
+        AND prev.semester_id = ?
+      WHERE curr.semester_id = ?${deptFilter}${programFilter}
       ORDER BY curr.department_code_snapshot, curr.avg_normalized_score DESC
     `;
 
-    const rows = await this.em.getConnection().execute(sql, params);
+    // prev.semester_id and curr.semester_id use positional ? — reorder params
+    const reorderedParams = [prevSemesterId, semesterId, ...params.slice(2)];
+    const rows = await this.em.execute(sql, reorderedParams);
 
     const faculty: FacultySemesterStatsDto[] = rows.map((r) => ({
       facultyId: r.faculty_id as string,
@@ -205,13 +210,11 @@ export class AnalyticsService {
         ATTENTION_THRESHOLDS.MIN_SEMESTERS_FOR_TREND,
         ATTENTION_THRESHOLDS.MIN_R2_FOR_TREND,
       ];
-      let paramIdx = 3;
 
       let deptFilter = '';
       if (deptCodes !== null) {
-        deptFilter = ` AND department_code_snapshot = ANY($${paramIdx})`;
-        params.push(deptCodes);
-        paramIdx++;
+        deptFilter = ` AND department_code_snapshot = ANY(?)`;
+        params.push(pgArray(deptCodes));
       }
 
       const sql = `
@@ -219,14 +222,16 @@ export class AnalyticsService {
                department_code_snapshot AS department_code,
                score_slope, score_r2, sentiment_slope, sentiment_r2
         FROM mv_faculty_trends
-        WHERE semester_count >= $1
+        WHERE semester_count >= ?
           AND (
-            (score_slope < 0 AND score_r2 >= $2)
-            OR (sentiment_slope < 0 AND sentiment_r2 >= $2)
+            (score_slope < 0 AND score_r2 >= ?)
+            OR (sentiment_slope < 0 AND sentiment_r2 >= ?)
           )${deptFilter}
       `;
 
-      const rows = await this.em.getConnection().execute(sql, params);
+      // The R2 threshold is used twice in the SQL
+      const sqlParams = [params[0], params[1], params[1], ...params.slice(2)];
+      const rows = await this.em.execute(sql, sqlParams);
 
       for (const r of rows) {
         const scoreSlope = Number(r.score_slope);
@@ -275,13 +280,11 @@ export class AnalyticsService {
         ATTENTION_THRESHOLDS.MIN_ANALYZED_FOR_GAP,
         ATTENTION_THRESHOLDS.QUANT_QUAL_DIVERGENCE,
       ];
-      let paramIdx = 4;
 
       let deptFilter = '';
       if (deptCodes !== null) {
-        deptFilter = ` AND department_code_snapshot = ANY($${paramIdx})`;
-        params.push(deptCodes);
-        paramIdx++;
+        deptFilter = ` AND department_code_snapshot = ANY(?)`;
+        params.push(pgArray(deptCodes));
       }
 
       const sql = `
@@ -290,12 +293,12 @@ export class AnalyticsService {
                avg_normalized_score, positive_count, analyzed_count,
                (avg_normalized_score / 100.0) - (positive_count::float / analyzed_count) AS divergence
         FROM mv_faculty_semester_stats
-        WHERE semester_id = $1
-          AND analyzed_count >= $2
-          AND ABS((avg_normalized_score / 100.0) - (positive_count::float / analyzed_count)) > $3${deptFilter}
+        WHERE semester_id = ?
+          AND analyzed_count >= ?
+          AND ABS((avg_normalized_score / 100.0) - (positive_count::float / analyzed_count)) > ?${deptFilter}
       `;
 
-      const rows = await this.em.getConnection().execute(sql, params);
+      const rows = await this.em.execute(sql, params);
 
       for (const r of rows) {
         const normalizedScore = Number(r.avg_normalized_score);
@@ -323,13 +326,11 @@ export class AnalyticsService {
     // 3. Low coverage
     {
       const params: unknown[] = [semesterId];
-      let paramIdx = 2;
 
       let deptFilter = '';
       if (deptCodes !== null) {
-        deptFilter = ` AND department_code_snapshot = ANY($${paramIdx})`;
-        params.push(deptCodes);
-        paramIdx++;
+        deptFilter = ` AND department_code_snapshot = ANY(?)`;
+        params.push(pgArray(deptCodes));
       }
 
       const sql = `
@@ -337,12 +338,12 @@ export class AnalyticsService {
                department_code_snapshot AS department_code,
                analyzed_count, submission_count
         FROM mv_faculty_semester_stats
-        WHERE semester_id = $1
+        WHERE semester_id = ?
           AND submission_count > 0
           AND (analyzed_count::float / submission_count) < 0.5${deptFilter}
       `;
 
-      const rows = await this.em.getConnection().execute(sql, params);
+      const rows = await this.em.execute(sql, params);
 
       for (const r of rows) {
         const analyzedCount = Number(r.analyzed_count);
@@ -377,11 +378,9 @@ export class AnalyticsService {
     // Resolve scope — use provided semesterId or fall back to latest semester
     let scopeSemesterId = query.semesterId;
     if (!scopeSemesterId) {
-      const rows: { id: string }[] = await this.em
-        .getConnection()
-        .execute(
-          'SELECT id FROM semester WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1',
-        );
+      const rows: { id: string }[] = await this.em.execute(
+        'SELECT id FROM semester WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1',
+      );
       scopeSemesterId = rows[0]?.id;
     }
 
@@ -391,13 +390,11 @@ export class AnalyticsService {
     }
 
     const params: unknown[] = [minSemesters, minR2];
-    let paramIdx = 3;
 
     let deptFilter = '';
     if (deptCodes !== null) {
-      deptFilter = ` AND department_code_snapshot = ANY($${paramIdx})`;
-      params.push(deptCodes);
-      paramIdx++;
+      deptFilter = ` AND department_code_snapshot = ANY(?)`;
+      params.push(pgArray(deptCodes));
     }
 
     const sql = `
@@ -407,12 +404,12 @@ export class AnalyticsService {
              score_slope, score_r2,
              sentiment_slope, sentiment_r2
       FROM mv_faculty_trends
-      WHERE semester_count >= $1
-        AND COALESCE(score_r2, 0) >= $2${deptFilter}
+      WHERE semester_count >= ?
+        AND COALESCE(score_r2, 0) >= ?${deptFilter}
       ORDER BY score_slope ASC
     `;
 
-    const rows = await this.em.getConnection().execute(sql, params);
+    const rows = await this.em.execute(sql, params);
 
     const items: FacultyTrendDto[] = rows.map((r) => {
       const scoreSlope = r.score_slope != null ? Number(r.score_slope) : null;
@@ -459,30 +456,169 @@ export class AnalyticsService {
     facultyId: string,
     query: FacultyReportQueryDto,
   ): Promise<FacultyReportResponseDto> {
-    const scopeUser = await this.validateFacultyScope(
+    await this.validateFacultyScope(facultyId, query.semesterId);
+
+    const { versionIds, canonicalSchema, questionnaireTypeName } =
+      await this.resolveVersionIds(
+        facultyId,
+        query.semesterId,
+        query.questionnaireTypeCode,
+      );
+
+    return this.BuildFacultyReportData(
+      facultyId,
+      versionIds,
+      canonicalSchema,
+      questionnaireTypeName,
+      query,
+    );
+  }
+
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetFacultyReportUnscoped(
+    facultyId: string,
+    query: FacultyReportQueryDto,
+  ): Promise<FacultyReportResponseDto> {
+    const { versionIds, canonicalSchema, questionnaireTypeName } =
+      await this.resolveVersionIds(
+        facultyId,
+        query.semesterId,
+        query.questionnaireTypeCode,
+      );
+
+    return this.BuildFacultyReportData(
+      facultyId,
+      versionIds,
+      canonicalSchema,
+      questionnaireTypeName,
+      query,
+    );
+  }
+
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetAllFacultyReportComments(
+    facultyId: string,
+    query: BaseFacultyReportQueryDto,
+  ): Promise<ReportCommentDto[]> {
+    const { versionIds } = await this.resolveVersionIds(
       facultyId,
       query.semesterId,
+      query.questionnaireTypeCode,
     );
 
-    // If scope check returned user data, reuse it; otherwise fetch separately
+    if (versionIds.length === 0) {
+      return [];
+    }
+
+    return this.queryComments(facultyId, versionIds, query);
+  }
+
+  async GetFacultyReportComments(
+    facultyId: string,
+    query: FacultyReportCommentsQueryDto,
+  ): Promise<FacultyReportCommentsResponseDto> {
+    await this.validateFacultyScope(facultyId, query.semesterId);
+
+    const { versionIds } = await this.resolveVersionIds(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+    );
+
+    if (versionIds.length === 0) {
+      return {
+        items: [],
+        meta: {
+          totalItems: 0,
+          itemCount: 0,
+          itemsPerPage: query.limit!,
+          totalPages: 0,
+          currentPage: query.page!,
+        } as PaginationMeta,
+      };
+    }
+
+    const baseParams: unknown[] = [
+      facultyId,
+      query.semesterId,
+      pgArray(versionIds),
+    ];
+    let courseFilter = '';
+    if (query.courseId) {
+      courseFilter = ` AND qs.course_id = ?`;
+      baseParams.push(query.courseId);
+    }
+
+    const whereClause = `
+      WHERE qs.faculty_id = ?
+        AND qs.semester_id = ?
+        AND qs.questionnaire_version_id = ANY(?)
+        AND qs.qualitative_comment IS NOT NULL
+        AND TRIM(qs.qualitative_comment) != ''
+        AND qs.deleted_at IS NULL${courseFilter}
+    `;
+
+    const countSql = `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`;
+
+    const page = query.page!;
+    const limit = query.limit!;
+    const offset = (page - 1) * limit;
+
+    const paginatedParams = [...baseParams, limit, offset];
+    const paginatedSql = `
+      SELECT qs.qualitative_comment AS text, qs.submitted_at
+      FROM questionnaire_submission qs
+      ${whereClause}
+      ORDER BY qs.submitted_at DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    const [countRows, commentRows] = await Promise.all([
+      this.em.execute(countSql, baseParams),
+      this.em.execute(paginatedSql, paginatedParams),
+    ]);
+
+    const totalItems = Number(countRows[0]?.total ?? 0);
+    const items = commentRows.map((r) => ({
+      text: r.text as string,
+      submittedAt: new Date(r.submitted_at as string).toISOString(),
+    }));
+
+    const totalPages = Math.ceil(totalItems / limit) || 0;
+
+    return {
+      items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage: limit,
+        totalPages,
+        currentPage: page,
+      } as PaginationMeta,
+    };
+  }
+
+  private async BuildFacultyReportData(
+    facultyId: string,
+    versionIds: string[],
+    canonicalSchema: QuestionnaireSchemaSnapshot | null,
+    questionnaireTypeName: string,
+    query: FacultyReportQueryDto,
+  ): Promise<FacultyReportResponseDto> {
     const [facultyRow, semesterRow] = await Promise.all([
-      scopeUser
-        ? Promise.resolve(scopeUser)
-        : this.em
-            .getConnection()
-            .execute(
-              'SELECT u.first_name, u.last_name FROM "user" u WHERE u.id = $1 AND u.deleted_at IS NULL',
-              [facultyId],
-            )
-            .then((rows: { first_name: string; last_name: string }[]) => {
-              if (rows.length === 0)
-                throw new NotFoundException('Faculty not found');
-              return rows[0];
-            }),
       this.em
-        .getConnection()
         .execute(
-          'SELECT s.id, s.code, s.label, s.academic_year FROM semester s WHERE s.id = $1 AND s.deleted_at IS NULL',
+          'SELECT u.first_name, u.last_name FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+          [facultyId],
+        )
+        .then((rows: { first_name: string; last_name: string }[]) => {
+          if (rows.length === 0)
+            throw new NotFoundException('Faculty not found');
+          return rows[0];
+        }),
+      this.em
+        .execute(
+          'SELECT s.id, s.code, s.label, s.academic_year FROM semester s WHERE s.id = ? AND s.deleted_at IS NULL',
           [query.semesterId],
         )
         .then(
@@ -500,13 +636,6 @@ export class AnalyticsService {
           },
         ),
     ]);
-
-    const { versionIds, canonicalSchema, questionnaireTypeName } =
-      await this.resolveVersionIds(
-        facultyId,
-        query.semesterId,
-        query.questionnaireTypeCode,
-      );
 
     const facultyDto = {
       id: facultyId,
@@ -541,13 +670,15 @@ export class AnalyticsService {
     );
 
     // Aggregate scores
-    const aggParams: unknown[] = [facultyId, query.semesterId, versionIds];
-    let aggParamIdx = 4;
+    const aggParams: unknown[] = [
+      facultyId,
+      query.semesterId,
+      pgArray(versionIds),
+    ];
     let courseFilter = '';
     if (query.courseId) {
-      courseFilter = ` AND qs.course_id = $${aggParamIdx}`;
+      courseFilter = ` AND qs.course_id = ?`;
       aggParams.push(query.courseId);
-      aggParamIdx++;
     }
 
     const aggSql = `
@@ -556,9 +687,9 @@ export class AnalyticsService {
              COUNT(*) AS response_count
       FROM questionnaire_answer qa
       JOIN questionnaire_submission qs ON qs.id = qa.submission_id
-      WHERE qs.faculty_id = $1
-        AND qs.semester_id = $2
-        AND qs.questionnaire_version_id = ANY($3)
+      WHERE qs.faculty_id = ?
+        AND qs.semester_id = ?
+        AND qs.questionnaire_version_id = ANY(?)
         AND qs.deleted_at IS NULL
         AND qa.deleted_at IS NULL${courseFilter}
       GROUP BY qa.question_id, qa.section_id
@@ -567,15 +698,15 @@ export class AnalyticsService {
     const countSql = `
       SELECT COUNT(DISTINCT qs.id) AS count
       FROM questionnaire_submission qs
-      WHERE qs.faculty_id = $1
-        AND qs.semester_id = $2
-        AND qs.questionnaire_version_id = ANY($3)
+      WHERE qs.faculty_id = ?
+        AND qs.semester_id = ?
+        AND qs.questionnaire_version_id = ANY(?)
         AND qs.deleted_at IS NULL${courseFilter}
     `;
 
     const [aggRows, countRows] = await Promise.all([
-      this.em.getConnection().execute(aggSql, aggParams),
-      this.em.getConnection().execute(countSql, aggParams),
+      this.em.execute(aggSql, aggParams),
+      this.em.execute(countSql, aggParams),
     ]);
 
     const submissionCount = Number(countRows[0]?.count ?? 0);
@@ -658,16 +789,16 @@ export class AnalyticsService {
     // Course filter metadata
     let courseFilterDto: FacultyReportResponseDto['courseFilter'] = null;
     if (query.courseId) {
-      const courseRows = await this.em.getConnection().execute(
+      const courseRows = await this.em.execute(
         `SELECT qs.course_code_snapshot, qs.course_title_snapshot
            FROM questionnaire_submission qs
-           WHERE qs.faculty_id = $1
-             AND qs.semester_id = $2
-             AND qs.questionnaire_version_id = ANY($3)
-             AND qs.course_id = $4
+           WHERE qs.faculty_id = ?
+             AND qs.semester_id = ?
+             AND qs.questionnaire_version_id = ANY(?)
+             AND qs.course_id = ?
              AND qs.deleted_at IS NULL
            LIMIT 1`,
-        [facultyId, query.semesterId, versionIds, query.courseId],
+        [facultyId, query.semesterId, pgArray(versionIds), query.courseId],
       );
       const courseRow = courseRows[0];
       if (courseRow) {
@@ -691,87 +822,40 @@ export class AnalyticsService {
     };
   }
 
-  async GetFacultyReportComments(
+  private async queryComments(
     facultyId: string,
-    query: FacultyReportCommentsQueryDto,
-  ): Promise<FacultyReportCommentsResponseDto> {
-    await this.validateFacultyScope(facultyId, query.semesterId);
-
-    const { versionIds } = await this.resolveVersionIds(
+    versionIds: string[],
+    query: BaseFacultyReportQueryDto,
+  ): Promise<ReportCommentDto[]> {
+    const params: unknown[] = [
       facultyId,
       query.semesterId,
-      query.questionnaireTypeCode,
-    );
-
-    if (versionIds.length === 0) {
-      return {
-        items: [],
-        meta: {
-          totalItems: 0,
-          itemCount: 0,
-          itemsPerPage: query.limit!,
-          totalPages: 0,
-          currentPage: query.page!,
-        } as PaginationMeta,
-      };
-    }
-
-    const baseParams: unknown[] = [facultyId, query.semesterId, versionIds];
-    let baseParamIdx = 4;
+      pgArray(versionIds),
+    ];
     let courseFilter = '';
     if (query.courseId) {
-      courseFilter = ` AND qs.course_id = $${baseParamIdx}`;
-      baseParams.push(query.courseId);
-      baseParamIdx++;
+      courseFilter = ` AND qs.course_id = ?`;
+      params.push(query.courseId);
     }
 
-    const whereClause = `
-      WHERE qs.faculty_id = $1
-        AND qs.semester_id = $2
-        AND qs.questionnaire_version_id = ANY($3)
+    const sql = `
+      SELECT qs.qualitative_comment AS text, qs.submitted_at
+      FROM questionnaire_submission qs
+      WHERE qs.faculty_id = ?
+        AND qs.semester_id = ?
+        AND qs.questionnaire_version_id = ANY(?)
         AND qs.qualitative_comment IS NOT NULL
         AND TRIM(qs.qualitative_comment) != ''
         AND qs.deleted_at IS NULL${courseFilter}
-    `;
-
-    const countSql = `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`;
-
-    const page = query.page!;
-    const limit = query.limit!;
-    const offset = (page - 1) * limit;
-
-    const paginatedParams = [...baseParams, limit, offset];
-    const paginatedSql = `
-      SELECT qs.qualitative_comment AS text, qs.submitted_at
-      FROM questionnaire_submission qs
-      ${whereClause}
       ORDER BY qs.submitted_at DESC
-      LIMIT $${baseParamIdx} OFFSET $${baseParamIdx + 1}
     `;
 
-    const [countRows, commentRows] = await Promise.all([
-      this.em.getConnection().execute(countSql, baseParams),
-      this.em.getConnection().execute(paginatedSql, paginatedParams),
-    ]);
+    const rows = await this.em.execute(sql, params);
 
-    const totalItems = Number(countRows[0]?.total ?? 0);
-    const items = commentRows.map((r) => ({
+    return rows.map((r) => ({
       text: r.text as string,
       submittedAt: new Date(r.submitted_at as string).toISOString(),
     }));
-
-    const totalPages = Math.ceil(totalItems / limit) || 0;
-
-    return {
-      items,
-      meta: {
-        totalItems,
-        itemCount: items.length,
-        itemsPerPage: limit,
-        totalPages,
-        currentPage: page,
-      } as PaginationMeta,
-    };
   }
 
   private async validateFacultyScope(
@@ -789,12 +873,10 @@ export class AnalyticsService {
       department_id: string;
       first_name: string;
       last_name: string;
-    }[] = await this.em
-      .getConnection()
-      .execute(
-        'SELECT u.id, u.department_id, u.first_name, u.last_name FROM "user" u WHERE u.id = $1 AND u.deleted_at IS NULL',
-        [facultyId],
-      );
+    }[] = await this.em.execute(
+      'SELECT u.id, u.department_id, u.first_name, u.last_name FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+      [facultyId],
+    );
 
     if (userRows.length === 0) {
       throw new NotFoundException('Faculty not found');
@@ -822,12 +904,10 @@ export class AnalyticsService {
     questionnaireTypeName: string;
   }> {
     // Phase 1: Verify type exists
-    const typeRows: { id: string; name: string }[] = await this.em
-      .getConnection()
-      .execute(
-        'SELECT qt.id, qt.name FROM questionnaire_type qt WHERE qt.code = $1 AND qt.deleted_at IS NULL',
-        [questionnaireTypeCode],
-      );
+    const typeRows: { id: string; name: string }[] = await this.em.execute(
+      'SELECT qt.id, qt.name FROM questionnaire_type qt WHERE qt.code = ? AND qt.deleted_at IS NULL',
+      [questionnaireTypeCode],
+    );
 
     if (typeRows.length === 0) {
       throw new NotFoundException('Questionnaire type not found');
@@ -841,14 +921,14 @@ export class AnalyticsService {
       id: string;
       version_number: number;
       schema_snapshot: QuestionnaireSchemaSnapshot;
-    }[] = await this.em.getConnection().execute(
+    }[] = await this.em.execute(
       `SELECT DISTINCT qv.id, qv.version_number, qv.schema_snapshot
        FROM questionnaire_version qv
        JOIN questionnaire q ON q.id = qv.questionnaire_id
        JOIN questionnaire_submission qs ON qs.questionnaire_version_id = qv.id
-       WHERE q.type_id = $1
-         AND qs.faculty_id = $2
-         AND qs.semester_id = $3
+       WHERE q.type_id = ?
+         AND qs.faculty_id = ?
+         AND qs.semester_id = ?
          AND qv.status IN ('ACTIVE', 'DEPRECATED')
          AND qv.deleted_at IS NULL
          AND q.deleted_at IS NULL
@@ -911,11 +991,9 @@ export class AnalyticsService {
   }
 
   private async GetLastRefreshedAt(): Promise<string | null> {
-    const rows: { value: string }[] = await this.em
-      .getConnection()
-      .execute(
-        "SELECT value FROM system_config WHERE key = 'analytics_last_refreshed_at' AND deleted_at IS NULL",
-      );
+    const rows: { value: string }[] = await this.em.execute(
+      "SELECT value FROM system_config WHERE key = 'analytics_last_refreshed_at' AND deleted_at IS NULL",
+    );
 
     return rows[0]?.value ?? null;
   }
@@ -933,12 +1011,10 @@ export class AnalyticsService {
       return [];
     }
 
-    const rows: { code: string }[] = await this.em
-      .getConnection()
-      .execute(
-        'SELECT DISTINCT code FROM department WHERE id = ANY($1) AND deleted_at IS NULL',
-        [deptIds],
-      );
+    const rows: { code: string }[] = await this.em.execute(
+      'SELECT DISTINCT code FROM department WHERE id = ANY(?) AND deleted_at IS NULL',
+      [pgArray(deptIds)],
+    );
 
     return rows.map((r) => r.code);
   }

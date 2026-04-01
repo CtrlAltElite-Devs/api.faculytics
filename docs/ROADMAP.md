@@ -13,7 +13,7 @@ Provide a robust, analytics-driven bridge between Moodle learning environments a
 | Phase 1. Foundation & Core Synchronization    | Complete        | Core auth, Moodle sync, hydration, scheduling, and resilience are in place.                                                        |
 | Phase 2. Questionnaire & Ingestion Engine     | Mostly complete | Questionnaire management, draft/submit flows, and CSV ingestion are live; self-serve file mapping is still pending.                |
 | Phase 3. AI & Inference Pipeline              | Mostly complete | End-to-end pipeline is shipped; production worker rollout and operator monitoring remain open.                                     |
-| Phase 4. Analytics & Reporting Infrastructure | In progress     | Materialized-view analytics and faculty reports are live; exports and long-term analytics scaling are still open.                  |
+| Phase 4. Analytics & Reporting Infrastructure | In progress     | Materialized-view analytics, faculty reports, and PDF export are live; Excel export and long-term analytics scaling remain open.   |
 | Phase 5. Governance & Ecosystem               | In progress     | Scoped access, admin tooling, and audit logging are implemented; finer-grained permissions and ecosystem integrations remain open. |
 
 Cross-cutting platform capabilities already present in the codebase but not treated as separate roadmap phases include Redis-backed caching and throttling, structured health checks, request-scoped CLS metadata, and the authenticated `ChatKit` endpoint.
@@ -71,7 +71,8 @@ Cross-cutting platform capabilities already present in the codebase but not trea
 - [x] **Dashboard APIs:** Department overview, attention list, and faculty trends endpoints are live and scope-aware.
 - [x] **Faculty Evaluation Reports:** Per-question reports and paginated qualitative comment endpoints are implemented.
 - [x] **Analytics Freshness Tracking:** `analytics_last_refreshed_at` is recorded so consumers can show data staleness.
-- [ ] **Exportable Reporting:** PDF and Excel report generation are not implemented yet.
+- [x] **Faculty Evaluation PDF Export:** Async PDF generation via BullMQ + Puppeteer, stored in Cloudflare R2 with presigned download URLs. Single and batch generation with scope-aware authorization.
+- [ ] **Excel Export:** Excel report generation is not implemented yet.
 - [ ] **Long-Term OLAP Path:** A broader warehouse or alternative analytical engine decision is still open if current Postgres views become a bottleneck.
 
 ## Phase 5: Governance & Ecosystem
@@ -92,6 +93,6 @@ Cross-cutting platform capabilities already present in the codebase but not trea
 
 1. Productionize the remaining external inference stages by replacing mock or placeholder worker URLs with deployed sentiment and topic-model endpoints.
 2. Add operator visibility for BullMQ queues, sync runs, analytics refresh failures, and audit review workflows.
-3. Extend the analytics surface from API-only responses into exportable institutional reports (PDF/Excel) and scheduled delivery paths.
+3. Extend the reporting surface with Excel export, department summary rollup reports, and scheduled delivery paths.
 4. Mature governance from coarse role checks into a clearer permission model with explicit review tooling.
 5. Reassess the analytics storage strategy once dashboard scope expands beyond the current faculty- and department-focused materialized views.

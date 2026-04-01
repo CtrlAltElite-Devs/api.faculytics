@@ -14,6 +14,7 @@ describe('AnalyticsService', () => {
     mockExecute = jest.fn().mockResolvedValue([]);
 
     const mockEm = {
+      execute: mockExecute,
       getConnection: jest.fn().mockReturnValue({ execute: mockExecute }),
     };
 
@@ -461,10 +462,20 @@ describe('AnalyticsService', () => {
       countResult: number,
     ) {
       // Super admin: scope returns null (no validateFacultyScope execute call)
-      // 1. faculty metadata query + semester metadata query (parallel)
-      // 2. resolveVersionIds: phase 1 (type check), phase 2 (versions)
+      // 1. resolveVersionIds: phase 1 (type check), phase 2 (versions)
+      // 2. BuildFacultyReportData: faculty metadata + semester metadata (parallel)
       // 3. aggregation + submission count (parallel)
       mockExecute
+        // phase 1: type check
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // phase 2: versions
+        .mockResolvedValueOnce([
+          {
+            id: 'v-1',
+            version_number: 1,
+            schema_snapshot: schema,
+          },
+        ])
         // faculty metadata
         .mockResolvedValueOnce([{ first_name: 'John', last_name: 'Doe' }])
         // semester metadata
@@ -474,16 +485,6 @@ describe('AnalyticsService', () => {
             code: '1S2526',
             label: '1st Semester',
             academic_year: '2025-2026',
-          },
-        ])
-        // phase 1: type check
-        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
-        // phase 2: versions
-        .mockResolvedValueOnce([
-          {
-            id: 'v-1',
-            version_number: 1,
-            schema_snapshot: schema,
           },
         ])
         // aggregation query
@@ -549,7 +550,13 @@ describe('AnalyticsService', () => {
 
     it('should return empty report when no submissions found', async () => {
       // Super admin — no scope execute call
+      // 1. resolveVersionIds: type check, no versions
+      // 2. BuildFacultyReportData: faculty + semester (still fetched for metadata)
       mockExecute
+        // phase 1: type check
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // phase 2: no versions found
+        .mockResolvedValueOnce([])
         // faculty metadata
         .mockResolvedValueOnce([{ first_name: 'John', last_name: 'Doe' }])
         // semester metadata
@@ -560,11 +567,7 @@ describe('AnalyticsService', () => {
             label: '1st Semester',
             academic_year: '2025-2026',
           },
-        ])
-        // phase 1: type check
-        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
-        // phase 2: no versions found
-        .mockResolvedValueOnce([]);
+        ]);
 
       const result = await service.GetFacultyReport(facultyId, baseQuery);
 
@@ -576,18 +579,8 @@ describe('AnalyticsService', () => {
     });
 
     it('should throw NotFoundException for invalid questionnaireTypeCode', async () => {
+      // resolveVersionIds: type not found (throws before BuildFacultyReportData)
       mockExecute
-        // faculty metadata
-        .mockResolvedValueOnce([{ first_name: 'John', last_name: 'Doe' }])
-        // semester metadata
-        .mockResolvedValueOnce([
-          {
-            id: semesterId,
-            code: '1S2526',
-            label: '1st Semester',
-            academic_year: '2025-2026',
-          },
-        ])
         // phase 1: type not found
         .mockResolvedValueOnce([]);
 
@@ -597,8 +590,25 @@ describe('AnalyticsService', () => {
     });
 
     it('should throw NotFoundException when faculty does not exist', async () => {
-      // faculty metadata returns empty
-      mockExecute.mockResolvedValueOnce([]);
+      // resolveVersionIds succeeds, BuildFacultyReportData: faculty returns empty
+      mockExecute
+        // phase 1: type check
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // phase 2: versions
+        .mockResolvedValueOnce([
+          { id: 'v-1', version_number: 1, schema_snapshot: sampleSchema },
+        ])
+        // faculty metadata returns empty
+        .mockResolvedValueOnce([])
+        // semester metadata
+        .mockResolvedValueOnce([
+          {
+            id: semesterId,
+            code: '1S2526',
+            label: '1st Semester',
+            academic_year: '2025-2026',
+          },
+        ]);
 
       await expect(
         service.GetFacultyReport(facultyId, baseQuery),
@@ -606,8 +616,15 @@ describe('AnalyticsService', () => {
     });
 
     it('should throw NotFoundException when semester does not exist', async () => {
-      // faculty metadata exists
+      // resolveVersionIds succeeds, BuildFacultyReportData: semester returns empty
       mockExecute
+        // phase 1: type check
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // phase 2: versions
+        .mockResolvedValueOnce([
+          { id: 'v-1', version_number: 1, schema_snapshot: sampleSchema },
+        ])
+        // faculty metadata
         .mockResolvedValueOnce([{ first_name: 'John', last_name: 'Doe' }])
         // semester metadata returns empty
         .mockResolvedValueOnce([]);
@@ -640,8 +657,11 @@ describe('AnalyticsService', () => {
       mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([
         'dept-allowed',
       ]);
-      // validateFacultyScope returns user data — no separate faculty query needed
+      // 1. validateFacultyScope: user query
+      // 2. resolveVersionIds: type check, no versions
+      // 3. BuildFacultyReportData: faculty metadata, semester metadata
       mockExecute
+        // validateFacultyScope: user query
         .mockResolvedValueOnce([
           {
             id: facultyId,
@@ -650,6 +670,12 @@ describe('AnalyticsService', () => {
             last_name: 'Smith',
           },
         ])
+        // phase 1: type check
+        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+        // phase 2: no versions
+        .mockResolvedValueOnce([])
+        // faculty metadata (BuildFacultyReportData fetches independently)
+        .mockResolvedValueOnce([{ first_name: 'Jane', last_name: 'Smith' }])
         // semester metadata
         .mockResolvedValueOnce([
           {
@@ -658,11 +684,7 @@ describe('AnalyticsService', () => {
             label: '1st Semester',
             academic_year: '2025-2026',
           },
-        ])
-        // phase 1: type check
-        .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
-        // phase 2: no versions
-        .mockResolvedValueOnce([]);
+        ]);
 
       const result = await service.GetFacultyReport(facultyId, baseQuery);
 

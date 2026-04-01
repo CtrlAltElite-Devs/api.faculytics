@@ -18,6 +18,7 @@ export const bullmqEnvSchema = z.object({
   RECOMMENDATIONS_WORKER_URL: z.url().optional(),
   RECOMMENDATIONS_CONCURRENCY: z.coerce.number().default(1),
   RECOMMENDATIONS_MODEL: z.string().default('gpt-4o-mini'),
+  REPORT_GENERATION_CONCURRENCY: z.coerce.number().default(2),
 });
 
 export type BullMqEnv = z.infer<typeof bullmqEnvSchema>;

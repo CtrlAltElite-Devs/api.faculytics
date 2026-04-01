@@ -267,6 +267,32 @@ Login failure audit events store a fixed reason code (`no_matching_strategy`, `s
 - **Rationale:** Raw error messages may contain connection strings, hostnames, SQL fragments, or stack traces — especially from Moodle connectivity errors or database driver failures. Persisting these in an immutable, append-only table creates a permanent information disclosure risk.
 - **Trade-off:** Less diagnostic detail in audit logs. Full error details are still available in application logs (which are rotatable and not permanent).
 
+## 38. Puppeteer for PDF Generation over Lighter Libraries
+
+Faculty evaluation PDFs require precise table rendering with cell borders, weighted section headers, and formatted layout matching an official institutional form. Puppeteer + Handlebars was chosen over lightweight PDF libraries (PDFKit, jsPDF).
+
+- **Rationale:** The evaluation form has complex table-based layout with section headers, per-question rows, weighted averages, and a comments section. CSS-based rendering via Puppeteer handles this naturally, while programmatic PDF libraries require manual coordinate-based layout.
+- **Persistent browser:** A single Puppeteer browser instance is launched at module init and reused across jobs (`OnModuleInit`/`OnModuleDestroy`). Per-job page creation avoids the ~500ms browser launch overhead.
+- **Crash recovery:** If the browser instance dies (OOM, zombie process), the `PdfService` detects the stale reference on `newPage()` failure and relaunches with a mutex to prevent concurrent relaunches from multiple processor workers.
+- **Trade-off:** Puppeteer adds ~300MB to the Docker image (or ~50MB with `@sparticuz/chromium`). Memory usage peaks at ~300MB with `concurrency: 2`. Production deployments must include Chromium system dependencies.
+
+## 39. Cloudflare R2 with Thin StorageProvider Abstraction
+
+Reports are stored in Cloudflare R2 using the S3-compatible API, injected via a `StorageProvider` abstraction with token-based DI.
+
+- **Rationale:** R2 offers S3-compatible API with zero egress fees. The `StorageProvider` abstract class allows test mocks without S3 SDK dependencies in tests and enables future storage backend changes (e.g., local filesystem for development).
+- **Optional credentials:** All R2 env vars are optional. The `R2StorageService` constructor checks if credentials are present and sets `isConfigured = false` if missing. All methods throw `ServiceUnavailableException` when unconfigured. This allows the application to start in environments without R2 (CI, local dev) while failing gracefully at report generation time.
+- **Trade-off:** Using an abstract class instead of an interface was forced by TypeScript's `isolatedModules` + `emitDecoratorMetadata` — interfaces cannot be used as parameter types in decorated constructors.
+
+## 40. One ReportJob Per Faculty with BatchId Linkage
+
+Batch report generation creates individual `ReportJob` entities per faculty, linked by a shared `batchId`, rather than a single batch entity containing all results.
+
+- **Rationale:** Individual jobs allow per-faculty download as soon as each completes — users don't wait for the entire batch. If one faculty report fails, others still succeed. Status aggregation is a simple `GROUP BY` over the batch's jobs.
+- **Dedup at DB level:** A partial unique index prevents duplicate pending/active jobs for the same faculty+semester+type combination. The service-level dedup check provides fast feedback; the index handles race conditions.
+- **Atomic batch enqueue:** `Queue.addBulk()` ensures all jobs in a batch are enqueued atomically. On failure, all `ReportJob` entities are cleaned up — no orphans.
+- **Trade-off:** Batch status polling requires aggregation over N rows (bounded by `REPORT_BATCH_MAX_SIZE`=100). SQL `GROUP BY` keeps this efficient.
+
 ## 30. Semester Code Parsing for Display Labels
 
 The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.

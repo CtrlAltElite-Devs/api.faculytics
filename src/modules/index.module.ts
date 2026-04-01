@@ -23,6 +23,7 @@ import { CurriculumModule } from './curriculum/curriculum.module';
 import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
 import { SemestersModule } from './semesters/semesters.module';
+import { ReportsModule } from './reports/reports.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { LoggerModule } from 'nestjs-pino';
@@ -47,6 +48,7 @@ export const ApplicationModules = [
   AdminModule,
   AuditModule,
   SemestersModule,
+  ReportsModule,
 ];
 
 export const InfrastructureModules = [

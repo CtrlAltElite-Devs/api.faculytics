@@ -15,7 +15,9 @@ import {
   FacultyTrendsQueryDto,
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
+  BaseFacultyReportQueryDto,
 } from './dto/analytics-query.dto';
+import { ReportCommentDto } from './dto/responses/faculty-report-comments.response.dto';
 import {
   DepartmentOverviewResponseDto,
   FacultySemesterStatsDto,
@@ -459,26 +461,165 @@ export class AnalyticsService {
     facultyId: string,
     query: FacultyReportQueryDto,
   ): Promise<FacultyReportResponseDto> {
-    const scopeUser = await this.validateFacultyScope(
+    await this.validateFacultyScope(facultyId, query.semesterId);
+
+    const { versionIds, canonicalSchema, questionnaireTypeName } =
+      await this.resolveVersionIds(
+        facultyId,
+        query.semesterId,
+        query.questionnaireTypeCode,
+      );
+
+    return this.BuildFacultyReportData(
+      facultyId,
+      versionIds,
+      canonicalSchema,
+      questionnaireTypeName,
+      query,
+    );
+  }
+
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetFacultyReportUnscoped(
+    facultyId: string,
+    query: FacultyReportQueryDto,
+  ): Promise<FacultyReportResponseDto> {
+    const { versionIds, canonicalSchema, questionnaireTypeName } =
+      await this.resolveVersionIds(
+        facultyId,
+        query.semesterId,
+        query.questionnaireTypeCode,
+      );
+
+    return this.BuildFacultyReportData(
+      facultyId,
+      versionIds,
+      canonicalSchema,
+      questionnaireTypeName,
+      query,
+    );
+  }
+
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetAllFacultyReportComments(
+    facultyId: string,
+    query: BaseFacultyReportQueryDto,
+  ): Promise<ReportCommentDto[]> {
+    const { versionIds } = await this.resolveVersionIds(
       facultyId,
       query.semesterId,
+      query.questionnaireTypeCode,
     );
 
-    // If scope check returned user data, reuse it; otherwise fetch separately
+    if (versionIds.length === 0) {
+      return [];
+    }
+
+    return this.queryComments(facultyId, versionIds, query);
+  }
+
+  async GetFacultyReportComments(
+    facultyId: string,
+    query: FacultyReportCommentsQueryDto,
+  ): Promise<FacultyReportCommentsResponseDto> {
+    await this.validateFacultyScope(facultyId, query.semesterId);
+
+    const { versionIds } = await this.resolveVersionIds(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+    );
+
+    if (versionIds.length === 0) {
+      return {
+        items: [],
+        meta: {
+          totalItems: 0,
+          itemCount: 0,
+          itemsPerPage: query.limit!,
+          totalPages: 0,
+          currentPage: query.page!,
+        } as PaginationMeta,
+      };
+    }
+
+    const baseParams: unknown[] = [facultyId, query.semesterId, versionIds];
+    let baseParamIdx = 4;
+    let courseFilter = '';
+    if (query.courseId) {
+      courseFilter = ` AND qs.course_id = $${baseParamIdx}`;
+      baseParams.push(query.courseId);
+      baseParamIdx++;
+    }
+
+    const whereClause = `
+      WHERE qs.faculty_id = $1
+        AND qs.semester_id = $2
+        AND qs.questionnaire_version_id = ANY($3)
+        AND qs.qualitative_comment IS NOT NULL
+        AND TRIM(qs.qualitative_comment) != ''
+        AND qs.deleted_at IS NULL${courseFilter}
+    `;
+
+    const countSql = `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`;
+
+    const page = query.page!;
+    const limit = query.limit!;
+    const offset = (page - 1) * limit;
+
+    const paginatedParams = [...baseParams, limit, offset];
+    const paginatedSql = `
+      SELECT qs.qualitative_comment AS text, qs.submitted_at
+      FROM questionnaire_submission qs
+      ${whereClause}
+      ORDER BY qs.submitted_at DESC
+      LIMIT $${baseParamIdx} OFFSET $${baseParamIdx + 1}
+    `;
+
+    const [countRows, commentRows] = await Promise.all([
+      this.em.getConnection().execute(countSql, baseParams),
+      this.em.getConnection().execute(paginatedSql, paginatedParams),
+    ]);
+
+    const totalItems = Number(countRows[0]?.total ?? 0);
+    const items = commentRows.map((r) => ({
+      text: r.text as string,
+      submittedAt: new Date(r.submitted_at as string).toISOString(),
+    }));
+
+    const totalPages = Math.ceil(totalItems / limit) || 0;
+
+    return {
+      items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage: limit,
+        totalPages,
+        currentPage: page,
+      } as PaginationMeta,
+    };
+  }
+
+  private async BuildFacultyReportData(
+    facultyId: string,
+    versionIds: string[],
+    canonicalSchema: QuestionnaireSchemaSnapshot | null,
+    questionnaireTypeName: string,
+    query: FacultyReportQueryDto,
+  ): Promise<FacultyReportResponseDto> {
     const [facultyRow, semesterRow] = await Promise.all([
-      scopeUser
-        ? Promise.resolve(scopeUser)
-        : this.em
-            .getConnection()
-            .execute(
-              'SELECT u.first_name, u.last_name FROM "user" u WHERE u.id = $1 AND u.deleted_at IS NULL',
-              [facultyId],
-            )
-            .then((rows: { first_name: string; last_name: string }[]) => {
-              if (rows.length === 0)
-                throw new NotFoundException('Faculty not found');
-              return rows[0];
-            }),
+      this.em
+        .getConnection()
+        .execute(
+          'SELECT u.first_name, u.last_name FROM "user" u WHERE u.id = $1 AND u.deleted_at IS NULL',
+          [facultyId],
+        )
+        .then((rows: { first_name: string; last_name: string }[]) => {
+          if (rows.length === 0)
+            throw new NotFoundException('Faculty not found');
+          return rows[0];
+        }),
       this.em
         .getConnection()
         .execute(
@@ -500,13 +641,6 @@ export class AnalyticsService {
           },
         ),
     ]);
-
-    const { versionIds, canonicalSchema, questionnaireTypeName } =
-      await this.resolveVersionIds(
-        facultyId,
-        query.semesterId,
-        query.questionnaireTypeCode,
-      );
 
     const facultyDto = {
       id: facultyId,
@@ -691,87 +825,38 @@ export class AnalyticsService {
     };
   }
 
-  async GetFacultyReportComments(
+  private async queryComments(
     facultyId: string,
-    query: FacultyReportCommentsQueryDto,
-  ): Promise<FacultyReportCommentsResponseDto> {
-    await this.validateFacultyScope(facultyId, query.semesterId);
-
-    const { versionIds } = await this.resolveVersionIds(
-      facultyId,
-      query.semesterId,
-      query.questionnaireTypeCode,
-    );
-
-    if (versionIds.length === 0) {
-      return {
-        items: [],
-        meta: {
-          totalItems: 0,
-          itemCount: 0,
-          itemsPerPage: query.limit!,
-          totalPages: 0,
-          currentPage: query.page!,
-        } as PaginationMeta,
-      };
-    }
-
-    const baseParams: unknown[] = [facultyId, query.semesterId, versionIds];
-    let baseParamIdx = 4;
+    versionIds: string[],
+    query: BaseFacultyReportQueryDto,
+  ): Promise<ReportCommentDto[]> {
+    const params: unknown[] = [facultyId, query.semesterId, versionIds];
+    let paramIdx = 4;
     let courseFilter = '';
     if (query.courseId) {
-      courseFilter = ` AND qs.course_id = $${baseParamIdx}`;
-      baseParams.push(query.courseId);
-      baseParamIdx++;
+      courseFilter = ` AND qs.course_id = $${paramIdx}`;
+      params.push(query.courseId);
+      paramIdx++;
     }
 
-    const whereClause = `
+    const sql = `
+      SELECT qs.qualitative_comment AS text, qs.submitted_at
+      FROM questionnaire_submission qs
       WHERE qs.faculty_id = $1
         AND qs.semester_id = $2
         AND qs.questionnaire_version_id = ANY($3)
         AND qs.qualitative_comment IS NOT NULL
         AND TRIM(qs.qualitative_comment) != ''
         AND qs.deleted_at IS NULL${courseFilter}
-    `;
-
-    const countSql = `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`;
-
-    const page = query.page!;
-    const limit = query.limit!;
-    const offset = (page - 1) * limit;
-
-    const paginatedParams = [...baseParams, limit, offset];
-    const paginatedSql = `
-      SELECT qs.qualitative_comment AS text, qs.submitted_at
-      FROM questionnaire_submission qs
-      ${whereClause}
       ORDER BY qs.submitted_at DESC
-      LIMIT $${baseParamIdx} OFFSET $${baseParamIdx + 1}
     `;
 
-    const [countRows, commentRows] = await Promise.all([
-      this.em.getConnection().execute(countSql, baseParams),
-      this.em.getConnection().execute(paginatedSql, paginatedParams),
-    ]);
+    const rows = await this.em.getConnection().execute(sql, params);
 
-    const totalItems = Number(countRows[0]?.total ?? 0);
-    const items = commentRows.map((r) => ({
+    return rows.map((r) => ({
       text: r.text as string,
       submittedAt: new Date(r.submitted_at as string).toISOString(),
     }));
-
-    const totalPages = Math.ceil(totalItems / limit) || 0;
-
-    return {
-      items,
-      meta: {
-        totalItems,
-        itemCount: items.length,
-        itemsPerPage: limit,
-        totalPages,
-        currentPage: page,
-      } as PaginationMeta,
-    };
   }
 
   private async validateFacultyScope(

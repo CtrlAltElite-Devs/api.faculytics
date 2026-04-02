@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: faculytics
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: postgres
+    command: postgres -c shared_buffers=512MB -c work_mem=8MB
+    ports:
+      - '5432:5432'
+    volumes:
+      - local_pg_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U faculytics']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy noeviction
+    ports:
+      - '6379:6379'
+    volumes:
+      - local_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env.local-prod
+    environment:
+      PORT: 5200
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://faculytics:localdev@postgres:5432/faculytics_staging
+    ports:
+      - '5200:5200'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:5200/api/v1/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  local_pg_data:
+  local_redis_data:

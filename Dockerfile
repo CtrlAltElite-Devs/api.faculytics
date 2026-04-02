@@ -12,6 +12,12 @@ RUN npm run build
 # Stage 2: Production
 FROM node:24-alpine
 
+# Install Chromium for Puppeteer PDF generation
+RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont
+
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./

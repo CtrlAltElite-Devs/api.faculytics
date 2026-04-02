@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Test, TestingModule } from '@nestjs/testing';
 import { User } from 'src/entities/user.entity';
@@ -8,11 +9,25 @@ describe('AdminService', () => {
   let service: AdminService;
   let em: {
     findAndCount: jest.Mock;
+    findOneOrFail: jest.Mock;
+    create: jest.Mock;
+    upsert: jest.Mock;
+    find: jest.Mock;
+    flush: jest.Mock;
+    assign: jest.Mock;
   };
 
   beforeEach(async () => {
     em = {
       findAndCount: jest.fn(),
+      findOneOrFail: jest.fn(),
+      create: jest
+        .fn()
+        .mockImplementation((_entity: unknown, data: unknown) => data),
+      upsert: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
+      flush: jest.fn(),
+      assign: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -183,6 +198,113 @@ describe('AdminService', () => {
         totalPages: 0,
         currentPage: 1,
       },
+    });
+  });
+
+  describe('AssignInstitutionalRole', () => {
+    const mockUser = {
+      id: 'user-1',
+      roles: [UserRole.FACULTY],
+      updateRolesFromEnrollments: jest.fn(),
+    } as unknown as User;
+
+    it('should auto-resolve DEAN at depth 4 to parent department at depth 3', async () => {
+      const programCategory = {
+        moodleCategoryId: 18,
+        name: 'BSCS',
+        depth: 4,
+        parentMoodleCategoryId: 8,
+      };
+      const deptCategory = {
+        moodleCategoryId: 8,
+        name: 'CCS',
+        depth: 3,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser) // user lookup
+        .mockResolvedValueOnce(programCategory) // initial category lookup
+        .mockResolvedValueOnce(deptCategory); // parent category lookup
+
+      await service.AssignInstitutionalRole({
+        userId: 'user-1',
+        role: UserRole.DEAN,
+        moodleCategoryId: 18,
+      });
+
+      expect(em.create).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ moodleCategory: deptCategory }),
+        expect.anything(),
+      );
+    });
+
+    it('should accept DEAN assignment directly at depth 3', async () => {
+      const deptCategory = {
+        moodleCategoryId: 8,
+        name: 'CCS',
+        depth: 3,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(deptCategory);
+
+      await service.AssignInstitutionalRole({
+        userId: 'user-1',
+        role: UserRole.DEAN,
+        moodleCategoryId: 8,
+      });
+
+      expect(em.create).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ moodleCategory: deptCategory }),
+        expect.anything(),
+      );
+    });
+
+    it('should reject DEAN assignment at depth 2', async () => {
+      const semesterCategory = {
+        moodleCategoryId: 6,
+        name: 'S22526',
+        depth: 2,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(semesterCategory);
+
+      await expect(
+        service.AssignInstitutionalRole({
+          userId: 'user-1',
+          role: UserRole.DEAN,
+          moodleCategoryId: 6,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should allow CHAIRPERSON assignment at any depth without validation', async () => {
+      const programCategory = {
+        moodleCategoryId: 18,
+        name: 'BSCS',
+        depth: 4,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(programCategory);
+
+      await service.AssignInstitutionalRole({
+        userId: 'user-1',
+        role: UserRole.CHAIRPERSON,
+        moodleCategoryId: 18,
+      });
+
+      expect(em.create).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ moodleCategory: programCategory }),
+        expect.anything(),
+      );
     });
   });
 });

@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { UserRole } from 'src/modules/auth/roles.enum';
 import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
+import { MoodleCategory } from 'src/entities/moodle-category.entity';
 import { Department } from 'src/entities/department.entity';
 import { Program } from 'src/entities/program.entity';
 import { CurrentUserService } from '../cls/current-user.service';
@@ -59,16 +60,16 @@ export class ScopeResolverService {
         { populate: ['moodleCategory'] },
       );
 
-      const moodleCategoryIds = institutionalRoles
-        .filter((ir) => ir.moodleCategory?.moodleCategoryId != null)
-        .map((ir) => ir.moodleCategory.moodleCategoryId);
+      const programCodes = institutionalRoles
+        .filter((ir) => ir.moodleCategory?.name != null)
+        .map((ir) => ir.moodleCategory.name);
 
-      if (moodleCategoryIds.length === 0) {
+      if (programCodes.length === 0) {
         return [];
       }
 
       const programs = await this.em.find(Program, {
-        moodleCategoryId: { $in: moodleCategoryIds },
+        code: { $in: programCodes },
         department: { semester: semesterId },
       });
 
@@ -90,16 +91,38 @@ export class ScopeResolverService {
       { populate: ['moodleCategory'] },
     );
 
-    const moodleCategoryIds = institutionalRoles
-      .filter((ir) => ir.moodleCategory?.moodleCategoryId != null)
-      .map((ir) => ir.moodleCategory.moodleCategoryId);
+    if (institutionalRoles.length === 0) {
+      return [];
+    }
 
-    if (moodleCategoryIds.length === 0) {
+    const directCodes: string[] = [];
+    const parentMoodleCategoryIds: number[] = [];
+
+    for (const ir of institutionalRoles) {
+      const cat = ir.moodleCategory;
+      if (!cat) continue;
+
+      if (cat.depth === 3) {
+        directCodes.push(cat.name);
+      } else if (cat.depth === 4) {
+        parentMoodleCategoryIds.push(cat.parentMoodleCategoryId);
+      }
+    }
+
+    if (parentMoodleCategoryIds.length > 0) {
+      const parentCats = await this.em.find(MoodleCategory, {
+        moodleCategoryId: { $in: parentMoodleCategoryIds },
+      });
+      directCodes.push(...parentCats.map((c) => c.name));
+    }
+
+    const departmentCodes = [...new Set(directCodes)];
+    if (departmentCodes.length === 0) {
       return [];
     }
 
     const departments = await this.em.find(Department, {
-      moodleCategoryId: { $in: moodleCategoryIds },
+      code: { $in: departmentCodes },
       semester: semesterId,
     });
 
@@ -116,11 +139,11 @@ export class ScopeResolverService {
       { populate: ['moodleCategory'] },
     );
 
-    const moodleCategoryIds = institutionalRoles
-      .filter((ir) => ir.moodleCategory?.moodleCategoryId != null)
-      .map((ir) => ir.moodleCategory.moodleCategoryId);
+    const programCodes = institutionalRoles
+      .filter((ir) => ir.moodleCategory?.name != null)
+      .map((ir) => ir.moodleCategory.name);
 
-    if (moodleCategoryIds.length === 0) {
+    if (programCodes.length === 0) {
       return [];
     }
 
@@ -128,7 +151,7 @@ export class ScopeResolverService {
     const programs = await this.em.find(
       Program,
       {
-        moodleCategoryId: { $in: moodleCategoryIds },
+        code: { $in: programCodes },
         department: { semester: semesterId },
       },
       { populate: ['department'] },

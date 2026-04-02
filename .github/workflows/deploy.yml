@@ -1,0 +1,108 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - staging
+      - master
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging'
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_DEPLOY_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/faculytics
+
+            echo "Fetching latest staging..."
+            git fetch origin staging
+
+            echo "Building staging image..."
+            mkdir -p /tmp/faculytics-build
+            git archive origin/staging | tar -x -C /tmp/faculytics-build
+            docker build -t faculytics-api:staging -f /tmp/faculytics-build/Dockerfile /tmp/faculytics-build
+            rm -rf /tmp/faculytics-build
+
+            echo "Deploying staging..."
+            docker compose -f docker-compose.deploy.yml --profile staging up -d api-staging
+
+            echo "Waiting for health check..."
+            sleep 15
+            if docker compose -f docker-compose.deploy.yml --profile staging ps api-staging | grep -q "(healthy)"; then
+              echo "Staging deploy successful!"
+            else
+              echo "Health check - checking API response..."
+              docker exec $(docker compose -f docker-compose.deploy.yml ps -q api-staging) node -e "fetch('http://localhost:5201/api/v1/health').then(r=>r.json()).then(console.log).catch(e=>{console.error(e);process.exit(1)})" || true
+              docker compose -f docker-compose.deploy.yml --profile staging logs --tail=50 api-staging
+              echo "WARNING: Health check inconclusive - check logs above"
+            fi
+
+            echo "Cleaning old images..."
+            docker system prune -f --filter "until=168h" || true
+
+      - name: Discord Notification
+        if: always()
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          title: 'Staging Deploy'
+          description: '${{ job.status == ''success'' && ''Staging deployment succeeded'' || ''Staging deployment failed'' }}'
+          color: '${{ job.status == ''success'' && ''0x00ff00'' || ''0xff0000'' }}'
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_DEPLOY_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/faculytics
+
+            echo "Fetching latest master..."
+            git fetch origin master
+
+            echo "Building production image..."
+            mkdir -p /tmp/faculytics-build
+            git archive origin/master | tar -x -C /tmp/faculytics-build
+            docker build -t faculytics-api:production -f /tmp/faculytics-build/Dockerfile /tmp/faculytics-build
+            rm -rf /tmp/faculytics-build
+
+            echo "Deploying production..."
+            docker compose -f docker-compose.deploy.yml --profile production up -d api-production
+
+            echo "Waiting for health check..."
+            sleep 15
+            if docker compose -f docker-compose.deploy.yml --profile staging ps api-production | grep -q "(healthy)"; then
+              echo "Production deploy successful!"
+            else
+              echo "Health check - checking API response..."
+              docker exec $(docker compose -f docker-compose.deploy.yml ps -q api-production) node -e "fetch('http://localhost:5200/api/v1/health').then(r=>r.json()).then(console.log).catch(e=>{console.error(e);process.exit(1)})" || true
+              docker compose -f docker-compose.deploy.yml --profile production logs --tail=50 api-production
+              echo "WARNING: Health check inconclusive - check logs above"
+            fi
+
+            echo "Cleaning old images..."
+            docker system prune -f --filter "until=168h" || true
+
+      - name: Discord Notification
+        if: always()
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          title: 'Production Deploy'
+          description: '${{ job.status == ''success'' && ''Production deployment succeeded'' || ''Production deployment failed'' }}'
+          color: '${{ job.status == ''success'' && ''0x00ff00'' || ''0xff0000'' }}'

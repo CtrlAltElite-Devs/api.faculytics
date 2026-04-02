@@ -1,0 +1,193 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 10pt;
+  color: #000;
+  line-height: 1.4;
+}
+
+.report {
+  width: 100%;
+  padding: 0;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.header-left h1 {
+  font-size: 14pt;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+.header-left .questionnaire-type {
+  font-size: 10pt;
+  color: #333;
+}
+
+.header-right {
+  text-align: right;
+}
+
+.header-right .semester-code {
+  font-size: 12pt;
+  font-weight: bold;
+}
+
+.header-right .academic-year {
+  font-size: 10pt;
+  color: #333;
+}
+
+.confidential-banner {
+  background-color: #000;
+  color: #fff;
+  text-align: center;
+  font-weight: bold;
+  font-size: 10pt;
+  padding: 4px 0;
+  letter-spacing: 2px;
+  margin-bottom: 10px;
+}
+
+.info-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 12px;
+}
+
+.info-table td {
+  padding: 4px 8px;
+  font-size: 10pt;
+}
+
+.info-table .label {
+  font-weight: bold;
+  width: 20%;
+}
+
+.info-table .value {
+  width: 30%;
+}
+
+.section-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+  page-break-inside: avoid;
+}
+
+.section-table th,
+.section-table td {
+  border: 1px solid #000;
+  padding: 4px 8px;
+  font-size: 10pt;
+}
+
+.section-header th {
+  background-color: #f0f0f0;
+  text-align: left;
+  font-size: 11pt;
+  font-weight: bold;
+  padding: 6px 8px;
+}
+
+.column-header th {
+  background-color: #e8e8e8;
+  font-weight: bold;
+  text-align: center;
+  font-size: 9pt;
+}
+
+.column-header .col-question {
+  text-align: left;
+}
+
+.col-question {
+  width: 60%;
+  text-align: left;
+}
+
+.col-average {
+  width: 15%;
+  text-align: center;
+}
+
+.col-interpretation {
+  width: 25%;
+  text-align: center;
+  font-size: 9pt;
+}
+
+.section-footer td {
+  background-color: #f8f8f8;
+  font-weight: bold;
+}
+
+.overall-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+  page-break-inside: avoid;
+}
+
+.overall-table td {
+  border: 2px solid #000;
+  padding: 8px;
+  font-size: 11pt;
+}
+
+.overall-table .label {
+  width: 60%;
+  background-color: #e0e0e0;
+}
+
+.overall-table .col-average {
+  width: 15%;
+  text-align: center;
+  background-color: #f0f0f0;
+}
+
+.overall-table .col-interpretation {
+  width: 25%;
+  text-align: center;
+  background-color: #f0f0f0;
+}
+
+.comments-section {
+  margin-top: 16px;
+  page-break-inside: avoid;
+}
+
+.comments-section h2 {
+  font-size: 12pt;
+  font-weight: bold;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #000;
+  padding-bottom: 4px;
+}
+
+.comments-list {
+  list-style-type: disc;
+  padding-left: 24px;
+}
+
+.comments-list li {
+  margin-bottom: 4px;
+  font-size: 10pt;
+}
+
+.no-comments {
+  font-style: italic;
+  color: #666;
+  font-size: 10pt;
+}

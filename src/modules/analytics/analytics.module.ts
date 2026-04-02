@@ -18,5 +18,6 @@ import { AnalyticsRefreshProcessor } from './processors/analytics-refresh.proces
   ],
   controllers: [AnalyticsController],
   providers: [AnalyticsService, AnalyticsRefreshProcessor],
+  exports: [AnalyticsService],
 })
 export class AnalyticsModule {}

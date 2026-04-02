@@ -1,0 +1,17 @@
+node_modules
+dist
+.git
+.gitignore
+.env*
+!.env.*.sample
+test/
+coverage/
+*.md
+!package.json
+_bmad*/
+_bmad-output/
+docs/
+.github/
+mock-worker/
+.vscode/
+.idea/

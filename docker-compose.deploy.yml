@@ -1,0 +1,112 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: faculytics
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in shell env}
+      POSTGRES_DB: postgres
+    command: postgres -c shared_buffers=512MB -c work_mem=8MB
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U faculytics']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  api-production:
+    image: faculytics-api:production
+    restart: unless-stopped
+    profiles: ['production']
+    env_file: .env.production
+    environment:
+      PORT: 5200
+      NODE_ENV: production
+      REDIS_KEY_PREFIX: 'faculytics:prod:'
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://faculytics:${POSTGRES_PASSWORD}@postgres:5432/faculytics_prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:5200/api/v1/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+
+  api-staging:
+    image: faculytics-api:staging
+    restart: unless-stopped
+    profiles: ['staging']
+    env_file: .env.staging
+    environment:
+      PORT: 5201
+      NODE_ENV: production
+      REDIS_KEY_PREFIX: 'faculytics:staging:'
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://faculytics:${POSTGRES_PASSWORD}@postgres:5432/faculytics_staging
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:5201/api/v1/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:80/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pg_data:
+    external: true
+  redis_data:
+    external: true

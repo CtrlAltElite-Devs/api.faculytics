@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Enrollment } from 'src/entities/enrollment.entity';
 import { User } from 'src/entities/user.entity';
 import { UserRole } from 'src/modules/auth/roles.enum';
 import { AdminService } from './admin.service';
@@ -198,6 +199,144 @@ describe('AdminService', () => {
         totalPages: 0,
         currentPage: 1,
       },
+    });
+  });
+
+  describe('GetUserDetail', () => {
+    const mockUser = {
+      id: 'user-1',
+      userName: 'jdoe',
+      fullName: 'John Doe',
+      firstName: 'John',
+      lastName: 'Doe',
+      moodleUserId: 123,
+      userProfilePicture: 'https://example.com/pic.jpg',
+      roles: [UserRole.FACULTY],
+      isActive: true,
+      lastLoginAt: new Date('2026-03-01'),
+      createdAt: new Date('2026-01-01'),
+      campus: { id: 'campus-1', code: 'UCMN', name: 'Main' },
+      department: { id: 'dept-1', code: 'CCS', name: 'Computer Studies' },
+      program: { id: 'prog-1', code: 'BSCS', name: 'Computer Science' },
+    } as unknown as User;
+
+    it('should return full user detail with enrollments and institutional roles', async () => {
+      const mockEnrollments = [
+        {
+          id: 'enr-1',
+          role: 'student',
+          isActive: true,
+          course: {
+            id: 'course-1',
+            shortname: 'CS101',
+            fullname: 'Intro to CS',
+          },
+        },
+      ];
+      const mockInstitutionalRoles = [
+        {
+          id: 'ir-1',
+          role: UserRole.DEAN,
+          source: 'manual',
+          moodleCategory: {
+            moodleCategoryId: 8,
+            name: 'CCS',
+            depth: 3,
+          },
+        },
+      ];
+
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce(mockEnrollments)
+        .mockResolvedValueOnce(mockInstitutionalRoles);
+
+      const result = await service.GetUserDetail('user-1');
+
+      expect(result.id).toBe('user-1');
+      expect(result.userName).toBe('jdoe');
+      expect(result.fullName).toBe('John Doe');
+      expect(result.enrollments).toHaveLength(1);
+      expect(result.enrollments[0]).toEqual({
+        id: 'enr-1',
+        role: 'student',
+        isActive: true,
+        course: {
+          id: 'course-1',
+          shortname: 'CS101',
+          fullname: 'Intro to CS',
+        },
+      });
+      expect(result.institutionalRoles).toHaveLength(1);
+      expect(result.institutionalRoles[0]).toEqual({
+        id: 'ir-1',
+        role: UserRole.DEAN,
+        source: 'manual',
+        category: {
+          moodleCategoryId: 8,
+          name: 'CCS',
+          depth: 3,
+        },
+      });
+    });
+
+    it('should use fullName fallback when fullName is null', async () => {
+      const userWithoutFullName = {
+        ...mockUser,
+        fullName: null,
+        firstName: 'Anna',
+        lastName: 'Smith',
+      } as unknown as User;
+
+      em.findOneOrFail.mockResolvedValueOnce(userWithoutFullName);
+      em.find.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+      const result = await service.GetUserDetail('user-1');
+
+      expect(result.fullName).toBe('Anna Smith');
+    });
+
+    it('should return empty arrays when user has no enrollments or roles', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+      const result = await service.GetUserDetail('user-1');
+
+      expect(result.enrollments).toEqual([]);
+      expect(result.institutionalRoles).toEqual([]);
+      expect(result.id).toBe('user-1');
+    });
+
+    it('should throw NotFoundException when user does not exist', async () => {
+      em.findOneOrFail.mockImplementationOnce(
+        (
+          _entity: unknown,
+          _filter: unknown,
+          opts: { failHandler: () => Error },
+        ) => {
+          throw opts.failHandler();
+        },
+      );
+
+      await expect(service.GetUserDetail('nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should filter enrollments by isActive and course.isActive', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+      await service.GetUserDetail('user-1');
+
+      expect(em.find).toHaveBeenCalledWith(
+        Enrollment,
+        { user: 'user-1', isActive: true, course: { isActive: true } },
+        expect.objectContaining({
+          populate: ['course'],
+          orderBy: { timeModified: 'DESC' },
+        }),
+      );
     });
   });
 

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { User } from 'src/entities/user.entity';
 import { Program } from 'src/entities/program.entity';
+import { Campus } from 'src/entities/campus.entity';
 import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { Section } from 'src/entities/section.entity';
@@ -249,6 +250,10 @@ export class MoodleUserHydrationService {
       const institutionalRoles = await tx.find(UserInstitutionalRole, { user });
 
       user.updateRolesFromEnrollments(activeEnrollments, institutionalRoles);
+
+      // Derive scope fields: program, department, campus
+      await this.deriveUserScopes(user, programCache, remoteCourses, tx);
+
       tx.persist(user);
     });
 
@@ -256,6 +261,69 @@ export class MoodleUserHydrationService {
     this.logger.log(
       `Finished hydrating courses for Moodle user ${moodleUserId} in ${duration}ms`,
     );
+  }
+
+  private async deriveUserScopes(
+    user: User,
+    programCache: Map<number, Program>,
+    remoteCourses: MoodleCourse[],
+    tx: EntityManager,
+  ) {
+    // Pick primary program: most course enrollments
+    const programCounts = new Map<
+      string,
+      { program: Program; count: number }
+    >();
+    for (const rc of remoteCourses) {
+      const program = programCache.get(rc.category);
+      if (!program) continue;
+      const entry = programCounts.get(program.id);
+      if (entry) {
+        entry.count++;
+      } else {
+        programCounts.set(program.id, { program, count: 1 });
+      }
+    }
+
+    let primaryProgram: Program | undefined;
+    let maxCount = 0;
+    for (const { program, count } of programCounts.values()) {
+      if (
+        count > maxCount ||
+        (count === maxCount &&
+          (!primaryProgram || program.id < primaryProgram.id))
+      ) {
+        maxCount = count;
+        primaryProgram = program;
+      }
+    }
+
+    if (!primaryProgram) return;
+
+    // Populate department → semester → campus chain
+    await tx.populate(primaryProgram, [
+      'department',
+      'department.semester',
+      'department.semester.campus',
+    ]);
+
+    user.program = primaryProgram;
+
+    if (primaryProgram.department) {
+      user.department = primaryProgram.department;
+    }
+
+    // Campus: username prefix first, fallback to category hierarchy
+    const parts = user.userName.split('-');
+    const campusCode = parts.length > 1 ? parts[0].toUpperCase() : null;
+    const campus = campusCode
+      ? await tx.findOne(Campus, { code: campusCode })
+      : null;
+    if (campus) {
+      user.campus = campus;
+    } else if (primaryProgram.department?.semester?.campus) {
+      user.campus = primaryProgram.department.semester.campus;
+    }
   }
 
   private async resolveInstitutionalRoles(

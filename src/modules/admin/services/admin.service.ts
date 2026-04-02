@@ -1,5 +1,9 @@
 import { FilterQuery } from '@mikro-orm/core';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import {
   UserInstitutionalRole,
@@ -8,6 +12,7 @@ import {
 import { User } from 'src/entities/user.entity';
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
+import { UserRole } from 'src/modules/auth/roles.enum';
 import { AssignInstitutionalRoleDto } from '../dto/requests/assign-institutional-role.request.dto';
 import { RemoveInstitutionalRoleDto } from '../dto/requests/remove-institutional-role.request.dto';
 import { ListUsersQueryDto } from '../dto/requests/list-users-query.dto';
@@ -53,11 +58,32 @@ export class AdminService {
       { failHandler: () => new NotFoundException('User not found') },
     );
 
-    const moodleCategory = await this.em.findOneOrFail(
+    let moodleCategory = await this.em.findOneOrFail(
       MoodleCategory,
       { moodleCategoryId: dto.moodleCategoryId },
       { failHandler: () => new NotFoundException('Moodle category not found') },
     );
+
+    // DEAN must be assigned at the department level (depth 3).
+    // If a program-level category (depth 4) is provided, auto-resolve to its parent department.
+    if (dto.role === UserRole.DEAN) {
+      if (moodleCategory.depth === 4) {
+        moodleCategory = await this.em.findOneOrFail(
+          MoodleCategory,
+          { moodleCategoryId: moodleCategory.parentMoodleCategoryId },
+          {
+            failHandler: () =>
+              new NotFoundException('Parent department category not found'),
+          },
+        );
+      }
+
+      if (moodleCategory.depth !== 3) {
+        throw new BadRequestException(
+          `DEAN role must be assigned to a department-level category (depth 3), got depth ${moodleCategory.depth}`,
+        );
+      }
+    }
 
     const roleData = this.em.create(
       UserInstitutionalRole,

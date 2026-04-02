@@ -7,6 +7,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in shell env}
       POSTGRES_DB: postgres
     command: postgres -c shared_buffers=512MB -c work_mem=8MB
+    ports:
+      - '127.0.0.1:5432:5432'
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro

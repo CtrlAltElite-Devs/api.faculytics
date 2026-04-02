@@ -12,7 +12,9 @@ import { AdminService } from './services/admin.service';
 import { AssignInstitutionalRoleDto } from './dto/requests/assign-institutional-role.request.dto';
 import { RemoveInstitutionalRoleDto } from './dto/requests/remove-institutional-role.request.dto';
 import { ListUsersQueryDto } from './dto/requests/list-users-query.dto';
+import { DeanEligibleCategoriesQueryDto } from './dto/requests/dean-eligible-categories-query.dto';
 import { AdminUserListResponseDto } from './dto/responses/admin-user-list.response.dto';
+import { DeanEligibleCategoryResponseDto } from './dto/responses/dean-eligible-category.response.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -84,6 +86,24 @@ export class AdminController {
     @Query() query: ListUsersQueryDto,
   ): Promise<AdminUserListResponseDto> {
     return this.adminService.ListUsers(query);
+  }
+
+  @Get('institutional-roles/dean-eligible-categories')
+  @ApiOperation({
+    summary: 'List eligible department categories for DEAN promotion',
+  })
+  @ApiQuery({
+    name: 'userId',
+    required: true,
+    type: String,
+    description: 'UUID of the user to check eligibility for',
+  })
+  @ApiResponse({ status: 200, type: [DeanEligibleCategoryResponseDto] })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async GetDeanEligibleCategories(
+    @Query() query: DeanEligibleCategoriesQueryDto,
+  ): Promise<DeanEligibleCategoryResponseDto[]> {
+    return this.adminService.GetDeanEligibleCategories(query.userId);
   }
 
   @Post('institutional-roles')

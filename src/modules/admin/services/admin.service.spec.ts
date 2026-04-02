@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Test, TestingModule } from '@nestjs/testing';
 import { User } from 'src/entities/user.entity';
@@ -305,6 +305,172 @@ describe('AdminService', () => {
         expect.objectContaining({ moodleCategory: programCategory }),
         expect.anything(),
       );
+    });
+  });
+
+  describe('GetDeanEligibleCategories', () => {
+    const mockUser = { id: 'user-1' } as User;
+
+    const deptCCS = {
+      moodleCategoryId: 8,
+      name: 'CCS',
+      depth: 3,
+      parentMoodleCategoryId: 6,
+    };
+
+    const deptCOE = {
+      moodleCategoryId: 12,
+      name: 'COE',
+      depth: 3,
+      parentMoodleCategoryId: 6,
+    };
+
+    const programBSCS = {
+      moodleCategoryId: 18,
+      name: 'BSCS',
+      depth: 4,
+      parentMoodleCategoryId: 8,
+    };
+
+    const programBSIT = {
+      moodleCategoryId: 19,
+      name: 'BSIT',
+      depth: 4,
+      parentMoodleCategoryId: 8,
+    };
+
+    const programBSCE = {
+      moodleCategoryId: 20,
+      name: 'BSCE',
+      depth: 4,
+      parentMoodleCategoryId: 12,
+    };
+
+    it('should resolve depth-4 CHAIRPERSON to parent depth-3 department', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([
+          { role: UserRole.CHAIRPERSON, moodleCategory: programBSCS },
+        ])
+        .mockResolvedValueOnce([deptCCS]);
+
+      const result = await service.GetDeanEligibleCategories('user-1');
+
+      expect(result).toEqual([{ moodleCategoryId: 8, name: 'CCS' }]);
+    });
+
+    it('should return depth-3 CHAIRPERSON directly (manual-assignment scenario)', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find.mockResolvedValueOnce([
+        { role: UserRole.CHAIRPERSON, moodleCategory: deptCCS },
+      ]);
+
+      const result = await service.GetDeanEligibleCategories('user-1');
+
+      expect(result).toEqual([{ moodleCategoryId: 8, name: 'CCS' }]);
+    });
+
+    it('should deduplicate when multiple depth-4 roles share the same parent department', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([
+          { role: UserRole.CHAIRPERSON, moodleCategory: programBSCS },
+          { role: UserRole.CHAIRPERSON, moodleCategory: programBSIT },
+        ])
+        .mockResolvedValueOnce([deptCCS]);
+
+      const result = await service.GetDeanEligibleCategories('user-1');
+
+      expect(result).toEqual([{ moodleCategoryId: 8, name: 'CCS' }]);
+    });
+
+    it('should exclude categories where user is already DEAN', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([
+          { role: UserRole.DEAN, moodleCategory: deptCCS },
+          { role: UserRole.CHAIRPERSON, moodleCategory: programBSCS },
+        ])
+        .mockResolvedValueOnce([deptCCS]);
+
+      const result = await service.GetDeanEligibleCategories('user-1');
+
+      expect(result).toEqual([]);
+    });
+
+    it('should throw NotFoundException for invalid userId', async () => {
+      em.findOneOrFail.mockImplementationOnce(
+        (
+          _entity: unknown,
+          _filter: unknown,
+          opts: { failHandler: () => Error },
+        ) => {
+          throw opts.failHandler();
+        },
+      );
+
+      await expect(
+        service.GetDeanEligibleCategories('nonexistent'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should return empty array when user has no institutional roles', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find.mockResolvedValueOnce([]);
+
+      const result = await service.GetDeanEligibleCategories('user-1');
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return only non-DEAN departments in mixed scenario', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([
+          { role: UserRole.DEAN, moodleCategory: deptCCS },
+          { role: UserRole.CHAIRPERSON, moodleCategory: programBSCS },
+          { role: UserRole.CHAIRPERSON, moodleCategory: programBSCE },
+        ])
+        .mockResolvedValueOnce([deptCCS, deptCOE]);
+
+      const result = await service.GetDeanEligibleCategories('user-1');
+
+      expect(result).toEqual([{ moodleCategoryId: 12, name: 'COE' }]);
+    });
+
+    it('should silently skip CHAIRPERSON roles at unexpected depths (not 3 or 4)', async () => {
+      const semesterCategory = {
+        moodleCategoryId: 6,
+        name: 'S22526',
+        depth: 2,
+        parentMoodleCategoryId: 1,
+      };
+
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find.mockResolvedValueOnce([
+        { role: UserRole.CHAIRPERSON, moodleCategory: semesterCategory },
+      ]);
+
+      const result = await service.GetDeanEligibleCategories('user-1');
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return results sorted alphabetically by name', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([
+          { role: UserRole.CHAIRPERSON, moodleCategory: programBSCS },
+          { role: UserRole.CHAIRPERSON, moodleCategory: programBSCE },
+        ])
+        .mockResolvedValueOnce([deptCCS, deptCOE]);
+
+      const result = await service.GetDeanEligibleCategories('user-1');
+
+      expect(result).toEqual([
+        { moodleCategoryId: 8, name: 'CCS' },
+        { moodleCategoryId: 12, name: 'COE' },
+      ]);
     });
   });
 });

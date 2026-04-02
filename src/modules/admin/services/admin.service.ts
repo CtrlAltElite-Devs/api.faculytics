@@ -17,6 +17,7 @@ import { AssignInstitutionalRoleDto } from '../dto/requests/assign-institutional
 import { RemoveInstitutionalRoleDto } from '../dto/requests/remove-institutional-role.request.dto';
 import { ListUsersQueryDto } from '../dto/requests/list-users-query.dto';
 import { AdminUserItemResponseDto } from '../dto/responses/admin-user-item.response.dto';
+import { AdminUserDetailResponseDto } from '../dto/responses/admin-user-detail.response.dto';
 import { AdminUserListResponseDto } from '../dto/responses/admin-user-list.response.dto';
 import { DeanEligibleCategoryResponseDto } from '../dto/responses/dean-eligible-category.response.dto';
 
@@ -50,6 +51,39 @@ export class AdminService {
         currentPage: page,
       },
     };
+  }
+
+  async GetUserDetail(userId: string): Promise<AdminUserDetailResponseDto> {
+    const user = await this.em.findOneOrFail(
+      User,
+      { id: userId },
+      {
+        populate: ['campus', 'department', 'program'],
+        failHandler: () => new NotFoundException('User not found'),
+      },
+    );
+
+    const [enrollments, institutionalRoles] = await Promise.all([
+      this.em.find(
+        Enrollment,
+        { user: userId, isActive: true, course: { isActive: true } },
+        {
+          populate: ['course'],
+          orderBy: { timeModified: 'DESC' },
+        },
+      ),
+      this.em.find(
+        UserInstitutionalRole,
+        { user: userId },
+        { populate: ['moodleCategory'] },
+      ),
+    ]);
+
+    return AdminUserDetailResponseDto.Map(
+      user,
+      enrollments,
+      institutionalRoles,
+    );
   }
 
   async AssignInstitutionalRole(dto: AssignInstitutionalRoleDto) {

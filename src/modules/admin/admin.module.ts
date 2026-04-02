@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { Campus } from 'src/entities/campus.entity';
+import { Course } from 'src/entities/course.entity';
 import { Department } from 'src/entities/department.entity';
+import { Enrollment } from 'src/entities/enrollment.entity';
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
 import { Program } from 'src/entities/program.entity';
 import { Semester } from 'src/entities/semester.entity';
@@ -16,7 +18,9 @@ import { AdminFiltersService } from './services/admin-filters.service';
   imports: [
     MikroOrmModule.forFeature([
       Campus,
+      Course,
       Department,
+      Enrollment,
       MoodleCategory,
       Program,
       Semester,

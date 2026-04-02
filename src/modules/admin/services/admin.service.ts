@@ -18,6 +18,7 @@ import { RemoveInstitutionalRoleDto } from '../dto/requests/remove-institutional
 import { ListUsersQueryDto } from '../dto/requests/list-users-query.dto';
 import { AdminUserItemResponseDto } from '../dto/responses/admin-user-item.response.dto';
 import { AdminUserListResponseDto } from '../dto/responses/admin-user-list.response.dto';
+import { DeanEligibleCategoryResponseDto } from '../dto/responses/dean-eligible-category.response.dto';
 
 @Injectable()
 export class AdminService {
@@ -137,6 +138,71 @@ export class AdminService {
     return {
       message: `Removed ${dto.role} at category ${moodleCategory.name}`,
     };
+  }
+
+  async GetDeanEligibleCategories(
+    userId: string,
+  ): Promise<DeanEligibleCategoryResponseDto[]> {
+    await this.em.findOneOrFail(
+      User,
+      { id: userId },
+      {
+        failHandler: () => new NotFoundException('User not found'),
+      },
+    );
+
+    const roles = await this.em.find(
+      UserInstitutionalRole,
+      { user: userId },
+      { populate: ['moodleCategory'] },
+    );
+
+    // Build DEAN exclusion set
+    const deanCategoryIds = new Set(
+      roles
+        .filter(
+          (ir) => ir.role === (UserRole.DEAN as string) && ir.moodleCategory,
+        )
+        .map((ir) => ir.moodleCategory.moodleCategoryId),
+    );
+
+    // Filter explicit CHAIRPERSON candidates, skip null moodleCategory
+    const chairpersonRoles = roles.filter(
+      (ir) => ir.role === (UserRole.CHAIRPERSON as string) && ir.moodleCategory,
+    );
+
+    // Separate depth-3 (direct) and depth-4 (need parent resolution)
+    const candidates = new Map<number, MoodleCategory>();
+    const parentIdsToFetch = new Set<number>();
+
+    for (const ir of chairpersonRoles) {
+      const cat = ir.moodleCategory;
+      if (cat.depth === 3) {
+        candidates.set(cat.moodleCategoryId, cat);
+      } else if (cat.depth === 4) {
+        parentIdsToFetch.add(cat.parentMoodleCategoryId);
+      }
+    }
+
+    // Batch-fetch depth-4 parents, only accept depth-3 (department level)
+    if (parentIdsToFetch.size > 0) {
+      const parentCategories = await this.em.find(MoodleCategory, {
+        moodleCategoryId: { $in: [...parentIdsToFetch] },
+        depth: 3,
+      });
+      for (const parent of parentCategories) {
+        candidates.set(parent.moodleCategoryId, parent);
+      }
+    }
+
+    // Exclude categories where user is already DEAN
+    for (const deanCatId of deanCategoryIds) {
+      candidates.delete(deanCatId);
+    }
+
+    return [...candidates.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((cat) => DeanEligibleCategoryResponseDto.Map(cat));
   }
 
   private async refreshUserRoles(user: User) {

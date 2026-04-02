@@ -70,7 +70,10 @@ export const InfrastructureModules = [
     middleware: { mount: true },
   }),
   ScheduleModule.forRoot(),
-  BullModule.forRoot({ connection: { url: env.REDIS_URL } }),
+  BullModule.forRoot({
+    connection: { url: env.REDIS_URL },
+    prefix: `${env.REDIS_KEY_PREFIX}bull`,
+  }),
   ThrottlerModule.forRootAsync({
     useFactory: () => ({
       throttlers: [

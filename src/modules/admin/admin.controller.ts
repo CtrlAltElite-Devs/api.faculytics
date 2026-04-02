@@ -1,7 +1,17 @@
-import { Body, Controller, Delete, Get, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiParam,
   ApiQuery,
   ApiResponse,
   ApiTags,
@@ -13,6 +23,7 @@ import { AssignInstitutionalRoleDto } from './dto/requests/assign-institutional-
 import { RemoveInstitutionalRoleDto } from './dto/requests/remove-institutional-role.request.dto';
 import { ListUsersQueryDto } from './dto/requests/list-users-query.dto';
 import { DeanEligibleCategoriesQueryDto } from './dto/requests/dean-eligible-categories-query.dto';
+import { AdminUserDetailResponseDto } from './dto/responses/admin-user-detail.response.dto';
 import { AdminUserListResponseDto } from './dto/responses/admin-user-list.response.dto';
 import { DeanEligibleCategoryResponseDto } from './dto/responses/dean-eligible-category.response.dto';
 
@@ -86,6 +97,18 @@ export class AdminController {
     @Query() query: ListUsersQueryDto,
   ): Promise<AdminUserListResponseDto> {
     return this.adminService.ListUsers(query);
+  }
+
+  @Get('users/:id')
+  @ApiOperation({ summary: 'Get detailed information about a single user' })
+  @ApiParam({ name: 'id', type: String, description: 'User UUID' })
+  @ApiResponse({ status: 200, type: AdminUserDetailResponseDto })
+  @ApiResponse({ status: 400, description: 'Invalid UUID format' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async GetUserDetail(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<AdminUserDetailResponseDto> {
+    return this.adminService.GetUserDetail(id);
   }
 
   @Get('institutional-roles/dean-eligible-categories')

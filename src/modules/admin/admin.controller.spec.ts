@@ -21,6 +21,7 @@ describe('AdminController', () => {
           currentPage: 1,
         },
       }),
+      GetUserDetail: jest.fn().mockResolvedValue({}),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -39,6 +40,12 @@ describe('AdminController', () => {
       .compile();
 
     controller = module.get(AdminController);
+  });
+
+  it('should delegate user detail to the admin service', async () => {
+    await controller.GetUserDetail('user-1');
+
+    expect(adminService.GetUserDetail).toHaveBeenCalledWith('user-1');
   });
 
   it('should delegate user listing to the admin service', async () => {

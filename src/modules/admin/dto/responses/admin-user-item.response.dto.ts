@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { User } from 'src/entities/user.entity';
 import { UserRole } from 'src/modules/auth/roles.enum';
 
-class AdminUserScopedRelationDto {
+export class AdminUserScopedRelationDto {
   @ApiProperty()
   id: string;
 

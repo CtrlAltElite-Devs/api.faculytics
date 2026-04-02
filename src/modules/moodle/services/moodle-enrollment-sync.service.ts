@@ -3,6 +3,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import pLimit from 'p-limit';
 import { Course } from 'src/entities/course.entity';
 import { Section } from 'src/entities/section.entity';
+import { Campus } from 'src/entities/campus.entity';
+import { Program } from 'src/entities/program.entity';
 import { env } from 'src/configurations/env';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { User } from 'src/entities/user.entity';
@@ -80,6 +82,14 @@ export class EnrollmentSyncService {
           `Failed to sync enrollments for course ${course.moodleCourseId}: ${message}`,
         );
       }
+    }
+
+    // Phase 4: Backfill campus, program, department on users
+    try {
+      await this.backfillUserScopes(fetched);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to backfill user scopes: ${message}`);
     }
 
     const inserted = Math.max(0, enrollmentUpserts - enrollmentCountBefore);
@@ -312,5 +322,116 @@ export class EnrollmentSyncService {
     }
 
     return sectionMap;
+  }
+
+  private async backfillUserScopes(
+    fetched: { course: Course; remoteUsers: MoodleEnrolledUser[] }[],
+  ) {
+    // 1. Build user → program mapping (most course enrollments wins)
+    const userProgramCounts = new Map<number, Map<string, number>>();
+
+    for (const { course, remoteUsers } of fetched) {
+      const programRef = course.program;
+      if (!programRef) continue;
+      const programId =
+        typeof programRef === 'object' ? programRef.id : String(programRef);
+
+      for (const remote of remoteUsers) {
+        if (remote.id == null || !remote.username) continue;
+        if (!userProgramCounts.has(remote.id)) {
+          userProgramCounts.set(remote.id, new Map());
+        }
+        const counts = userProgramCounts.get(remote.id)!;
+        counts.set(programId, (counts.get(programId) ?? 0) + 1);
+      }
+    }
+
+    // 2. Resolve primary program per user (most enrollments, alphabetical ID tiebreaker)
+    const userPrimaryProgram = new Map<number, string>();
+    for (const [moodleUserId, counts] of userProgramCounts) {
+      let maxCount = 0;
+      let primaryProgramId = '';
+      for (const [programId, count] of counts) {
+        if (
+          count > maxCount ||
+          (count === maxCount && programId < primaryProgramId)
+        ) {
+          maxCount = count;
+          primaryProgramId = programId;
+        }
+      }
+      if (primaryProgramId) {
+        userPrimaryProgram.set(moodleUserId, primaryProgramId);
+      }
+    }
+
+    if (userPrimaryProgram.size === 0) return;
+
+    // 3. Load programs with department → semester → campus chain
+    const programIds = [...new Set(userPrimaryProgram.values())];
+    const fork = this.em.fork();
+    const programs = await fork.find(
+      Program,
+      { id: { $in: programIds } },
+      {
+        populate: [
+          'department',
+          'department.semester',
+          'department.semester.campus',
+        ],
+      },
+    );
+    const programMap = new Map(programs.map((p) => [p.id, p]));
+
+    // 4. Load all campuses for username prefix lookup
+    const campuses = await fork.find(Campus, {});
+    const campusByCode = new Map(campuses.map((c) => [c.code, c]));
+
+    // 5. Load users and update scope fields
+    const moodleUserIds = [...userPrimaryProgram.keys()];
+    const users = await fork.find(User, {
+      moodleUserId: { $in: moodleUserIds },
+    });
+
+    let updated = 0;
+    for (const user of users) {
+      if (!user.moodleUserId) continue;
+
+      const programId = userPrimaryProgram.get(user.moodleUserId);
+      if (!programId) continue;
+
+      const program = programMap.get(programId);
+      if (!program) continue;
+
+      const changed =
+        user.program?.id !== program.id ||
+        user.department?.id !== program.department?.id;
+
+      user.program = program;
+
+      if (program.department) {
+        user.department = program.department;
+      }
+
+      // Campus: username prefix first, fallback to category hierarchy
+      const parts = user.userName.split('-');
+      const campusCode = parts.length > 1 ? parts[0].toUpperCase() : null;
+      const campus = campusCode ? campusByCode.get(campusCode) : undefined;
+      const resolvedCampus = campus ?? program.department?.semester?.campus;
+      const campusChanged = user.campus?.id !== resolvedCampus?.id;
+
+      if (resolvedCampus) {
+        user.campus = resolvedCampus;
+      }
+
+      if (changed || campusChanged) {
+        updated++;
+      }
+    }
+
+    if (updated > 0) {
+      await fork.flush();
+      this.logger.log(`Backfilled scope fields for ${updated} users`);
+    }
   }
 }

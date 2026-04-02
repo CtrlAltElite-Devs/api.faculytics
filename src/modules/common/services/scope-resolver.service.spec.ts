@@ -43,12 +43,12 @@ describe('ScopeResolverService', () => {
     expect(em.find).not.toHaveBeenCalled();
   });
 
-  it('should return department IDs for dean with one department', async () => {
+  it('should return department IDs for dean with one depth-3 department', async () => {
     const user = createUser([UserRole.DEAN]);
     currentUserService.getOrFail.mockReturnValue(user);
 
     em.find
-      .mockResolvedValueOnce([{ moodleCategory: { moodleCategoryId: 100 } }])
+      .mockResolvedValueOnce([{ moodleCategory: { name: 'CCS', depth: 3 } }])
       .mockResolvedValueOnce([{ id: 'dept-1' }]);
 
     const result = await service.ResolveDepartmentIds(semesterId);
@@ -57,14 +57,36 @@ describe('ScopeResolverService', () => {
     expect(em.find).toHaveBeenCalledTimes(2);
   });
 
+  it('should return department IDs for dean at depth 4 by resolving parent', async () => {
+    const user = createUser([UserRole.DEAN]);
+    currentUserService.getOrFail.mockReturnValue(user);
+
+    em.find
+      // institutional roles — depth 4 (program-level)
+      .mockResolvedValueOnce([
+        {
+          moodleCategory: { name: 'BSCS', depth: 4, parentMoodleCategoryId: 8 },
+        },
+      ])
+      // parent category lookup
+      .mockResolvedValueOnce([{ name: 'CCS', moodleCategoryId: 8 }])
+      // department lookup by code
+      .mockResolvedValueOnce([{ id: 'dept-1' }]);
+
+    const result = await service.ResolveDepartmentIds(semesterId);
+
+    expect(result).toEqual(['dept-1']);
+    expect(em.find).toHaveBeenCalledTimes(3);
+  });
+
   it('should return multiple department IDs for dean with multiple departments', async () => {
     const user = createUser([UserRole.DEAN]);
     currentUserService.getOrFail.mockReturnValue(user);
 
     em.find
       .mockResolvedValueOnce([
-        { moodleCategory: { moodleCategoryId: 100 } },
-        { moodleCategory: { moodleCategoryId: 200 } },
+        { moodleCategory: { name: 'CCS', depth: 3 } },
+        { moodleCategory: { name: 'COE', depth: 3 } },
       ])
       .mockResolvedValueOnce([{ id: 'dept-1' }, { id: 'dept-2' }]);
 
@@ -90,7 +112,7 @@ describe('ScopeResolverService', () => {
     currentUserService.getOrFail.mockReturnValue(user);
 
     em.find
-      .mockResolvedValueOnce([{ moodleCategory: { moodleCategoryId: 13 } }]) // institutional roles
+      .mockResolvedValueOnce([{ moodleCategory: { name: 'BSCS' } }]) // institutional roles
       .mockResolvedValueOnce([{ id: 'prog-1', department: { id: 'dept-1' } }]); // programs
 
     const result = await service.ResolveDepartmentIds(semesterId);
@@ -105,8 +127,8 @@ describe('ScopeResolverService', () => {
 
     em.find
       .mockResolvedValueOnce([
-        { moodleCategory: { moodleCategoryId: 13 } },
-        { moodleCategory: { moodleCategoryId: 18 } },
+        { moodleCategory: { name: 'BSCS' } },
+        { moodleCategory: { name: 'BSIT' } },
       ])
       .mockResolvedValueOnce([
         { id: 'prog-1', department: { id: 'dept-1' } },
@@ -135,7 +157,7 @@ describe('ScopeResolverService', () => {
     currentUserService.getOrFail.mockReturnValue(user);
 
     em.find
-      .mockResolvedValueOnce([{ moodleCategory: { moodleCategoryId: 100 } }])
+      .mockResolvedValueOnce([{ moodleCategory: { name: 'CCS', depth: 3 } }])
       .mockResolvedValueOnce([{ id: 'dept-1' }]);
 
     const result = await service.ResolveDepartmentIds(semesterId);

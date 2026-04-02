@@ -11,6 +11,8 @@ import { adminEnvSchema } from './admin.env';
 import { redisEnvSchema } from './redis.env';
 import { bullmqEnvSchema } from './bullmq.env';
 import { throttleEnvSchema } from './throttle.env';
+import { r2EnvSchema } from './r2.env';
+import { reportEnvSchema } from './report.env';
 
 export const envSchema = z.object({
   ...databaseEnvSchema.shape,
@@ -23,6 +25,8 @@ export const envSchema = z.object({
   ...redisEnvSchema.shape,
   ...bullmqEnvSchema.shape,
   ...throttleEnvSchema.shape,
+  ...r2EnvSchema.shape,
+  ...reportEnvSchema.shape,
 });
 
 export type Env = z.infer<typeof envSchema>;

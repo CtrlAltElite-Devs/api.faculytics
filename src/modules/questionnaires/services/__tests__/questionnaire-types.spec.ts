@@ -21,6 +21,7 @@ import { CacheService } from '../../../common/cache/cache.service';
 import { AnalysisService } from '../../../analysis/analysis.service';
 import { CurrentUserService } from '../../../common/cls/current-user.service';
 import { QuestionnaireStatus } from '../../lib/questionnaire.types';
+import UnitOfWork from '../../../common/unit-of-work';
 
 describe('QuestionnaireService - Types & Versions', () => {
   let service: QuestionnaireService;
@@ -121,6 +122,18 @@ describe('QuestionnaireService - Types & Versions', () => {
           provide: CurrentUserService,
           useValue: {
             getOrFail: jest.fn().mockReturnValue({ id: 'test-user' }),
+          },
+        },
+        {
+          provide: UnitOfWork,
+          useValue: {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+            runInTransaction: jest.fn().mockImplementation((cb) =>
+              cb({
+                findOne: jest.fn(),
+                create: jest.fn(),
+              }),
+            ),
           },
         },
         {

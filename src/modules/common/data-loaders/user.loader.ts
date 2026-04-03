@@ -15,7 +15,7 @@ export class UserLoader {
             id: { $in: [...userIds] },
           },
           {
-            populate: ['campus'],
+            populate: ['campus', 'program', 'department'],
           },
         );
 

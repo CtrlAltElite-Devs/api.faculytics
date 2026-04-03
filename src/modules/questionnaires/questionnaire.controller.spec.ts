@@ -40,6 +40,7 @@ describe('QuestionnaireController - checkSubmission', () => {
             getVersionsByType: jest.fn(),
             createQuestionnaire: jest.fn(),
             CreateVersion: jest.fn(),
+            CreateVersionFromTemplate: jest.fn(),
             GetLatestActiveVersion: jest.fn(),
             PublishVersion: jest.fn(),
             DeprecateVersion: jest.fn(),
@@ -208,6 +209,7 @@ describe('QuestionnaireController - IngestCsv', () => {
             getVersionsByType: jest.fn(),
             createQuestionnaire: jest.fn(),
             CreateVersion: jest.fn(),
+            CreateVersionFromTemplate: jest.fn(),
             GetLatestActiveVersion: jest.fn(),
             PublishVersion: jest.fn(),
             DeprecateVersion: jest.fn(),
@@ -461,6 +463,7 @@ describe('QuestionnaireController - wipeSubmissions', () => {
             getVersionsByType: jest.fn(),
             createQuestionnaire: jest.fn(),
             CreateVersion: jest.fn(),
+            CreateVersionFromTemplate: jest.fn(),
             GetLatestActiveVersion: jest.fn(),
             PublishVersion: jest.fn(),
             DeprecateVersion: jest.fn(),
@@ -595,6 +598,7 @@ describe('QuestionnaireController - GetCsvTemplate', () => {
             getVersionsByType: jest.fn(),
             createQuestionnaire: jest.fn(),
             CreateVersion: jest.fn(),
+            CreateVersionFromTemplate: jest.fn(),
             GetLatestActiveVersion: jest.fn(),
             PublishVersion: jest.fn(),
             DeprecateVersion: jest.fn(),
@@ -773,6 +777,7 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
             getVersionsByType: jest.fn(),
             createQuestionnaire: jest.fn(),
             CreateVersion: jest.fn(),
+            CreateVersionFromTemplate: jest.fn(),
             GetLatestActiveVersion: jest.fn(),
             PublishVersion: jest.fn(),
             DeprecateVersion: jest.fn(),
@@ -977,5 +982,35 @@ describe('QuestionnaireController - mutation DTO mapping', () => {
     expect(questionnaireService.ArchiveQuestionnaire).toHaveBeenCalledWith(
       'q-1',
     );
+  });
+
+  it('createVersionFromTemplate should call service and return QuestionnaireVersionDetailResponse', async () => {
+    questionnaireService.CreateVersionFromTemplate.mockResolvedValue(
+      mockVersion as any,
+    );
+
+    const result = await controller.createVersionFromTemplate('q-1', {
+      sourceVersionId: 'src-v1',
+    });
+
+    expect(questionnaireService.CreateVersionFromTemplate).toHaveBeenCalledWith(
+      'q-1',
+      'src-v1',
+    );
+    expect(result).toEqual({
+      id: 'v-1',
+      questionnaireId: 'q-1',
+      questionnaireTitle: 'Test Questionnaire',
+      questionnaireType: mockTypeEntity,
+      versionNumber: 1,
+      status: QuestionnaireStatus.DRAFT,
+      isActive: false,
+      schemaSnapshot: mockSchema,
+      publishedAt: undefined,
+      createdAt: mockVersion.createdAt,
+      updatedAt: mockVersion.updatedAt,
+    });
+    expect(result).not.toHaveProperty('deletedAt');
+    expect(result).not.toHaveProperty('questionnaire');
   });
 });

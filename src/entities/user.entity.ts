@@ -94,6 +94,10 @@ export class User extends CustomBaseEntity {
     enrollments: Enrollment[],
     institutionalRoles: UserInstitutionalRole[] = [],
   ) {
+    const protectedRoles = this.roles.filter(
+      (r) => r === UserRole.SUPER_ADMIN || r === UserRole.ADMIN,
+    );
+
     const enrollmentRoles = enrollments
       .filter((e) => e.isActive)
       .map(
@@ -108,8 +112,8 @@ export class User extends CustomBaseEntity {
         (ir.role.toUpperCase() as unknown as UserRole),
     );
 
-    this.roles = [...new Set([...enrollmentRoles, ...instRoles])].filter(
-      Boolean,
-    );
+    this.roles = [
+      ...new Set([...protectedRoles, ...enrollmentRoles, ...instRoles]),
+    ].filter(Boolean);
   }
 }

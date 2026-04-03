@@ -127,13 +127,20 @@ describe('QuestionnaireService - Types & Versions', () => {
         {
           provide: UnitOfWork,
           useValue: {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-            runInTransaction: jest.fn().mockImplementation((cb) =>
-              cb({
-                findOne: jest.fn(),
-                create: jest.fn(),
-              }),
-            ),
+            runInTransaction: jest
+              .fn()
+              .mockImplementation(
+                (
+                  cb: (em: {
+                    findOne: jest.Mock;
+                    create: jest.Mock;
+                  }) => unknown,
+                ) =>
+                  cb({
+                    findOne: jest.fn(),
+                    create: jest.fn(),
+                  }),
+              ),
           },
         },
         {

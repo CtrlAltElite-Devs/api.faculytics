@@ -35,6 +35,7 @@ import {
   EnrollmentRole,
   QuestionnaireStatus,
 } from '../lib/questionnaire.types';
+import UnitOfWork from '../../common/unit-of-work';
 
 describe('QuestionnaireService', () => {
   let service: QuestionnaireService;
@@ -49,6 +50,7 @@ describe('QuestionnaireService', () => {
     invalidateNamespace: jest.Mock;
     invalidateNamespaces: jest.Mock;
   };
+  let mockTransactionalEm: { findOne: jest.Mock; create: jest.Mock };
 
   const RESPONDENT_ID = 'r1';
   const FACULTY_ID = 'f1';
@@ -73,6 +75,16 @@ describe('QuestionnaireService', () => {
       find: jest.fn(),
     };
     const enrollmentRepoMock = createMockRepo();
+
+    mockTransactionalEm = {
+      findOne: jest.fn(),
+      create: jest
+        .fn()
+        .mockImplementation((_: unknown, data: Record<string, unknown>) => ({
+          ...data,
+          id: 'new-version-id',
+        })),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -148,6 +160,15 @@ describe('QuestionnaireService', () => {
           provide: AnalysisService,
           useValue: {
             EnqueueJob: jest.fn().mockResolvedValue('mock-job-id'),
+          },
+        },
+        {
+          provide: UnitOfWork,
+          useValue: {
+            runInTransaction: jest
+              .fn()
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
+              .mockImplementation((cb) => cb(mockTransactionalEm)),
           },
         },
         {
@@ -551,6 +572,184 @@ describe('QuestionnaireService', () => {
 
       expect(result.versionNumber).toBe(1);
       expect(result.status).toBe(QuestionnaireStatus.DRAFT);
+    });
+  });
+
+  describe('CreateVersionFromTemplate', () => {
+    const QUESTIONNAIRE_ID = 'q1';
+    const SOURCE_VERSION_ID = 'src-v1';
+
+    const mockQuestionnaire = {
+      id: QUESTIONNAIRE_ID,
+      status: QuestionnaireStatus.ACTIVE,
+      type: { id: 't1', name: 'Type 1', code: 'T1' },
+    };
+
+    const mockSourceVersion = {
+      id: SOURCE_VERSION_ID,
+      status: QuestionnaireStatus.ACTIVE,
+      questionnaire: { id: QUESTIONNAIRE_ID },
+      schemaSnapshot: {
+        meta: {
+          questionnaireType: 'FACULTY_IN_CLASSROOM',
+          scoringModel: 'SECTION_WEIGHTED',
+          version: 1,
+          maxScore: 5,
+        },
+        sections: [
+          {
+            id: 'sec1',
+            title: 'Section 1',
+            questions: [{ id: 'q1', text: 'How?', required: true }],
+          },
+        ],
+      },
+    };
+
+    const mockLatestVersion = { versionNumber: 2 };
+
+    it('should create a new draft version from template (happy path)', async () => {
+      mockTransactionalEm.findOne
+        .mockResolvedValueOnce(mockQuestionnaire) // questionnaire
+        .mockResolvedValueOnce(mockSourceVersion) // source version
+        .mockResolvedValueOnce(null) // no existing draft
+        .mockResolvedValueOnce(mockLatestVersion); // latest version
+
+      versionRepo.findOne.mockResolvedValue({
+        id: 'new-version-id',
+        versionNumber: 3,
+        status: QuestionnaireStatus.DRAFT,
+        questionnaire: mockQuestionnaire,
+      } as any);
+
+      const result = await service.CreateVersionFromTemplate(
+        QUESTIONNAIRE_ID,
+        SOURCE_VERSION_ID,
+      );
+
+      expect(result.id).toBe('new-version-id');
+      expect(mockTransactionalEm.create).toHaveBeenCalledWith(
+        QuestionnaireVersion,
+        expect.objectContaining({
+          questionnaire: mockQuestionnaire,
+          versionNumber: 3,
+          status: QuestionnaireStatus.DRAFT,
+          isActive: false,
+        }),
+      );
+
+      // Verify deep copy — schema should match but not be the same reference
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const createCall = mockTransactionalEm.create.mock.calls[0][1];
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      expect(createCall.schemaSnapshot).toEqual(
+        mockSourceVersion.schemaSnapshot,
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      expect(createCall.schemaSnapshot).not.toBe(
+        mockSourceVersion.schemaSnapshot,
+      );
+
+      // Verify cache invalidation
+      expect(cacheService.invalidateNamespace).toHaveBeenCalledWith(
+        CacheNamespace.QUESTIONNAIRE_VERSIONS,
+      );
+
+      // Verify post-commit re-fetch
+      expect(versionRepo.findOne).toHaveBeenCalledWith('new-version-id', {
+        populate: ['questionnaire.type'],
+      });
+    });
+
+    it('should throw NotFoundException if questionnaire not found', async () => {
+      mockTransactionalEm.findOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.CreateVersionFromTemplate(QUESTIONNAIRE_ID, SOURCE_VERSION_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if questionnaire is archived', async () => {
+      mockTransactionalEm.findOne.mockResolvedValueOnce({
+        ...mockQuestionnaire,
+        status: QuestionnaireStatus.ARCHIVED,
+      });
+
+      await expect(
+        service.CreateVersionFromTemplate(QUESTIONNAIRE_ID, SOURCE_VERSION_ID),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw NotFoundException if source version not found', async () => {
+      mockTransactionalEm.findOne
+        .mockResolvedValueOnce(mockQuestionnaire)
+        .mockResolvedValueOnce(null);
+
+      await expect(
+        service.CreateVersionFromTemplate(QUESTIONNAIRE_ID, SOURCE_VERSION_ID),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if source belongs to different questionnaire', async () => {
+      mockTransactionalEm.findOne
+        .mockResolvedValueOnce(mockQuestionnaire)
+        .mockResolvedValueOnce({
+          ...mockSourceVersion,
+          questionnaire: { id: 'different-q' },
+        });
+
+      await expect(
+        service.CreateVersionFromTemplate(QUESTIONNAIRE_ID, SOURCE_VERSION_ID),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException if source is a DRAFT', async () => {
+      mockTransactionalEm.findOne
+        .mockResolvedValueOnce(mockQuestionnaire)
+        .mockResolvedValueOnce({
+          ...mockSourceVersion,
+          status: QuestionnaireStatus.DRAFT,
+        });
+
+      await expect(
+        service.CreateVersionFromTemplate(QUESTIONNAIRE_ID, SOURCE_VERSION_ID),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw ConflictException if draft already exists', async () => {
+      mockTransactionalEm.findOne
+        .mockResolvedValueOnce(mockQuestionnaire)
+        .mockResolvedValueOnce(mockSourceVersion)
+        .mockResolvedValueOnce({ id: 'existing-draft' }); // existing draft
+
+      await expect(
+        service.CreateVersionFromTemplate(QUESTIONNAIRE_ID, SOURCE_VERSION_ID),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should use versionNumber 1 when no versions exist', async () => {
+      mockTransactionalEm.findOne
+        .mockResolvedValueOnce(mockQuestionnaire)
+        .mockResolvedValueOnce(mockSourceVersion)
+        .mockResolvedValueOnce(null) // no existing draft
+        .mockResolvedValueOnce(null); // no latest version
+
+      versionRepo.findOne.mockResolvedValue({
+        id: 'new-version-id',
+        versionNumber: 1,
+        status: QuestionnaireStatus.DRAFT,
+        questionnaire: mockQuestionnaire,
+      } as any);
+
+      await service.CreateVersionFromTemplate(
+        QUESTIONNAIRE_ID,
+        SOURCE_VERSION_ID,
+      );
+
+      expect(mockTransactionalEm.create).toHaveBeenCalledWith(
+        QuestionnaireVersion,
+        expect.objectContaining({ versionNumber: 1 }),
+      );
     });
   });
 

@@ -26,6 +26,7 @@ import {
 import type { Response } from 'express';
 import { CreateQuestionnaireRequest } from './dto/requests/create-questionnaire-request.dto';
 import { CreateVersionRequest } from './dto/requests/create-version-request.dto';
+import { CreateVersionFromTemplateRequest } from './dto/requests/create-version-from-template-request.dto';
 import { UpdateVersionRequest } from './dto/requests/update-version-request.dto';
 import { UpdateQuestionnaireTitleRequest } from './dto/requests/update-questionnaire-title-request.dto';
 import { SubmitQuestionnaireRequest } from './dto/requests/submit-questionnaire-request.dto';
@@ -166,6 +167,40 @@ export class QuestionnaireController {
     const version = await this.questionnaireService.CreateVersion(
       id,
       data.schema,
+    );
+    return QuestionnaireVersionDetailResponse.Map(version);
+  }
+
+  @Post(':id/versions/from-template')
+  @UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Create a new version from an existing version template',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Version created from template',
+    type: QuestionnaireVersionDetailResponse,
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Source version is a draft, archived questionnaire, or belongs to different questionnaire',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Questionnaire or source version not found',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Draft version already exists',
+  })
+  async createVersionFromTemplate(
+    @Param('id') id: string,
+    @Body() data: CreateVersionFromTemplateRequest,
+  ): Promise<QuestionnaireVersionDetailResponse> {
+    const version = await this.questionnaireService.CreateVersionFromTemplate(
+      id,
+      data.sourceVersionId,
     );
     return QuestionnaireVersionDetailResponse.Map(version);
   }

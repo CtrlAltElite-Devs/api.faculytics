@@ -8,6 +8,7 @@ import { Program } from 'src/entities/program.entity';
 import { env } from 'src/configurations/env';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { User } from 'src/entities/user.entity';
+import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
 import { MoodleEnrolledUser } from '../lib/moodle.types';
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
@@ -90,6 +91,14 @@ export class EnrollmentSyncService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to backfill user scopes: ${message}`);
+    }
+
+    // Phase 5: Derive user roles from enrollments + institutional roles
+    try {
+      await this.deriveUserRoles(fetched);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to derive user roles: ${message}`);
     }
 
     const inserted = Math.max(0, enrollmentUpserts - enrollmentCountBefore);
@@ -432,6 +441,81 @@ export class EnrollmentSyncService {
     if (updated > 0) {
       await fork.flush();
       this.logger.log(`Backfilled scope fields for ${updated} users`);
+    }
+  }
+
+  private async deriveUserRoles(
+    fetched: { course: Course; remoteUsers: MoodleEnrolledUser[] }[],
+  ) {
+    // 1. Collect unique moodleUserIds from ALL remote users (no program filter)
+    const uniqueMoodleUserIds = new Set<number>();
+    for (const { remoteUsers } of fetched) {
+      for (const remote of remoteUsers) {
+        if (remote.id == null || !remote.username) continue;
+        uniqueMoodleUserIds.add(remote.id);
+      }
+    }
+
+    if (uniqueMoodleUserIds.size === 0) return;
+
+    const moodleUserIds = [...uniqueMoodleUserIds];
+    const fork = this.em.fork();
+
+    // 2. Batch-load users by Moodle ID
+    const users = await fork.find(User, {
+      moodleUserId: { $in: moodleUserIds },
+    });
+
+    if (users.length === 0) return;
+
+    // 3. Extract entity UUIDs for relational queries
+    const userUuids = users.map((u) => u.id);
+
+    // 4. Batch-load active enrollments and institutional roles
+    const [allEnrollments, allInstRoles] = await Promise.all([
+      fork.find(Enrollment, { user: { $in: userUuids }, isActive: true }),
+      fork.find(UserInstitutionalRole, { user: { $in: userUuids } }),
+    ]);
+
+    // 5. Group by user ID
+    const groupByUserId = <T extends { user: User | string }>(
+      items: T[],
+    ): Map<string, T[]> => {
+      const map = new Map<string, T[]>();
+      for (const item of items) {
+        const userId =
+          typeof item.user === 'object' ? item.user.id : String(item.user);
+        if (!map.has(userId)) {
+          map.set(userId, []);
+        }
+        map.get(userId)!.push(item);
+      }
+      return map;
+    };
+
+    const enrollmentsByUser = groupByUserId(allEnrollments);
+    const instRolesByUser = groupByUserId(allInstRoles);
+
+    // 6. Derive roles for each user
+    let updated = 0;
+    for (const user of users) {
+      const oldRoles = [...user.roles].sort();
+      const userEnrollments = enrollmentsByUser.get(user.id) ?? [];
+      const userInstRoles = instRolesByUser.get(user.id) ?? [];
+
+      user.updateRolesFromEnrollments(userEnrollments, userInstRoles);
+
+      const newRoles = [...user.roles].sort();
+      if (JSON.stringify(oldRoles) !== JSON.stringify(newRoles)) {
+        updated++;
+      }
+    }
+
+    // 7. Always flush — change counter is for logging only
+    await fork.flush();
+
+    if (updated > 0) {
+      this.logger.log(`Derived roles for ${updated} users`);
     }
   }
 }

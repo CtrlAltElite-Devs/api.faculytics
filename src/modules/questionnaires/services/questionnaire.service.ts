@@ -51,6 +51,7 @@ import { QueueName } from 'src/configurations/common/queue-names';
 import { CurrentUserService } from '../../common/cls/current-user.service';
 import { env } from 'src/configurations/env';
 import { cleanText } from '../utils/clean-text';
+import UnitOfWork from '../../common/unit-of-work';
 
 @Injectable()
 export class QuestionnaireService {
@@ -75,6 +76,7 @@ export class QuestionnaireService {
     private readonly cacheService: CacheService,
     private readonly analysisService: AnalysisService,
     private readonly currentUserService: CurrentUserService,
+    private readonly unitOfWork: UnitOfWork,
   ) {}
 
   async getQuestionnaireTypes(): Promise<QuestionnaireTypeResponse[]> {
@@ -287,6 +289,106 @@ export class QuestionnaireService {
     await this.cacheService.invalidateNamespace(
       CacheNamespace.QUESTIONNAIRE_VERSIONS,
     );
+    return version;
+  }
+
+  async CreateVersionFromTemplate(
+    questionnaireId: string,
+    sourceVersionId: string,
+  ) {
+    const versionId = await this.unitOfWork.runInTransaction(async (em) => {
+      // 1. Fetch questionnaire
+      const questionnaire = await em.findOne(Questionnaire, questionnaireId, {
+        populate: ['type'],
+      });
+      if (!questionnaire) {
+        throw new NotFoundException(
+          `Questionnaire with ID ${questionnaireId} not found.`,
+        );
+      }
+
+      if (questionnaire.status === QuestionnaireStatus.ARCHIVED) {
+        throw new BadRequestException(
+          'Cannot create a version for an archived questionnaire.',
+        );
+      }
+
+      // 2. Fetch source version
+      const sourceVersion = await em.findOne(
+        QuestionnaireVersion,
+        sourceVersionId,
+        { populate: ['questionnaire'] },
+      );
+      if (!sourceVersion) {
+        throw new NotFoundException(
+          `Source version with ID ${sourceVersionId} not found.`,
+        );
+      }
+
+      // 3. Validate source belongs to same questionnaire
+      if (sourceVersion.questionnaire.id !== questionnaireId) {
+        throw new BadRequestException(
+          'Source version does not belong to this questionnaire.',
+        );
+      }
+
+      // 4. Validate source is not DRAFT
+      if (sourceVersion.status === QuestionnaireStatus.DRAFT) {
+        throw new BadRequestException(
+          'Cannot use a draft version as a template.',
+        );
+      }
+
+      // 5. Enforce single-draft rule
+      const existingDraft = await em.findOne(QuestionnaireVersion, {
+        questionnaire,
+        status: QuestionnaireStatus.DRAFT,
+      });
+      if (existingDraft) {
+        throw new ConflictException(
+          'A draft version already exists for this questionnaire.',
+        );
+      }
+
+      // 6. Determine next version number
+      const latestVersion = await em.findOne(
+        QuestionnaireVersion,
+        { questionnaire },
+        { orderBy: { versionNumber: 'DESC' } },
+      );
+      const nextVersionNumber = latestVersion
+        ? latestVersion.versionNumber + 1
+        : 1;
+
+      // 7. Deep-copy schema
+      const schema = structuredClone(sourceVersion.schemaSnapshot);
+
+      // 8. Create new version
+      const version = em.create(QuestionnaireVersion, {
+        questionnaire,
+        versionNumber: nextVersionNumber,
+        schemaSnapshot: schema,
+        status: QuestionnaireStatus.DRAFT,
+        isActive: false,
+      });
+
+      return version.id;
+    });
+
+    // Cache invalidation AFTER transaction commits
+    await this.cacheService.invalidateNamespace(
+      CacheNamespace.QUESTIONNAIRE_VERSIONS,
+    );
+
+    // Re-fetch with full populate for the response mapper
+    const version = await this.versionRepo.findOne(versionId, {
+      populate: ['questionnaire.type'],
+    });
+    if (!version) {
+      throw new NotFoundException(
+        `Version ${versionId} not found after creation.`,
+      );
+    }
     return version;
   }
 

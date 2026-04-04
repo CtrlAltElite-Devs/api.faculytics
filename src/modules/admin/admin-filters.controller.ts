@@ -11,7 +11,12 @@ import { UserRole } from '../auth/roles.enum';
 import { AdminFiltersService } from './services/admin-filters.service';
 import { FilterDepartmentsQueryDto } from './dto/requests/filter-departments-query.dto';
 import { FilterProgramsQueryDto } from './dto/requests/filter-programs-query.dto';
+import { FilterCoursesQueryDto } from './dto/requests/filter-courses-query.dto';
+import { FilterVersionsQueryDto } from './dto/requests/filter-versions-query.dto';
 import { FilterOptionResponseDto } from './dto/responses/filter-option.response.dto';
+import { FilterFacultyResponseDto } from './dto/responses/filter-faculty.response.dto';
+import { FilterCourseResponseDto } from './dto/responses/filter-course.response.dto';
+import { FilterVersionResponseDto } from './dto/responses/filter-version.response.dto';
 
 @ApiTags('Admin')
 @Controller('admin/filters')
@@ -73,5 +78,52 @@ export class AdminFiltersController {
   })
   GetRoles(): { roles: UserRole[] } {
     return { roles: this.filtersService.GetRoles() };
+  }
+
+  @Get('faculty')
+  @ApiOperation({
+    summary:
+      'List faculty members (users with active editing teacher enrollments)',
+  })
+  @ApiResponse({ status: 200, type: [FilterFacultyResponseDto] })
+  async GetFaculty(): Promise<FilterFacultyResponseDto[]> {
+    return this.filtersService.GetFaculty();
+  }
+
+  @Get('courses')
+  @ApiOperation({ summary: 'List courses for a specific faculty member' })
+  @ApiQuery({
+    name: 'facultyUsername',
+    required: true,
+    type: String,
+    description: 'Faculty username to filter courses by',
+  })
+  @ApiResponse({ status: 200, type: [FilterCourseResponseDto] })
+  async GetCourses(
+    @Query() query: FilterCoursesQueryDto,
+  ): Promise<FilterCourseResponseDto[]> {
+    return this.filtersService.GetCoursesForFaculty(query.facultyUsername);
+  }
+
+  @Get('questionnaire-types')
+  @ApiOperation({ summary: 'List all questionnaire types' })
+  @ApiResponse({ status: 200, type: [FilterOptionResponseDto] })
+  async GetQuestionnaireTypes(): Promise<FilterOptionResponseDto[]> {
+    return this.filtersService.GetQuestionnaireTypes();
+  }
+
+  @Get('questionnaire-versions')
+  @ApiOperation({ summary: 'List active versions for a questionnaire type' })
+  @ApiQuery({
+    name: 'typeId',
+    required: true,
+    type: String,
+    description: 'Questionnaire type UUID',
+  })
+  @ApiResponse({ status: 200, type: [FilterVersionResponseDto] })
+  async GetQuestionnaireVersions(
+    @Query() query: FilterVersionsQueryDto,
+  ): Promise<FilterVersionResponseDto[]> {
+    return this.filtersService.GetQuestionnaireVersions(query.typeId);
   }
 }

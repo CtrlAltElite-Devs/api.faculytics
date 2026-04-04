@@ -47,11 +47,12 @@ export class AnalyticsController {
     summary: 'Get attention list — faculty flagged for review',
   })
   @ApiQuery({ name: 'semesterId', required: true, type: String })
+  @ApiQuery({ name: 'programCode', required: false, type: String })
   @ApiResponse({ status: 200, type: AttentionListResponseDto })
   async GetAttentionList(
     @Query() query: AttentionListQueryDto,
   ): Promise<AttentionListResponseDto> {
-    return this.analyticsService.GetAttentionList(query.semesterId);
+    return this.analyticsService.GetAttentionList(query.semesterId, query);
   }
 
   @Get('trends')

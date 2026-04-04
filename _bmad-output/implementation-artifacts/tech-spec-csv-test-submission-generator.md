@@ -2,7 +2,7 @@
 title: 'CSV Test Submission Generator'
 slug: 'csv-test-submission-generator'
 created: '2026-04-04'
-status: 'ready-for-dev'
+status: 'completed'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack:
   [
@@ -306,7 +306,7 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
 
 #### Phase 1: API Backend
 
-- [ ] **Task 1: Create DTOs for generator endpoints**
+- [x] **Task 1: Create DTOs for generator endpoints**
   - File: `api.faculytics/src/modules/admin/dto/generate-submissions.dto.ts` (NEW)
   - Action: Create request/response DTOs:
     - `GeneratePreviewRequestDto` — `{ versionId: string, facultyUsername: string, courseShortname: string }` with class-validator decorators
@@ -319,9 +319,10 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
   - Action: Create `FilterFacultyResponseDto` with `{ id, username, fullName }` and static `Map()` method. Create `FilterCoursesQueryDto` with required `facultyUsername` param. Create `FilterCourseResponseDto` with `{ id, shortname, fullname }`. Create `FilterQuestionnaireVersionsQueryDto` with required `typeId` param. Create `FilterVersionResponseDto` with `{ id, versionNumber }` and static `Map()` method.
   - Notes: Follow existing `FilterOptionResponseDto` pattern with static `Map()` factory method. Use `@IsUUID()`, `@IsString()`, `@IsNotEmpty()` validators. For `GenerateCommitRequestDto.rows[].answers` (`Record<string, number>`): use `@IsObject()` for basic shape validation — per-question answer validation is handled inside `submitQuestionnaire()`, so the DTO does not need to validate individual keys/values.
 
-- [ ] **Task 2: Create GetAllQuestionsWithSections helper**
+- [x] **Task 2: Create GetAllQuestionsWithSections helper**
   - File: `api.faculytics/src/modules/admin/lib/question-flattener.ts` (NEW)
   - Action: Create a standalone helper function that extends the `GetAllQuestions()` pattern from `QuestionnaireService` (line 867-881):
+
     ```typescript
     interface QuestionWithSection {
       id: string;
@@ -341,9 +342,10 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
     - Track the current `SectionNode.title` as the stack is processed
     - Each yielded question includes `sectionName` from its parent section
     - Import `QuestionnaireSchemaSnapshot`, `SectionNode`, `QuestionNode` types from `src/modules/questionnaires/lib/questionnaire.types.ts`
+
   - Notes: This is NOT duplication of `GetAllQuestions()` — it's an extension that adds sectionName tracking the original does not provide. The original returns `QuestionNode[]` without section context, which is insufficient for the preview response.
 
-- [ ] **Task 3: Create CommentGeneratorService**
+- [x] **Task 3: Create CommentGeneratorService**
   - File: `api.faculytics/src/modules/admin/services/comment-generator.service.ts` (NEW)
   - Action: Create `@Injectable()` service that wraps OpenAI API for generating multilingual student feedback comments.
     - Constructor: instantiate `new OpenAI({ apiKey: env.OPENAI_API_KEY })` following the pattern in `topic-label.service.ts`
@@ -357,7 +359,7 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
     - Fallback: if OpenAI call fails, times out, or returns invalid data, return array of generic fallback comments (e.g., `"Good teaching."`, `"Helpful instructor."`, varied — all under maxLength) so preview still works without error
   - Notes: Use `response_format: { type: 'json_object' }` for reliable JSON output. Set a 60-second timeout.
 
-- [ ] **Task 4: Create AdminGenerateService**
+- [x] **Task 4: Create AdminGenerateService**
   - File: `api.faculytics/src/modules/admin/services/admin-generate.service.ts` (NEW)
   - Action: Create `@Injectable()` service with two methods: `GeneratePreview()` and `CommitSubmissions()`.
   - Inject: `EntityManager`, `CommentGeneratorService`, `QuestionnaireService` (from imported `QuestionnaireModule`).
@@ -399,7 +401,7 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
   7. Return the result.
   - Notes: No IngestionEngine, no ArrayAdapter, no IngestionMapperService. `submitQuestionnaire()` manages its own EM operations internally — we do NOT fork the EM or pass it as a parameter. On failure, `em.clear()` resets dirty state so the next row starts clean. All validation (enrollment checks, unique constraints, answer range, qualitative comment) is handled by `submitQuestionnaire()` itself. Post-submission side effects (analysis jobs, cache invalidation) also fire normally.
 
-- [ ] **Task 5: Add filter endpoints to AdminFiltersController**
+- [x] **Task 5: Add filter endpoints to AdminFiltersController**
   - File: `api.faculytics/src/modules/admin/admin-filters.controller.ts`
   - Action: Add 4 new endpoints following the existing pattern:
     - `GET /admin/filters/faculty` — delegates to `AdminFiltersService.GetFaculty()`
@@ -408,7 +410,7 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
     - `GET /admin/filters/questionnaire-versions` — accepts `FilterQuestionnaireVersionsQueryDto` (required `typeId`), delegates to `AdminFiltersService.GetQuestionnaireVersions(typeId)`
   - Notes: Each endpoint gets `@Get()`, `@ApiOperation()`, `@ApiResponse()`, and `@ApiQuery()` decorators matching the existing pattern. All inherit the class-level `@UseJwtGuard(UserRole.SUPER_ADMIN)`.
 
-- [ ] **Task 6: Add filter service methods to AdminFiltersService**
+- [x] **Task 6: Add filter service methods to AdminFiltersService**
   - File: `api.faculytics/src/modules/admin/services/admin-filters.service.ts`
   - Action: Add 4 new methods:
     - `GetFaculty(): Promise<FilterFacultyResponseDto[]>` — Query distinct users who have at least one active `EDITING_TEACHER` enrollment. Return `{ id, username: user.userName, fullName: user.firstName + ' ' + user.lastName }`. Order by `fullName ASC`.
@@ -417,14 +419,14 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
     - `GetQuestionnaireVersions(typeId: string): Promise<FilterVersionResponseDto[]>` — Query `QuestionnaireVersion` where `questionnaire.type.id = typeId` and `isActive = true`. Map via `FilterVersionResponseDto.Map()`. Throw `NotFoundException` if type not found.
   - Notes: Import `QuestionnaireType` and `QuestionnaireVersion` entities. These need to be added to `MikroOrmModule.forFeature()` in the admin module (Task 8).
 
-- [ ] **Task 7: Create AdminGenerateController**
+- [x] **Task 7: Create AdminGenerateController**
   - File: `api.faculytics/src/modules/admin/admin-generate.controller.ts` (NEW)
   - Action: Create controller with prefix `admin/generate-submissions`, class-level `@UseJwtGuard(UserRole.SUPER_ADMIN)` and `@ApiBearerAuth()`:
     - `POST /admin/generate-submissions/preview` — accepts `@Body() dto: GeneratePreviewRequestDto`, delegates to `AdminGenerateService.GeneratePreview(dto)`, returns `GeneratePreviewResponseDto`
     - `POST /admin/generate-submissions/commit` — accepts `@Body() dto: GenerateCommitRequestDto`, delegates to `AdminGenerateService.CommitSubmissions(dto)`, returns `CommitResultDto`
   - Notes: Add Swagger decorators (`@ApiTags('Admin')`, `@ApiOperation()`, `@ApiResponse()`). The commit endpoint may take time due to ingestion processing — document that the client should expect latency.
 
-- [ ] **Task 8: Register new services and controllers in AdminModule**
+- [x] **Task 8: Register new services and controllers in AdminModule**
   - File: `api.faculytics/src/modules/admin/admin.module.ts`
   - Action:
     - Add `QuestionnaireModule` to the `imports` array — this provides `QuestionnaireService` and `QuestionnaireTypeService`
@@ -434,7 +436,7 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
   - Notes: `QuestionnaireModule` already exports `QuestionnaireService` (needed for `submitQuestionnaire()`) and `QuestionnaireTypeService`. No need to import `IngestionEngine` or `IngestionMapperService` — we bypass the ingestion pipeline entirely.
   - **Scope safety note**: `QuestionnaireModule` imports `DataLoaderModule` which provides `IngestionMappingLoader` (`Scope.REQUEST`). However, NestJS scope propagation follows the **injection graph**, not the module graph. `QuestionnaireService` does NOT inject `IngestionMappingLoader` — that's only injected by `IngestionMapperService`. Since `AdminGenerateService` only injects `QuestionnaireService`, the request-scoped chain does not propagate. The import is safe for singleton-scoped consumers.
 
-- [ ] **Task 9: Unit tests for CommentGeneratorService**
+- [x] **Task 9: Unit tests for CommentGeneratorService**
   - File: `api.faculytics/src/modules/admin/services/__tests__/comment-generator.service.spec.ts` (NEW)
   - Action: Test:
     - Successful generation: mock OpenAI to return valid JSON array of strings, verify count matches
@@ -443,7 +445,7 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
     - Context passed to prompt: verify course/faculty name appear in the prompt sent to OpenAI
   - Notes: Mock OpenAI client with `jest.fn()`. Don't test actual API calls.
 
-- [ ] **Task 10: Unit tests for AdminGenerateService**
+- [x] **Task 10: Unit tests for AdminGenerateService**
   - File: `api.faculytics/src/modules/admin/services/__tests__/admin-generate.service.spec.ts` (NEW)
   - Action: Test `GeneratePreview()`:
     - Happy path: mock version (active), faculty, course (with semester hierarchy), enrollments (3 students), no existing submissions, mock comment generator. Verify response has 3 rows, correct metadata counts, all questions have answers in valid range.
@@ -458,7 +460,7 @@ schema.qualitativeFeedback?: { enabled: boolean, required: boolean, maxLength: n
     - Version not found: verify `NotFoundException`.
   - Notes: Mock `EntityManager`, `CommentGeneratorService`, `QuestionnaireService`. Follow `admin.service.spec.ts` mocking pattern.
 
-- [ ] **Task 11: Unit tests for new filter endpoints**
+- [x] **Task 11: Unit tests for new filter endpoints**
   - File: `api.faculytics/src/modules/admin/services/__tests__/admin-filters.service.spec.ts` (update or NEW)
   - Action: Test new methods:
     - `GetFaculty()`: mock enrollment query returning users, verify response shape
@@ -482,7 +484,7 @@ src/features/submission-generator/
 └── use-generate-submissions.ts         # Preview + commit mutation hooks
 ```
 
-- [ ] **Task 12: Add API types for submission generator**
+- [x] **Task 12: Add API types for submission generator**
   - File: `admin.faculytics/src/types/api.ts`
   - Action: Add TypeScript interfaces at the end of the file:
 
@@ -565,7 +567,7 @@ src/features/submission-generator/
 
   - Notes: Follow existing export patterns in the file. All types are exported for use across the feature.
 
-- [ ] **Task 13: Create React Query hooks for generator**
+- [x] **Task 13: Create React Query hooks for generator**
   - File: `admin.faculytics/src/features/submission-generator/use-generator-filters.ts` (NEW)
   - Action: Create filter hooks following the `use-admin-filters.ts` pattern:
 
@@ -629,7 +631,7 @@ src/features/submission-generator/
 
   - Notes: Preview is a mutation (not a query) because it triggers server-side AI generation and is not idempotent. Commit mutation delegates success/error handling to the component so it can control the result dialog.
 
-- [ ] **Task 14: Create selection-form component**
+- [x] **Task 14: Create selection-form component**
   - File: `admin.faculytics/src/features/submission-generator/components/selection-form.tsx` (NEW)
   - Props:
     ```typescript
@@ -658,7 +660,7 @@ src/features/submission-generator/
       - onClick: call `useGeneratePreview().mutate({ versionId, facultyUsername, courseShortname })`, on success call `onPreviewReady(data, versionId)`
   - Notes: Follow `users-page.tsx` cascading select pattern. Use `useState` for all 4 field values. shadcn `Select` + `Card` + `Button` components. Lucide `Loader2` for spinner.
 
-- [ ] **Task 15: Create preview-panel component**
+- [x] **Task 15: Create preview-panel component**
   - File: `admin.faculytics/src/features/submission-generator/components/preview-panel.tsx` (NEW)
   - Props:
     ```typescript
@@ -706,7 +708,7 @@ src/features/submission-generator/
 
   - Notes: shadcn `Card`, `Table`, `Badge`, `Button`, `ScrollArea`, `Tooltip` components. Lucide `Loader2`, `ArrowLeft` icons.
 
-- [ ] **Task 16: Create commit-result-dialog component**
+- [x] **Task 16: Create commit-result-dialog component**
   - File: `admin.faculytics/src/features/submission-generator/components/commit-result-dialog.tsx` (NEW)
   - Props:
     ```typescript
@@ -730,7 +732,7 @@ src/features/submission-generator/
       - "Done" (`variant="default"`) — calls `onDone()`. Closes dialog, stays on preview as read-only.
   - Notes: shadcn `Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogFooter`. Lucide `CheckCircle2`, `AlertTriangle`, `XCircle` icons.
 
-- [ ] **Task 17: Create generator-page orchestrator**
+- [x] **Task 17: Create generator-page orchestrator**
   - File: `admin.faculytics/src/features/submission-generator/generator-page.tsx` (NEW)
   - Action: Create the main page component that orchestrates view state and child components:
 
@@ -766,7 +768,7 @@ src/features/submission-generator/
 
   - Notes: This is a thin orchestrator — all logic lives in child components. shadcn `Card` for page wrapper if desired. Follow the `users-page.tsx` page-level pattern.
 
-- [ ] **Task 18: Add route and navigation**
+- [x] **Task 18: Add route and navigation**
   - File: `admin.faculytics/src/routes.tsx`
   - Action: Add route for the generator page. **CRITICAL: nest INSIDE the `AuthGuard` wrapper children**, not as a top-level route. The `AuthGuard` component protects routes and redirects unauthenticated users. Adding outside it would create an unprotected route.
     ```typescript
@@ -887,3 +889,11 @@ src/features/submission-generator/
 - No rate limiting on preview endpoint — each call makes an OpenAI API request. The frontend disables the button during generation, but multiple admin users or browser tabs could trigger concurrent calls.
 - `externalId` format `gen_{username}_{timestamp}_{index}` is unique within a batch but could theoretically collide across batches in the same millisecond. Not a practical concern for an internal tool with manual usage.
 - `dryRun` field in `CommitResult` is always `false` — included for API shape compatibility but the generator does not support dry-run mode.
+
+## Review Notes
+
+- Adversarial review completed
+- Findings: 14 total, 9 fixed, 5 skipped (by design or consistent with existing patterns)
+- Resolution approach: auto-fix
+- Fixed: empty rows crash (F1), dangerous-key validation (F2), respondent populate (F4), encodeURIComponent (F5), dryRun type mismatch (F7), rows array bounds (F9), duplicate mutation instance (F10), HTTP 200 for preview (F13), dialog Escape key (F14)
+- Skipped: no transaction wrapper (F3, by design), answer distribution bias (F6, matches spec), em.clear scope (F8, by design), DFS order (F11, matches existing code), OpenAI DI bypass (F12, matches existing TopicLabelService pattern)

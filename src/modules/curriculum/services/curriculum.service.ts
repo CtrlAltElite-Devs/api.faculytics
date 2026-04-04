@@ -114,6 +114,16 @@ export class CurriculumService {
       department: departmentFilter,
     };
 
+    const programIds = await this.scopeResolverService.ResolveProgramIds(
+      query.semesterId,
+    );
+    if (programIds !== null) {
+      if (programIds.length === 0) {
+        return this.BuildEmptyPage(page, limit);
+      }
+      filter.id = { $in: programIds };
+    }
+
     this.ApplySearchFilter(filter, query.search, ['code', 'name']);
 
     const [programs, totalItems] = await this.em.findAndCount(Program, filter, {

@@ -54,31 +54,66 @@ export class ScopeResolverService {
     }
 
     if (user.roles.includes(UserRole.CHAIRPERSON)) {
-      const institutionalRoles = await this.em.find(
-        UserInstitutionalRole,
-        { user: user.id, role: UserRole.CHAIRPERSON },
-        { populate: ['moodleCategory'] },
+      const programs = await this.resolveChairpersonPrograms(
+        user.id,
+        semesterId,
       );
-
-      const programCodes = institutionalRoles
-        .filter((ir) => ir.moodleCategory?.name != null)
-        .map((ir) => ir.moodleCategory.name);
-
-      if (programCodes.length === 0) {
-        return [];
-      }
-
-      const programs = await this.em.find(Program, {
-        code: { $in: programCodes },
-        department: { semester: semesterId },
-      });
-
       return programs.map((p) => p.id);
     }
 
     throw new ForbiddenException(
       'User does not have a role with scope access.',
     );
+  }
+
+  /**
+   * Resolves program codes the user is allowed to access for a given semester.
+   * Returns `null` for unrestricted access (super admin, dean), or `string[]` of program codes.
+   */
+  async ResolveProgramCodes(semesterId: string): Promise<string[] | null> {
+    const user = this.currentUserService.getOrFail();
+
+    if (user.roles.includes(UserRole.SUPER_ADMIN)) {
+      return null;
+    }
+
+    if (user.roles.includes(UserRole.DEAN)) {
+      return null;
+    }
+
+    if (user.roles.includes(UserRole.CHAIRPERSON)) {
+      const programs = await this.resolveChairpersonPrograms(
+        user.id,
+        semesterId,
+      );
+      return programs.map((p) => p.code);
+    }
+
+    throw new ForbiddenException(
+      'User does not have a role with scope access.',
+    );
+  }
+
+  private async resolveChairpersonPrograms(
+    userId: string,
+    semesterId: string,
+  ): Promise<Program[]> {
+    const institutionalRoles = await this.em.find(
+      UserInstitutionalRole,
+      { user: userId, role: UserRole.CHAIRPERSON },
+      { populate: ['moodleCategory'] },
+    );
+
+    const programCodes = institutionalRoles
+      .filter((ir) => ir.moodleCategory?.name != null)
+      .map((ir) => ir.moodleCategory.name);
+
+    if (programCodes.length === 0) return [];
+
+    return this.em.find(Program, {
+      code: { $in: programCodes },
+      department: { semester: semesterId },
+    });
   }
 
   private async resolveDeanDepartments(

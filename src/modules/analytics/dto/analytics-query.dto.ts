@@ -8,8 +8,9 @@ import {
   IsInt,
   Min,
   Max,
+  MaxLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class DepartmentOverviewQueryDto {
   @ApiProperty({ description: 'Semester UUID to query analytics for' })
@@ -19,7 +20,12 @@ export class DepartmentOverviewQueryDto {
   @ApiPropertyOptional({
     description: 'Optional program code filter',
   })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
   @IsOptional()
   programCode?: string;
 }
@@ -28,6 +34,16 @@ export class AttentionListQueryDto {
   @ApiProperty({ description: 'Semester UUID to query analytics for' })
   @IsUUID()
   semesterId!: string;
+
+  @ApiPropertyOptional({ description: 'Optional program code filter' })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  @IsOptional()
+  programCode?: string;
 }
 
 export class FacultyTrendsQueryDto {

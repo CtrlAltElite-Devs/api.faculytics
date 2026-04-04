@@ -11,7 +11,10 @@ import { ScopeResolverService } from 'src/modules/common/services/scope-resolver
 describe('CurriculumService', () => {
   let service: CurriculumService;
   let em: { findOne: jest.Mock; findAndCount: jest.Mock };
-  let scopeResolver: { ResolveDepartmentIds: jest.Mock };
+  let scopeResolver: {
+    ResolveDepartmentIds: jest.Mock;
+    ResolveProgramIds: jest.Mock;
+  };
 
   const semesterId = 'semester-1';
   const deptId = 'dept-1';
@@ -27,6 +30,7 @@ describe('CurriculumService', () => {
 
     scopeResolver = {
       ResolveDepartmentIds: jest.fn(),
+      ResolveProgramIds: jest.fn().mockResolvedValue(null),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -407,9 +411,58 @@ describe('CurriculumService', () => {
         expect.objectContaining({ limit: 15, offset: 15 }),
       );
     });
+
+    it('should narrow programs for chairperson to assigned programs only', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
+      scopeResolver.ResolveProgramIds.mockResolvedValue([programId]);
+      em.findAndCount.mockResolvedValue([
+        [
+          {
+            id: programId,
+            code: 'BSCS',
+            name: 'BS Computer Science',
+            department: { id: deptId },
+          },
+        ],
+        1,
+      ]);
+
+      const result = await service.ListPrograms({ semesterId });
+
+      expect(result.data).toHaveLength(1);
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
+      expect(findCall[1]).toEqual(
+        expect.objectContaining({ id: { $in: [programId] } }),
+      );
+    });
+
+    it('should not narrow programs for dean (unrestricted)', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
+      scopeResolver.ResolveProgramIds.mockResolvedValue(null);
+      em.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.ListPrograms({ semesterId });
+
+      const findCall = em.findAndCount.mock.calls[0] as unknown[];
+      expect(findCall[1]).not.toHaveProperty('id');
+    });
+
+    it('should return empty page when chairperson has no assigned programs', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
+      scopeResolver.ResolveProgramIds.mockResolvedValue([]);
+
+      const result = await service.ListPrograms({ semesterId });
+
+      expect(result.data).toEqual([]);
+      expect(result.meta).toEqual(emptyMeta());
+      expect(em.findAndCount).not.toHaveBeenCalled();
+    });
   });
 
-  // ─── ListCourses ──────────────────────────────────────────────────
+  // ─── ListCourses ─────────────────────────────��────────────────────
 
   describe('ListCourses', () => {
     it('should throw 400 when neither programId nor departmentId is provided', async () => {

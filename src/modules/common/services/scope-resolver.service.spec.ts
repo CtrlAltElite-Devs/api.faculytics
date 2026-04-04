@@ -192,4 +192,78 @@ describe('ScopeResolverService', () => {
     expect(result).toBeNull();
     expect(em.find).not.toHaveBeenCalled();
   });
+
+  // ─── ResolveProgramCodes ─────────────────────────────────────────
+
+  describe('ResolveProgramCodes', () => {
+    it('should return null for SUPER_ADMIN', async () => {
+      const user = createUser([UserRole.SUPER_ADMIN]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      const result = await service.ResolveProgramCodes(semesterId);
+
+      expect(result).toBeNull();
+      expect(em.find).not.toHaveBeenCalled();
+    });
+
+    it('should return null for DEAN', async () => {
+      const user = createUser([UserRole.DEAN]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      const result = await service.ResolveProgramCodes(semesterId);
+
+      expect(result).toBeNull();
+      expect(em.find).not.toHaveBeenCalled();
+    });
+
+    it('should return specific codes for CHAIRPERSON', async () => {
+      const user = createUser([UserRole.CHAIRPERSON]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find
+        .mockResolvedValueOnce([{ moodleCategory: { name: 'BSCS' } }])
+        .mockResolvedValueOnce([{ id: 'prog-1', code: 'BSCS' }]);
+
+      const result = await service.ResolveProgramCodes(semesterId);
+
+      expect(result).toEqual(['BSCS']);
+    });
+
+    it('should return empty array when chairperson has no institutional roles', async () => {
+      const user = createUser([UserRole.CHAIRPERSON]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find.mockResolvedValueOnce([]);
+
+      const result = await service.ResolveProgramCodes(semesterId);
+
+      expect(result).toEqual([]);
+    });
+
+    it('should throw ForbiddenException for unsupported roles', async () => {
+      const user = createUser([UserRole.STUDENT]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      await expect(service.ResolveProgramCodes(semesterId)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+  });
+
+  // ─── ResolveProgramIds (regression after refactor) ───────────────
+
+  describe('ResolveProgramIds', () => {
+    it('should still return UUIDs after refactor', async () => {
+      const user = createUser([UserRole.CHAIRPERSON]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find
+        .mockResolvedValueOnce([{ moodleCategory: { name: 'BSCS' } }])
+        .mockResolvedValueOnce([{ id: 'prog-uuid-1', code: 'BSCS' }]);
+
+      const result = await service.ResolveProgramIds(semesterId);
+
+      expect(result).toEqual(['prog-uuid-1']);
+    });
+  });
 });

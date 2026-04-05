@@ -4,7 +4,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { RecommendationGenerationService } from './recommendation-generation.service';
+import { TopicAssignment } from 'src/entities/topic-assignment.entity';
 import { RECOMMENDATION_THRESHOLDS } from '../constants';
+import type { TopicSource } from '../dto/recommendations.dto';
 
 // Mock OpenAI
 const mockParse = jest.fn();
@@ -238,6 +240,12 @@ describe('RecommendationGenerationService', () => {
     const result = await service.Generate('pipeline-1');
 
     expect(result[0].supportingEvidence.confidenceLevel).toBe('LOW');
+    // Scoped count = 1 assignment (not docCount 3)
+    const topicSource = result[0].supportingEvidence.sources.find(
+      (s) => s.type === 'topic',
+    );
+    expect(topicSource).toBeDefined();
+    expect((topicSource as TopicSource).commentCount).toBe(1);
   });
 
   it('should compute HIGH confidence when commentCount >= 10 and agreement > 0.7', async () => {
@@ -299,6 +307,12 @@ describe('RecommendationGenerationService', () => {
     const result = await service.Generate('pipeline-1');
 
     expect(result[0].supportingEvidence.confidenceLevel).toBe('HIGH');
+    // Scoped count = 14 assignments (not docCount 15)
+    const topicSource = result[0].supportingEvidence.sources.find(
+      (s) => s.type === 'topic',
+    );
+    expect(topicSource).toBeDefined();
+    expect((topicSource as TopicSource).commentCount).toBe(14);
   });
 
   it('should compute MEDIUM confidence for >= 10 comments with <= 0.7 agreement', async () => {
@@ -361,6 +375,12 @@ describe('RecommendationGenerationService', () => {
     const result = await service.Generate('pipeline-1');
 
     expect(result[0].supportingEvidence.confidenceLevel).toBe('MEDIUM');
+    // Scoped count = 12 assignments (matches docCount 12 in this case)
+    const topicSource = result[0].supportingEvidence.sources.find(
+      (s) => s.type === 'topic',
+    );
+    expect(topicSource).toBeDefined();
+    expect((topicSource as TopicSource).commentCount).toBe(12);
   });
 
   it('should throw on OpenAI API failure', async () => {
@@ -493,6 +513,111 @@ describe('RecommendationGenerationService', () => {
 
     // Pipeline-level: 20 comments, 16/20 = 0.8 agreement → HIGH
     expect(result[0].supportingEvidence.confidenceLevel).toBe('HIGH');
+  });
+
+  it('should scope TopicAssignment query to pipeline submissionIds', async () => {
+    const topics = makeTopics();
+    mockFork.findOneOrFail.mockResolvedValue(makePipeline());
+    mockFork.findOne
+      .mockResolvedValueOnce({ id: 'sr1' })
+      .mockResolvedValueOnce({ id: 'tmr1' });
+    mockFork.find
+      .mockResolvedValueOnce([{ id: 'sub1' }, { id: 'sub2' }]) // submissions
+      .mockResolvedValueOnce([]) // sentiment results
+      .mockResolvedValueOnce(topics) // topics
+      .mockResolvedValueOnce([]); // topic assignments (empty = no quote sub queries)
+
+    mockParse.mockResolvedValue(makeLlmResponse([]));
+
+    await service.Generate('pipeline-1');
+
+    const assignmentCall = mockFork.find.mock.calls.find(
+      (call) => call[0] === TopicAssignment,
+    );
+    expect(assignmentCall).toBeDefined();
+    expect(assignmentCall![1]).toEqual(
+      expect.objectContaining({
+        topic: { $in: ['t1', 't2'] },
+        submission: { $in: ['sub1', 'sub2'] },
+      }),
+    );
+  });
+
+  it('should produce accurate evidence from scoped assignments', async () => {
+    const topics = [
+      {
+        id: 't1',
+        topicIndex: 0,
+        rawLabel: 'raw_topic_1',
+        label: 'Teaching Quality',
+        keywords: ['teaching', 'quality'],
+        docCount: 50, // intentionally large to prove scoped count is used
+      },
+    ];
+    const sentimentResults = [
+      {
+        id: 'sr1',
+        label: 'positive',
+        submission: { id: 'sub1' },
+        positiveScore: 0.9,
+        negativeScore: 0.1,
+      },
+      {
+        id: 'sr2',
+        label: 'negative',
+        submission: { id: 'sub2' },
+        positiveScore: 0.1,
+        negativeScore: 0.8,
+      },
+    ];
+
+    mockFork.findOneOrFail.mockResolvedValue(makePipeline());
+    mockFork.findOne
+      .mockResolvedValueOnce({ id: 'sr1' })
+      .mockResolvedValueOnce({ id: 'tmr1' });
+    mockFork.find
+      .mockResolvedValueOnce([{ id: 'sub1' }, { id: 'sub2' }]) // submissions
+      .mockResolvedValueOnce(sentimentResults) // sentiment results
+      .mockResolvedValueOnce(topics) // topics
+      .mockResolvedValueOnce([
+        // topic assignments — only in-scope
+        { topic: { id: 't1' }, submission: { id: 'sub1' }, isDominant: true },
+        { topic: { id: 't1' }, submission: { id: 'sub2' }, isDominant: false },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'sub1', cleanedComment: 'Great teaching methods' },
+      ]); // quote subs for dominant sub1
+
+    const llmRecs = [
+      {
+        category: 'STRENGTH' as const,
+        headline: 'Strong Teaching',
+        description: 'Students appreciate teaching.',
+        actionPlan: 'Continue current methods.',
+        priority: 'HIGH' as const,
+        topicReference: 'Teaching Quality',
+      },
+    ];
+    mockParse.mockResolvedValue(makeLlmResponse(llmRecs));
+
+    const result = await service.Generate('pipeline-1');
+
+    expect(result.length).toBe(1);
+
+    const topicSource = result[0].supportingEvidence.sources.find(
+      (s) => s.type === 'topic',
+    );
+    expect(topicSource).toBeDefined();
+    expect((topicSource as TopicSource).commentCount).toBe(2); // scoped, NOT docCount 50
+    expect((topicSource as TopicSource).sampleQuotes).toEqual([
+      'Great teaching methods',
+    ]);
+    expect((topicSource as TopicSource).sentimentBreakdown).toEqual({
+      positive: 1,
+      neutral: 0,
+      negative: 1,
+    });
+    expect(result[0].supportingEvidence.confidenceLevel).toBe('LOW'); // 2 < 5
   });
 
   it('should attach dimension_scores evidence to every recommendation', async () => {

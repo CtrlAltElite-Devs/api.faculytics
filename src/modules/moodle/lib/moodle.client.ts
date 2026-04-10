@@ -8,6 +8,14 @@ import {
   MoodleCategoryResponse,
   MoodleCourseGroup,
   MoodleCourseUserGroupsResponse,
+  MoodleCreateCourseInput,
+  MoodleCreateCourseResult,
+  MoodleCreateCategoryInput,
+  MoodleCreateCategoryResult,
+  MoodleCreateUserInput,
+  MoodleCreateUserResult,
+  MoodleEnrolmentInput,
+  MoodleEnrolResult,
 } from './moodle.types';
 import { MoodleUserProfile } from '../dto/responses/user-profile.response.dto';
 
@@ -23,6 +31,7 @@ export class MoodleConnectivityError extends Error {
 }
 
 const MOODLE_REQUEST_TIMEOUT_MS = 10000;
+const MOODLE_WRITE_TIMEOUT_MS = 60000;
 
 export class MoodleClient {
   private baseUrl: string;
@@ -75,6 +84,7 @@ export class MoodleClient {
   async call<T>(
     functionName: string,
     params: Record<string, string> = {},
+    timeoutMs: number = MOODLE_REQUEST_TIMEOUT_MS,
   ): Promise<T> {
     if (!this.token) {
       throw new Error(
@@ -93,7 +103,7 @@ export class MoodleClient {
           moodlewsrestformat: 'json',
           ...params,
         }),
-        signal: AbortSignal.timeout(MOODLE_REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       this.handleFetchError(error, functionName);
@@ -122,6 +132,8 @@ export class MoodleClient {
         `Failed to parse Moodle API response as JSON: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+
+    if (data == null) return data;
 
     const moodleError = data as { exception?: string; message?: string };
     if (moodleError.exception) {
@@ -233,6 +245,61 @@ export class MoodleClient {
         value,
       },
     );
+  }
+
+  async createCourses(
+    courses: MoodleCreateCourseInput[],
+  ): Promise<MoodleCreateCourseResult[]> {
+    return await this.call<MoodleCreateCourseResult[]>(
+      MoodleWebServiceFunction.CREATE_COURSES,
+      this.serializeArrayParams('courses', courses),
+      MOODLE_WRITE_TIMEOUT_MS,
+    );
+  }
+
+  async createCategories(
+    categories: MoodleCreateCategoryInput[],
+  ): Promise<MoodleCreateCategoryResult[]> {
+    return await this.call<MoodleCreateCategoryResult[]>(
+      MoodleWebServiceFunction.CREATE_CATEGORIES,
+      this.serializeArrayParams('categories', categories),
+      MOODLE_WRITE_TIMEOUT_MS,
+    );
+  }
+
+  async createUsers(
+    users: MoodleCreateUserInput[],
+  ): Promise<MoodleCreateUserResult[]> {
+    return await this.call<MoodleCreateUserResult[]>(
+      MoodleWebServiceFunction.CREATE_USERS,
+      this.serializeArrayParams('users', users),
+      MOODLE_WRITE_TIMEOUT_MS,
+    );
+  }
+
+  async enrolUsers(
+    enrolments: MoodleEnrolmentInput[],
+  ): Promise<MoodleEnrolResult | null> {
+    return await this.call<MoodleEnrolResult | null>(
+      MoodleWebServiceFunction.ENROL_USERS,
+      this.serializeArrayParams('enrolments', enrolments),
+      MOODLE_WRITE_TIMEOUT_MS,
+    );
+  }
+
+  private serializeArrayParams(
+    key: string,
+    items: object[],
+  ): Record<string, string> {
+    const params: Record<string, string> = {};
+    items.forEach((item, index) => {
+      for (const [field, value] of Object.entries(item)) {
+        if (value !== undefined) {
+          params[`${key}[${index}][${field}]`] = String(value);
+        }
+      }
+    });
+    return params;
   }
 
   private handleFetchError(error: unknown, operation: string): never {

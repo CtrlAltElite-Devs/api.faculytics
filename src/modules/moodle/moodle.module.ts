@@ -23,6 +23,10 @@ import { MoodleSyncProcessor } from './processors/moodle-sync.processor';
 import { MoodleSyncScheduler } from './schedulers/moodle-sync.scheduler';
 import { MoodleStartupService } from './services/moodle-startup.service';
 import { MoodleSyncController } from './controllers/moodle-sync.controller';
+import { MoodleProvisioningController } from './controllers/moodle-provisioning.controller';
+import { MoodleCourseTransformService } from './services/moodle-course-transform.service';
+import { MoodleCsvParserService } from './services/moodle-csv-parser.service';
+import { MoodleProvisioningService } from './services/moodle-provisioning.service';
 import DataLoaderModule from '../common/data-loaders/index.module';
 
 @Module({
@@ -43,7 +47,7 @@ import DataLoaderModule from '../common/data-loaders/index.module';
     CommonModule,
     DataLoaderModule,
   ],
-  controllers: [MoodleSyncController],
+  controllers: [MoodleSyncController, MoodleProvisioningController],
   providers: [
     MoodleService,
     MoodleSyncService,
@@ -54,6 +58,9 @@ import DataLoaderModule from '../common/data-loaders/index.module';
     MoodleSyncProcessor,
     MoodleSyncScheduler,
     MoodleStartupService,
+    MoodleCourseTransformService,
+    MoodleCsvParserService,
+    MoodleProvisioningService,
   ],
   exports: [
     MoodleService,
@@ -63,6 +70,7 @@ import DataLoaderModule from '../common/data-loaders/index.module';
     EnrollmentSyncService,
     MoodleUserHydrationService,
     MoodleStartupService,
+    MoodleProvisioningService,
   ],
 })
 export default class MoodleModule {}

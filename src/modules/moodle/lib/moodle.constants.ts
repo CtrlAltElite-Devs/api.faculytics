@@ -14,4 +14,8 @@ export enum MoodleWebServiceFunction {
   GET_COURSES_BY_FIELD = 'core_course_get_courses_by_field',
   GET_COURSE_GROUPS = 'core_group_get_course_groups',
   GET_COURSE_USER_GROUPS = 'core_group_get_course_user_groups',
+  CREATE_COURSES = 'core_course_create_courses',
+  CREATE_CATEGORIES = 'core_course_create_categories',
+  CREATE_USERS = 'core_user_create_users',
+  ENROL_USERS = 'enrol_manual_enrol_users',
 }

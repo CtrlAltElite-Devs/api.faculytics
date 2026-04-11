@@ -154,4 +154,8 @@ export class MoodleService {
     const client = this.BuildMasterClient();
     return await client.getCategories();
   }
+
+  async GetCoursesByFieldWithMasterKey(field: string, value: string) {
+    return this.BuildMasterClient().getCoursesByField(field, value);
+  }
 }

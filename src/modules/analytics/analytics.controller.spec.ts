@@ -77,7 +77,7 @@ describe('AnalyticsController', () => {
   });
 
   describe('GetAttentionList', () => {
-    it('should delegate to AnalyticsService with semesterId', async () => {
+    it('should delegate to AnalyticsService with semesterId and query', async () => {
       const query = {
         semesterId: '550e8400-e29b-41d4-a716-446655440000',
       };
@@ -91,6 +91,27 @@ describe('AnalyticsController', () => {
 
       expect(mockAnalyticsService.GetAttentionList).toHaveBeenCalledWith(
         query.semesterId,
+        query,
+      );
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('should pass programCode to service', async () => {
+      const query = {
+        semesterId: '550e8400-e29b-41d4-a716-446655440000',
+        programCode: 'BSCS',
+      };
+      const expectedResult = {
+        items: [],
+        lastRefreshedAt: null,
+      };
+      mockAnalyticsService.GetAttentionList.mockResolvedValue(expectedResult);
+
+      const result = await controller.GetAttentionList(query);
+
+      expect(mockAnalyticsService.GetAttentionList).toHaveBeenCalledWith(
+        query.semesterId,
+        query,
       );
       expect(result).toEqual(expectedResult);
     });

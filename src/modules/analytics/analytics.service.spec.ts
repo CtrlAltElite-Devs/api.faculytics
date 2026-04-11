@@ -8,7 +8,10 @@ import { QuestionnaireSchemaSnapshot } from 'src/modules/questionnaires/lib/ques
 describe('AnalyticsService', () => {
   let service: AnalyticsService;
   let mockExecute: jest.Mock;
-  let mockScopeResolver: { ResolveDepartmentIds: jest.Mock };
+  let mockScopeResolver: {
+    ResolveDepartmentIds: jest.Mock;
+    ResolveProgramCodes: jest.Mock;
+  };
 
   beforeEach(async () => {
     mockExecute = jest.fn().mockResolvedValue([]);
@@ -20,6 +23,7 @@ describe('AnalyticsService', () => {
 
     mockScopeResolver = {
       ResolveDepartmentIds: jest.fn().mockResolvedValue(null),
+      ResolveProgramCodes: jest.fn().mockResolvedValue(null),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -183,7 +187,9 @@ describe('AnalyticsService', () => {
         // GetLastRefreshedAt
         .mockResolvedValueOnce([]);
 
-      const result = await service.GetAttentionList(semesterId);
+      const result = await service.GetAttentionList(semesterId, {
+        semesterId,
+      });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].flags).toHaveLength(1);
@@ -211,7 +217,9 @@ describe('AnalyticsService', () => {
         // GetLastRefreshedAt
         .mockResolvedValueOnce([]);
 
-      const result = await service.GetAttentionList(semesterId);
+      const result = await service.GetAttentionList(semesterId, {
+        semesterId,
+      });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].flags[0].type).toBe('quant_qual_gap');
@@ -236,7 +244,9 @@ describe('AnalyticsService', () => {
         // GetLastRefreshedAt
         .mockResolvedValueOnce([]);
 
-      const result = await service.GetAttentionList(semesterId);
+      const result = await service.GetAttentionList(semesterId, {
+        semesterId,
+      });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].flags[0].type).toBe('low_coverage');
@@ -274,7 +284,9 @@ describe('AnalyticsService', () => {
         // GetLastRefreshedAt
         .mockResolvedValueOnce([]);
 
-      const result = await service.GetAttentionList(semesterId);
+      const result = await service.GetAttentionList(semesterId, {
+        semesterId,
+      });
 
       // Same faculty should be deduplicated into one item with 2 flags
       expect(result.items).toHaveLength(1);
@@ -295,12 +307,164 @@ describe('AnalyticsService', () => {
         // GetLastRefreshedAt
         .mockResolvedValueOnce([]);
 
-      const result = await service.GetAttentionList(semesterId);
+      const result = await service.GetAttentionList(semesterId, {
+        semesterId,
+      });
 
       expect(result.items).toHaveLength(0);
       expect(mockScopeResolver.ResolveDepartmentIds).toHaveBeenCalledWith(
         semesterId,
       );
+    });
+
+    it('should filter attention by programCode on quant-qual gap and low coverage', async () => {
+      // Super admin: no dept scope call
+      mockExecute
+        // Declining trends
+        .mockResolvedValueOnce([])
+        // Quant-qual gap
+        .mockResolvedValueOnce([
+          {
+            faculty_id: 'f1',
+            faculty_name: 'Dr. Smith',
+            department_code: 'CCS',
+            avg_normalized_score: 90,
+            positive_count: 5,
+            analyzed_count: 20,
+            divergence: 0.65,
+          },
+        ])
+        // Low coverage
+        .mockResolvedValueOnce([])
+        // GetLastRefreshedAt
+        .mockResolvedValueOnce([]);
+
+      await service.GetAttentionList(semesterId, {
+        semesterId,
+        programCode: 'BSCS',
+      });
+
+      // Quant-qual gap (call[1]) should include program_code_snapshot filter
+      const qqCall = mockExecute.mock.calls[1] as [string, unknown[]];
+      expect(qqCall[0]).toContain('program_code_snapshot = ?');
+      expect(qqCall[1]).toContain('BSCS');
+
+      // Low coverage (call[2]) should include program_code_snapshot filter
+      const lcCall = mockExecute.mock.calls[2] as [string, unknown[]];
+      expect(lcCall[0]).toContain('program_code_snapshot = ?');
+      expect(lcCall[1]).toContain('BSCS');
+    });
+
+    it('should join-back declining trends to stats MV when programCode provided', async () => {
+      mockExecute
+        // Declining trends (with join)
+        .mockResolvedValueOnce([])
+        // Quant-qual gap
+        .mockResolvedValueOnce([])
+        // Low coverage
+        .mockResolvedValueOnce([])
+        // GetLastRefreshedAt
+        .mockResolvedValueOnce([]);
+
+      await service.GetAttentionList(semesterId, {
+        semesterId,
+        programCode: 'BSCS',
+      });
+
+      // Declining trends (call[0]) should JOIN mv_faculty_semester_stats
+      const dtCall = mockExecute.mock.calls[0] as [string, unknown[]];
+      expect(dtCall[0]).toContain('JOIN mv_faculty_semester_stats');
+      expect(dtCall[0]).toContain('s.semester_id = ?');
+      expect(dtCall[0]).toContain('s.program_code_snapshot = ?');
+    });
+
+    it('should correctly expand params when both programCode and deptCodes are present', async () => {
+      mockScopeResolver.ResolveDepartmentIds.mockResolvedValue(['dept-uuid-1']);
+      // ResolveDepartmentCodes
+      mockExecute
+        .mockResolvedValueOnce([{ code: 'CCS' }])
+        // Declining trends
+        .mockResolvedValueOnce([])
+        // Quant-qual gap
+        .mockResolvedValueOnce([])
+        // Low coverage
+        .mockResolvedValueOnce([])
+        // GetLastRefreshedAt
+        .mockResolvedValueOnce([]);
+
+      await service.GetAttentionList(semesterId, {
+        semesterId,
+        programCode: 'BSCS',
+      });
+
+      // Declining trends (call[1]): params should be
+      // [minSemesters, minR2, minR2, semesterId, programCode, deptCodes]
+      const dtCall = mockExecute.mock.calls[1] as [string, unknown[]];
+      expect(dtCall[0]).toContain('JOIN mv_faculty_semester_stats');
+      expect(dtCall[0]).toContain('t.department_code_snapshot = ANY(?)');
+      expect(dtCall[1]).toEqual([3, 0.5, 0.5, semesterId, 'BSCS', '{CCS}']);
+    });
+
+    it('should return empty when programCode is out of scope for chairperson', async () => {
+      mockScopeResolver.ResolveProgramCodes.mockResolvedValue(['BSCS']);
+      mockScopeResolver.ResolveDepartmentIds.mockResolvedValue(['dept-1']);
+      // ResolveDepartmentCodes
+      mockExecute.mockResolvedValueOnce([{ code: 'CCS' }]);
+      // GetLastRefreshedAt
+      mockExecute.mockResolvedValueOnce([
+        { value: '2026-03-22T10:00:00.000Z' },
+      ]);
+
+      const result = await service.GetAttentionList(semesterId, {
+        semesterId,
+        programCode: 'BSIT',
+      });
+
+      expect(result.items).toEqual([]);
+      expect(result.lastRefreshedAt).toBe('2026-03-22T10:00:00.000Z');
+    });
+
+    it('should allow any programCode for super admin (unrestricted)', async () => {
+      mockScopeResolver.ResolveProgramCodes.mockResolvedValue(null);
+      mockExecute
+        // Declining trends
+        .mockResolvedValueOnce([])
+        // Quant-qual gap
+        .mockResolvedValueOnce([])
+        // Low coverage
+        .mockResolvedValueOnce([])
+        // GetLastRefreshedAt
+        .mockResolvedValueOnce([]);
+
+      const result = await service.GetAttentionList(semesterId, {
+        semesterId,
+        programCode: 'ANY_CODE',
+      });
+
+      // All 3 sub-queries should have been called (4 total with GetLastRefreshedAt)
+      expect(mockExecute).toHaveBeenCalledTimes(4);
+      expect(result.items).toHaveLength(0);
+    });
+  });
+
+  describe('GetDepartmentOverview — scope validation', () => {
+    const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+
+    it('should return empty overview when programCode is out of scope', async () => {
+      mockScopeResolver.ResolveProgramCodes.mockResolvedValue(['BSCS']);
+      // GetLastRefreshedAt
+      mockExecute.mockResolvedValueOnce([
+        { value: '2026-03-22T10:00:00.000Z' },
+      ]);
+
+      const result = await service.GetDepartmentOverview(semesterId, {
+        semesterId,
+        programCode: 'BSIT',
+      });
+
+      expect(result.summary.totalFaculty).toBe(0);
+      expect(result.faculty).toEqual([]);
+      expect(result.lastRefreshedAt).toBe('2026-03-22T10:00:00.000Z');
     });
   });
 

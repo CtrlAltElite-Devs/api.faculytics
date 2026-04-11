@@ -12,6 +12,7 @@ import {
 import { getInterpretation } from './lib/interpretation.util';
 import {
   DepartmentOverviewQueryDto,
+  AttentionListQueryDto,
   FacultyTrendsQueryDto,
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
@@ -75,6 +76,22 @@ export class AnalyticsService {
     query: DepartmentOverviewQueryDto,
   ): Promise<DepartmentOverviewResponseDto> {
     const deptCodes = await this.ResolveDepartmentCodes(semesterId);
+
+    if (!(await this.IsProgramCodeInScope(semesterId, query.programCode))) {
+      const lastRefreshedAt = await this.GetLastRefreshedAt();
+      return {
+        summary: {
+          totalFaculty: 0,
+          totalSubmissions: 0,
+          totalAnalyzed: 0,
+          positiveCount: 0,
+          negativeCount: 0,
+          neutralCount: 0,
+        },
+        faculty: [],
+        lastRefreshedAt,
+      };
+    }
 
     const prevSemRows: { id: string }[] = await this.em.execute(
       `SELECT s2.id FROM semester s2
@@ -171,8 +188,15 @@ export class AnalyticsService {
 
   async GetAttentionList(
     semesterId: string,
+    query: AttentionListQueryDto,
   ): Promise<AttentionListResponseDto> {
+    const { programCode } = query;
     const deptCodes = await this.ResolveDepartmentCodes(semesterId);
+
+    if (!(await this.IsProgramCodeInScope(semesterId, programCode))) {
+      const lastRefreshedAt = await this.GetLastRefreshedAt();
+      return { items: [], lastRefreshedAt };
+    }
 
     const flagMap = new Map<
       string,
@@ -211,25 +235,49 @@ export class AnalyticsService {
         ATTENTION_THRESHOLDS.MIN_R2_FOR_TREND,
       ];
 
+      let fromClause: string;
+      let colPrefix: string;
+      let deptPrefix: string;
+      let extraFilters = '';
+
+      if (programCode) {
+        fromClause = `FROM mv_faculty_trends t
+          JOIN mv_faculty_semester_stats s
+            ON s.faculty_id = t.faculty_id
+            AND s.department_code_snapshot = t.department_code_snapshot`;
+        colPrefix = 't.';
+        deptPrefix = 't.';
+        extraFilters = ` AND s.semester_id = ? AND s.program_code_snapshot = ?`;
+        params.push(semesterId, programCode);
+      } else {
+        fromClause = 'FROM mv_faculty_trends';
+        colPrefix = '';
+        deptPrefix = '';
+      }
+
       let deptFilter = '';
       if (deptCodes !== null) {
-        deptFilter = ` AND department_code_snapshot = ANY(?)`;
+        deptFilter = ` AND ${deptPrefix}department_code_snapshot = ANY(?)`;
         params.push(pgArray(deptCodes));
       }
 
       const sql = `
-        SELECT faculty_id, faculty_name_snapshot AS faculty_name,
-               department_code_snapshot AS department_code,
-               score_slope, score_r2, sentiment_slope, sentiment_r2
-        FROM mv_faculty_trends
-        WHERE semester_count >= ?
+        SELECT ${colPrefix}faculty_id,
+               ${colPrefix}faculty_name_snapshot AS faculty_name,
+               ${colPrefix}department_code_snapshot AS department_code,
+               ${colPrefix}score_slope, ${colPrefix}score_r2,
+               ${colPrefix}sentiment_slope, ${colPrefix}sentiment_r2
+        ${fromClause}
+        WHERE ${colPrefix}semester_count >= ?
           AND (
-            (score_slope < 0 AND score_r2 >= ?)
-            OR (sentiment_slope < 0 AND sentiment_r2 >= ?)
-          )${deptFilter}
+            (${colPrefix}score_slope < 0 AND ${colPrefix}score_r2 >= ?)
+            OR (${colPrefix}sentiment_slope < 0 AND ${colPrefix}sentiment_r2 >= ?)
+          )${extraFilters}${deptFilter}
       `;
 
-      // The R2 threshold is used twice in the SQL
+      // PARAM CONTRACT: params[0] = minSemesters, params[1] = minR2 (used twice in SQL).
+      // params[2..] = optional filters pushed conditionally: [semesterId?, programCode?, deptCodes?].
+      // Expansion duplicates minR2 for the two R2 comparisons, then appends the rest.
       const sqlParams = [params[0], params[1], params[1], ...params.slice(2)];
       const rows = await this.em.execute(sql, sqlParams);
 
@@ -287,6 +335,12 @@ export class AnalyticsService {
         params.push(pgArray(deptCodes));
       }
 
+      let programFilter = '';
+      if (programCode) {
+        programFilter = ` AND program_code_snapshot = ?`;
+        params.push(programCode);
+      }
+
       const sql = `
         SELECT faculty_id, faculty_name_snapshot AS faculty_name,
                department_code_snapshot AS department_code,
@@ -295,7 +349,7 @@ export class AnalyticsService {
         FROM mv_faculty_semester_stats
         WHERE semester_id = ?
           AND analyzed_count >= ?
-          AND ABS((avg_normalized_score / 100.0) - (positive_count::float / analyzed_count)) > ?${deptFilter}
+          AND ABS((avg_normalized_score / 100.0) - (positive_count::float / analyzed_count)) > ?${deptFilter}${programFilter}
       `;
 
       const rows = await this.em.execute(sql, params);
@@ -333,6 +387,12 @@ export class AnalyticsService {
         params.push(pgArray(deptCodes));
       }
 
+      let programFilter = '';
+      if (programCode) {
+        programFilter = ` AND program_code_snapshot = ?`;
+        params.push(programCode);
+      }
+
       const sql = `
         SELECT faculty_id, faculty_name_snapshot AS faculty_name,
                department_code_snapshot AS department_code,
@@ -340,7 +400,7 @@ export class AnalyticsService {
         FROM mv_faculty_semester_stats
         WHERE semester_id = ?
           AND submission_count > 0
-          AND (analyzed_count::float / submission_count) < 0.5${deptFilter}
+          AND (analyzed_count::float / submission_count) < 0.5${deptFilter}${programFilter}
       `;
 
       const rows = await this.em.execute(sql, params);
@@ -996,6 +1056,17 @@ export class AnalyticsService {
     );
 
     return rows[0]?.value ?? null;
+  }
+
+  private async IsProgramCodeInScope(
+    semesterId: string,
+    programCode?: string,
+  ): Promise<boolean> {
+    if (!programCode) return true;
+    const allowedCodes =
+      await this.scopeResolver.ResolveProgramCodes(semesterId);
+    if (allowedCodes === null) return true;
+    return allowedCodes.includes(programCode);
   }
 
   private async ResolveDepartmentCodes(

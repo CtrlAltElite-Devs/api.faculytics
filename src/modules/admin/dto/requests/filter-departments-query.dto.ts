@@ -6,4 +6,9 @@ export class FilterDepartmentsQueryDto {
   @IsUUID()
   @IsOptional()
   campusId?: string;
+
+  @ApiPropertyOptional({ description: 'Filter departments by semester UUID' })
+  @IsUUID()
+  @IsOptional()
+  semesterId?: string;
 }

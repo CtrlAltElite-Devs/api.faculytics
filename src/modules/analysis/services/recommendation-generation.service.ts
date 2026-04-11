@@ -24,6 +24,7 @@ import {
 
 interface TopicData {
   topic: Topic;
+  scopedCommentCount: number;
   sentimentBreakdown: { positive: number; neutral: number; negative: number };
   sampleQuotes: string[];
 }
@@ -96,7 +97,10 @@ export class RecommendationGenerationService {
     const topicIds = topics.map((t) => t.id);
     const allAssignments =
       topicIds.length > 0
-        ? await fork.find(TopicAssignment, { topic: { $in: topicIds } })
+        ? await fork.find(TopicAssignment, {
+            topic: { $in: topicIds },
+            submission: { $in: submissionIds },
+          })
         : [];
 
     // Build a Set for sentiment result lookups
@@ -157,6 +161,7 @@ export class RecommendationGenerationService {
       const label = topic.label ?? topic.rawLabel;
       topicDataMap.set(label, {
         topic,
+        scopedCommentCount: assignments.length,
         sentimentBreakdown: breakdown,
         sampleQuotes,
       });
@@ -213,7 +218,7 @@ export class RecommendationGenerationService {
         const sentiment = data
           ? `positive=${data.sentimentBreakdown.positive}, neutral=${data.sentimentBreakdown.neutral}, negative=${data.sentimentBreakdown.negative}`
           : 'N/A';
-        return `- "${label}" (keywords: [${t.keywords.join(', ')}], comments: ${t.docCount}, sentiment: ${sentiment})`;
+        return `- "${label}" (keywords: [${t.keywords.join(', ')}], comments: ${data!.scopedCommentCount}, sentiment: ${sentiment})`;
       })
       .join('\n');
 
@@ -303,7 +308,7 @@ ${commentsDesc || 'No sample comments available.'}
             const topicSource: TopicSource = {
               type: 'topic',
               topicLabel: rec.topicReference,
-              commentCount: topicData.topic.docCount,
+              commentCount: topicData.scopedCommentCount,
               sentimentBreakdown: topicData.sentimentBreakdown,
               sampleQuotes: topicData.sampleQuotes,
             };
@@ -357,7 +362,7 @@ ${commentsDesc || 'No sample comments available.'}
 
     if (rec.topicReference && topicDataMap.has(rec.topicReference)) {
       const topicData = topicDataMap.get(rec.topicReference)!;
-      commentCount = topicData.topic.docCount;
+      commentCount = topicData.scopedCommentCount;
       sentimentBreakdown = topicData.sentimentBreakdown;
     } else {
       // Fallback to pipeline-level data

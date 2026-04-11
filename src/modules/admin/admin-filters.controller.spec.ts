@@ -9,6 +9,7 @@ describe('AdminFiltersController', () => {
   let controller: AdminFiltersController;
   let filtersService: {
     GetCampuses: jest.Mock;
+    GetSemesters: jest.Mock;
     GetDepartments: jest.Mock;
     GetPrograms: jest.Mock;
     GetRoles: jest.Mock;
@@ -17,6 +18,7 @@ describe('AdminFiltersController', () => {
   beforeEach(async () => {
     filtersService = {
       GetCampuses: jest.fn().mockResolvedValue([]),
+      GetSemesters: jest.fn().mockResolvedValue([]),
       GetDepartments: jest.fn().mockResolvedValue([]),
       GetPrograms: jest.fn().mockResolvedValue([]),
       GetRoles: jest.fn().mockReturnValue(Object.values(UserRole)),
@@ -59,24 +61,47 @@ describe('AdminFiltersController', () => {
 
     const result = await controller.GetDepartments({ campusId: 'c-1' });
 
-    expect(filtersService.GetDepartments).toHaveBeenCalledWith('c-1');
+    expect(filtersService.GetDepartments).toHaveBeenCalledWith(
+      'c-1',
+      undefined,
+    );
     expect(result).toEqual(departments);
   });
 
   it('should pass undefined campusId when not provided', async () => {
     await controller.GetDepartments({});
 
-    expect(filtersService.GetDepartments).toHaveBeenCalledWith(undefined);
+    expect(filtersService.GetDepartments).toHaveBeenCalledWith(
+      undefined,
+      undefined,
+    );
+  });
+
+  it('should pass semesterId to the filters service', async () => {
+    await controller.GetDepartments({ semesterId: 's-1' });
+
+    expect(filtersService.GetDepartments).toHaveBeenCalledWith(
+      undefined,
+      's-1',
+    );
   });
 
   it('should delegate program listing to the filters service', async () => {
-    const programs = [{ id: 'p-1', code: 'BSCS', name: 'Computer Science' }];
+    const programs = [
+      {
+        id: 'p-1',
+        code: 'BSCS',
+        name: 'Computer Science',
+        moodleCategoryId: 42,
+      },
+    ];
     filtersService.GetPrograms.mockResolvedValue(programs);
 
     const result = await controller.GetPrograms({ departmentId: 'd-1' });
 
     expect(filtersService.GetPrograms).toHaveBeenCalledWith('d-1');
     expect(result).toEqual(programs);
+    expect(result[0].moodleCategoryId).toBe(42);
   });
 
   it('should pass undefined departmentId when not provided', async () => {

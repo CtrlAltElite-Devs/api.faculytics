@@ -9,10 +9,17 @@ import { Program } from 'src/entities/program.entity';
 import { Semester } from 'src/entities/semester.entity';
 import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
 import { User } from 'src/entities/user.entity';
+import { QuestionnaireType } from 'src/entities/questionnaire-type.entity';
+import { QuestionnaireVersion } from 'src/entities/questionnaire-version.entity';
+import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
+import { QuestionnaireModule } from 'src/modules/questionnaires/questionnaires.module';
 import { AdminController } from './admin.controller';
 import { AdminFiltersController } from './admin-filters.controller';
+import { AdminGenerateController } from './admin-generate.controller';
 import { AdminService } from './services/admin.service';
 import { AdminFiltersService } from './services/admin-filters.service';
+import { AdminGenerateService } from './services/admin-generate.service';
+import { CommentGeneratorService } from './services/comment-generator.service';
 
 @Module({
   imports: [
@@ -26,9 +33,22 @@ import { AdminFiltersService } from './services/admin-filters.service';
       Semester,
       UserInstitutionalRole,
       User,
+      QuestionnaireType,
+      QuestionnaireVersion,
+      QuestionnaireSubmission,
     ]),
+    QuestionnaireModule,
   ],
-  controllers: [AdminController, AdminFiltersController],
-  providers: [AdminService, AdminFiltersService],
+  controllers: [
+    AdminController,
+    AdminFiltersController,
+    AdminGenerateController,
+  ],
+  providers: [
+    AdminService,
+    AdminFiltersService,
+    AdminGenerateService,
+    CommentGeneratorService,
+  ],
 })
 export class AdminModule {}

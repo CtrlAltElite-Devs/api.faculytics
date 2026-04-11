@@ -17,6 +17,7 @@ import { FilterOptionResponseDto } from './dto/responses/filter-option.response.
 import { FilterFacultyResponseDto } from './dto/responses/filter-faculty.response.dto';
 import { FilterCourseResponseDto } from './dto/responses/filter-course.response.dto';
 import { FilterVersionResponseDto } from './dto/responses/filter-version.response.dto';
+import { ProgramFilterOptionResponseDto } from './dto/responses/program-filter-option.response.dto';
 import { SemesterFilterResponseDto } from './dto/responses/semester-filter.response.dto';
 
 @ApiTags('Admin')
@@ -72,10 +73,10 @@ export class AdminFiltersController {
     type: String,
     description: 'Filter by department UUID',
   })
-  @ApiResponse({ status: 200, type: [FilterOptionResponseDto] })
+  @ApiResponse({ status: 200, type: [ProgramFilterOptionResponseDto] })
   async GetPrograms(
     @Query() query: FilterProgramsQueryDto,
-  ): Promise<FilterOptionResponseDto[]> {
+  ): Promise<ProgramFilterOptionResponseDto[]> {
     return this.filtersService.GetPrograms(query.departmentId);
   }
 

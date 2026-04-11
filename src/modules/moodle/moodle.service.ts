@@ -9,12 +9,28 @@ import { GetCourseUserProfilesRequest } from './dto/requests/get-course-user-pro
 import { GetMoodleCoursesRequest } from './dto/requests/get-courses-request.dto';
 import { GetCourseCategoriesRequest } from './dto/requests/get-course-categories.request.dto';
 import { GetCoursesByFieldRequest } from './dto/requests/get-courses-by-field-request.dto';
-import { MoodleEnrolledUser } from './lib/moodle.types';
+import {
+  MoodleEnrolledUser,
+  MoodleCreateCourseInput,
+  MoodleCreateCourseResult,
+  MoodleCreateCategoryInput,
+  MoodleCreateCategoryResult,
+  MoodleCreateUserInput,
+  MoodleCreateUserResult,
+  MoodleEnrolmentInput,
+  MoodleEnrolResult,
+} from './lib/moodle.types';
 
 @Injectable()
 export class MoodleService {
   private BuildMoodleClient() {
     return new MoodleClient(env.MOODLE_BASE_URL);
+  }
+
+  private BuildMasterClient(): MoodleClient {
+    const client = this.BuildMoodleClient();
+    client.setToken(env.MOODLE_MASTER_KEY);
+    return client;
   }
 
   async Login(dto: LoginMoodleRequest) {
@@ -104,5 +120,42 @@ export class MoodleService {
   ExtractRole(user?: MoodleEnrolledUser): string {
     if (!user || !user.roles?.length) return 'student';
     return user.roles[0].shortname;
+  }
+
+  async CreateCourses(
+    courses: MoodleCreateCourseInput[],
+  ): Promise<MoodleCreateCourseResult[]> {
+    const client = this.BuildMasterClient();
+    return await client.createCourses(courses);
+  }
+
+  async CreateCategories(
+    categories: MoodleCreateCategoryInput[],
+  ): Promise<MoodleCreateCategoryResult[]> {
+    const client = this.BuildMasterClient();
+    return await client.createCategories(categories);
+  }
+
+  async CreateUsers(
+    users: MoodleCreateUserInput[],
+  ): Promise<MoodleCreateUserResult[]> {
+    const client = this.BuildMasterClient();
+    return await client.createUsers(users);
+  }
+
+  async EnrolUsers(
+    enrolments: MoodleEnrolmentInput[],
+  ): Promise<MoodleEnrolResult | null> {
+    const client = this.BuildMasterClient();
+    return await client.enrolUsers(enrolments);
+  }
+
+  async GetCategoriesWithMasterKey() {
+    const client = this.BuildMasterClient();
+    return await client.getCategories();
+  }
+
+  async GetCoursesByFieldWithMasterKey(field: string, value: string) {
+    return this.BuildMasterClient().getCoursesByField(field, value);
   }
 }

@@ -35,6 +35,8 @@ import { MoodleProvisioningService } from '../services/moodle-provisioning.servi
 import { ProvisionCategoriesRequestDto } from '../dto/requests/provision-categories.request.dto';
 import { SeedCoursesContextDto } from '../dto/requests/seed-courses.request.dto';
 import { ExecuteCoursesRequestDto } from '../dto/requests/execute-courses.request.dto';
+import { BulkCoursePreviewRequestDto } from '../dto/requests/bulk-course-preview.request.dto';
+import { BulkCourseExecuteRequestDto } from '../dto/requests/bulk-course-execute.request.dto';
 import { QuickCourseRequestDto } from '../dto/requests/quick-course.request.dto';
 import { SeedUsersRequestDto } from '../dto/requests/seed-users.request.dto';
 import { ProvisionResultDto } from '../dto/responses/provision-result.response.dto';
@@ -190,6 +192,46 @@ export class MoodleProvisioningController {
       dto.rows,
       context,
     );
+  }
+
+  @Post('courses/bulk/preview')
+  @HttpCode(HttpStatus.OK)
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Preview bulk course creation from JSON input' })
+  @ApiResponse({ status: 200, type: CoursePreviewResultDto })
+  async PreviewBulkCourses(
+    @Body() dto: BulkCoursePreviewRequestDto,
+  ): Promise<CoursePreviewResultDto> {
+    return await this.provisioningService.PreviewBulkCourses(dto);
+  }
+
+  @Post('courses/bulk/execute')
+  @HttpCode(HttpStatus.OK)
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @Audited({
+    action: AuditAction.MOODLE_BULK_PROVISION_COURSES,
+    resource: 'MoodleCourse',
+  })
+  @UseInterceptors(
+    MetaDataInterceptor,
+    CurrentUserInterceptor,
+    AuditInterceptor,
+  )
+  @ApiOperation({ summary: 'Execute bulk course creation in Moodle' })
+  @ApiResponse({ status: 200, type: ProvisionResultDto })
+  async ExecuteBulkCourses(
+    @Body() dto: BulkCourseExecuteRequestDto,
+  ): Promise<ProvisionResultDto> {
+    try {
+      return await this.provisioningService.ExecuteBulkCourses(dto);
+    } catch (e) {
+      if (e instanceof MoodleConnectivityError) {
+        throw new BadGatewayException('Moodle is unreachable');
+      }
+      throw e;
+    }
   }
 
   @Post('courses/quick/preview')

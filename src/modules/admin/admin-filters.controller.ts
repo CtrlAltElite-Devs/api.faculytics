@@ -17,6 +17,7 @@ import { FilterOptionResponseDto } from './dto/responses/filter-option.response.
 import { FilterFacultyResponseDto } from './dto/responses/filter-faculty.response.dto';
 import { FilterCourseResponseDto } from './dto/responses/filter-course.response.dto';
 import { FilterVersionResponseDto } from './dto/responses/filter-version.response.dto';
+import { SemesterFilterResponseDto } from './dto/responses/semester-filter.response.dto';
 
 @ApiTags('Admin')
 @Controller('admin/filters')
@@ -32,6 +33,16 @@ export class AdminFiltersController {
     return this.filtersService.GetCampuses();
   }
 
+  @Get('semesters')
+  @ApiOperation({
+    summary:
+      'List all semesters with computed date ranges for filter dropdowns',
+  })
+  @ApiResponse({ status: 200, type: [SemesterFilterResponseDto] })
+  async GetSemesters(): Promise<SemesterFilterResponseDto[]> {
+    return this.filtersService.GetSemesters();
+  }
+
   @Get('departments')
   @ApiOperation({ summary: 'List departments for filter dropdowns' })
   @ApiQuery({
@@ -40,11 +51,17 @@ export class AdminFiltersController {
     type: String,
     description: 'Filter by campus UUID',
   })
+  @ApiQuery({
+    name: 'semesterId',
+    required: false,
+    type: String,
+    description: 'Filter by semester UUID',
+  })
   @ApiResponse({ status: 200, type: [FilterOptionResponseDto] })
   async GetDepartments(
     @Query() query: FilterDepartmentsQueryDto,
   ): Promise<FilterOptionResponseDto[]> {
-    return this.filtersService.GetDepartments(query.campusId);
+    return this.filtersService.GetDepartments(query.campusId, query.semesterId);
   }
 
   @Get('programs')

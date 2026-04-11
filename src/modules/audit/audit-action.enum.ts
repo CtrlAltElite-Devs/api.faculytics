@@ -15,6 +15,7 @@ export const AuditAction = {
   MOODLE_PROVISION_COURSES: 'moodle.provision.courses',
   MOODLE_PROVISION_QUICK_COURSE: 'moodle.provision.quick-course',
   MOODLE_PROVISION_USERS: 'moodle.provision.users',
+  MOODLE_BULK_PROVISION_COURSES: 'moodle.provision.bulk-courses',
 } as const;
 
 export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction];

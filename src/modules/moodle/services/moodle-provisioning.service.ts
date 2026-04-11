@@ -34,6 +34,8 @@ import {
   CoursePreviewRow,
   SeedUserRecord,
 } from '../lib/provisioning.types';
+import { BulkCoursePreviewRequestDto } from '../dto/requests/bulk-course-preview.request.dto';
+import { BulkCourseExecuteRequestDto } from '../dto/requests/bulk-course-execute.request.dto';
 
 @Injectable()
 export class MoodleProvisioningService {
@@ -708,6 +710,198 @@ export class MoodleProvisioningService {
       };
     } finally {
       this.releaseGuard('users');
+    }
+  }
+
+  async PreviewBulkCourses(
+    dto: BulkCoursePreviewRequestDto,
+  ): Promise<CoursePreviewResult> {
+    const program = await this.em.findOne(Program, dto.programId, {
+      populate: ['department.semester.campus'],
+    });
+
+    if (!program) {
+      throw new BadRequestException('Program not found');
+    }
+
+    if (program.department.id !== dto.departmentId) {
+      throw new BadRequestException(
+        'Program does not belong to the specified department',
+      );
+    }
+
+    if (program.department.semester.id !== dto.semesterId) {
+      throw new BadRequestException(
+        'Program does not belong to the specified semester',
+      );
+    }
+
+    const campusCode = program.department.semester.campus.code;
+    const semesterCode = program.department.semester.code;
+    const deptCode = program.department.code;
+    const programCode = program.code;
+
+    const match = semesterCode.match(/^S([12])(\d{2})(\d{2})$/);
+    if (!match) {
+      throw new BadRequestException(
+        `Invalid semester code format: ${semesterCode}`,
+      );
+    }
+
+    if (!program.moodleCategoryId) {
+      throw new BadRequestException(
+        `Category not provisioned for program ${programCode}. Provision categories first.`,
+      );
+    }
+
+    // Check for duplicate course codes within the batch
+    const codes = dto.courses.map((c) => c.courseCode.trim().toUpperCase());
+    const seen = new Set<string>();
+    const dupes: string[] = [];
+    for (const code of codes) {
+      if (seen.has(code)) dupes.push(code);
+      seen.add(code);
+    }
+    if (dupes.length > 0) {
+      throw new BadRequestException(
+        `Duplicate course codes: ${[...new Set(dupes)].join(', ')}`,
+      );
+    }
+
+    const semesterDigit = Number(match[1]);
+    const { startYY, endYY } = this.transformService.ComputeSchoolYears(
+      semesterDigit,
+      dto.startDate,
+      dto.endDate,
+    );
+
+    const valid: CoursePreviewRow[] = dto.courses.map((course) => ({
+      shortname: this.transformService.GenerateShortname(
+        campusCode,
+        String(semesterDigit),
+        startYY,
+        endYY,
+        course.courseCode,
+      ),
+      fullname: course.descriptiveTitle,
+      categoryPath: this.transformService.BuildCategoryPath(
+        campusCode,
+        String(semesterDigit),
+        deptCode,
+        programCode,
+        startYY,
+        endYY,
+      ),
+      categoryId: program.moodleCategoryId,
+      startDate: dto.startDate,
+      endDate: dto.endDate,
+      program: programCode,
+      semester: String(semesterDigit),
+      courseCode: course.courseCode,
+    }));
+
+    return {
+      valid,
+      skipped: [],
+      errors: [],
+      shortnameNote:
+        'EDP codes are examples. Final codes are generated at execution time.',
+    };
+  }
+
+  async ExecuteBulkCourses(
+    dto: BulkCourseExecuteRequestDto,
+  ): Promise<ProvisionResult> {
+    // Validate before acquiring guard (F1, F3)
+    const program = await this.em.findOne(Program, dto.programId, {
+      populate: ['department.semester.campus'],
+    });
+
+    if (!program) {
+      throw new BadRequestException('Program not found');
+    }
+
+    if (program.department.id !== dto.departmentId) {
+      throw new BadRequestException(
+        'Program does not belong to the specified department',
+      );
+    }
+
+    if (program.department.semester.id !== dto.semesterId) {
+      throw new BadRequestException(
+        'Program does not belong to the specified semester',
+      );
+    }
+
+    const campusCode = program.department.semester.campus.code;
+    const semesterCode = program.department.semester.code;
+
+    const match = semesterCode.match(/^S([12])(\d{2})(\d{2})$/);
+    if (!match) {
+      throw new BadRequestException(
+        `Invalid semester code format: ${semesterCode}`,
+      );
+    }
+
+    const semesterDigit = Number(match[1]);
+    const { startYY, endYY } = this.transformService.ComputeSchoolYears(
+      semesterDigit,
+      dto.startDate,
+      dto.endDate,
+    );
+
+    // Acquire guard only after all validation passes
+    this.acquireGuard('courses');
+    const start = Date.now();
+    const details: ProvisionDetailItem[] = [];
+
+    try {
+      const courseInputs = dto.courses.map((course) => ({
+        shortname: this.transformService.GenerateShortname(
+          campusCode,
+          String(semesterDigit),
+          startYY,
+          endYY,
+          course.courseCode,
+        ),
+        fullname: course.descriptiveTitle,
+        categoryid: program.moodleCategoryId,
+        startdate: Math.floor(new Date(dto.startDate).getTime() / 1000),
+        enddate: Math.floor(new Date(dto.endDate).getTime() / 1000),
+      }));
+
+      for (
+        let i = 0;
+        i < courseInputs.length;
+        i += MOODLE_PROVISION_BATCH_SIZE
+      ) {
+        const batch = courseInputs.slice(i, i + MOODLE_PROVISION_BATCH_SIZE);
+        try {
+          const results = await this.moodleService.CreateCourses(batch);
+          for (const r of results) {
+            details.push({
+              name: r.shortname,
+              status: 'created',
+              moodleId: r.id,
+            });
+          }
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          for (const item of batch) {
+            details.push({ name: item.shortname, status: 'error', reason });
+          }
+        }
+      }
+
+      return {
+        created: details.filter((d) => d.status === 'created').length,
+        skipped: 0,
+        errors: details.filter((d) => d.status === 'error').length,
+        details,
+        durationMs: Date.now() - start,
+      };
+    } finally {
+      this.releaseGuard('courses');
     }
   }
 

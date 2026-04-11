@@ -156,6 +156,44 @@ describe('MoodleCourseTransformService', () => {
     });
   });
 
+  describe('ComputeSchoolYears', () => {
+    it('should fix sem 2 only with same-year dates (the reported bug)', () => {
+      const result = service.ComputeSchoolYears(2, '2026-01-20', '2026-06-01');
+      expect(result).toEqual({ startYY: '25', endYY: '26' });
+    });
+
+    it('should fix sem 1 only with same-year dates', () => {
+      const result = service.ComputeSchoolYears(1, '2025-08-01', '2025-12-18');
+      expect(result).toEqual({ startYY: '25', endYY: '26' });
+    });
+
+    it('should handle both semesters (dates span years) for sem 1', () => {
+      const result = service.ComputeSchoolYears(1, '2025-08-01', '2026-06-01');
+      expect(result).toEqual({ startYY: '25', endYY: '26' });
+    });
+
+    it('should handle both semesters (dates span years) for sem 2', () => {
+      const result = service.ComputeSchoolYears(2, '2025-08-01', '2026-06-01');
+      expect(result).toEqual({ startYY: '25', endYY: '26' });
+    });
+
+    it('should handle next school year sem 1 with same-year dates', () => {
+      const result = service.ComputeSchoolYears(1, '2026-08-01', '2026-12-18');
+      expect(result).toEqual({ startYY: '26', endYY: '27' });
+    });
+
+    it('should handle next school year sem 2 with same-year dates', () => {
+      const result = service.ComputeSchoolYears(2, '2027-01-20', '2027-06-01');
+      expect(result).toEqual({ startYY: '26', endYY: '27' });
+    });
+
+    it('should throw for invalid semester number', () => {
+      expect(() =>
+        service.ComputeSchoolYears(3, '2025-08-01', '2025-12-18'),
+      ).toThrow('Invalid semester: 3. Must be 1 or 2.');
+    });
+  });
+
   describe('ComputePreview', () => {
     it('should combine all transformations for a valid row', () => {
       const result = service.ComputePreview(

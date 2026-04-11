@@ -14,3 +14,58 @@ export {
   MoodleCourseGroup,
   MoodleCourseUserGroupsResponse,
 } from '../dto/responses/course-groups.response.dto';
+
+// Write operation types
+export interface MoodleCreateCourseInput {
+  shortname: string;
+  fullname: string;
+  categoryid: number;
+  startdate?: number;
+  enddate?: number;
+  visible?: number;
+}
+
+export interface MoodleCreateCourseResult {
+  id: number;
+  shortname: string;
+}
+
+export interface MoodleCreateCategoryInput {
+  name: string;
+  parent?: number;
+  description?: string;
+  idnumber?: string;
+}
+
+export interface MoodleCreateCategoryResult {
+  id: number;
+  name: string;
+}
+
+export interface MoodleCreateUserInput {
+  username: string;
+  password: string;
+  firstname: string;
+  lastname: string;
+  email: string;
+}
+
+export interface MoodleCreateUserResult {
+  id: number;
+  username: string;
+}
+
+export interface MoodleEnrolmentInput {
+  userid: number;
+  courseid: number;
+  roleid: number;
+}
+
+export interface MoodleEnrolResult {
+  warnings?: Array<{
+    item: string;
+    itemid: number;
+    warningcode: string;
+    message: string;
+  }>;
+}

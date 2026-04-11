@@ -87,13 +87,21 @@ describe('AdminFiltersController', () => {
   });
 
   it('should delegate program listing to the filters service', async () => {
-    const programs = [{ id: 'p-1', code: 'BSCS', name: 'Computer Science' }];
+    const programs = [
+      {
+        id: 'p-1',
+        code: 'BSCS',
+        name: 'Computer Science',
+        moodleCategoryId: 42,
+      },
+    ];
     filtersService.GetPrograms.mockResolvedValue(programs);
 
     const result = await controller.GetPrograms({ departmentId: 'd-1' });
 
     expect(filtersService.GetPrograms).toHaveBeenCalledWith('d-1');
     expect(result).toEqual(programs);
+    expect(result[0].moodleCategoryId).toBe(42);
   });
 
   it('should pass undefined departmentId when not provided', async () => {

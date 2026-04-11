@@ -15,6 +15,7 @@ import { FilterOptionResponseDto } from '../dto/responses/filter-option.response
 import { FilterFacultyResponseDto } from '../dto/responses/filter-faculty.response.dto';
 import { FilterCourseResponseDto } from '../dto/responses/filter-course.response.dto';
 import { FilterVersionResponseDto } from '../dto/responses/filter-version.response.dto';
+import { ProgramFilterOptionResponseDto } from '../dto/responses/program-filter-option.response.dto';
 import { SemesterFilterResponseDto } from '../dto/responses/semester-filter.response.dto';
 
 @Injectable()
@@ -94,7 +95,9 @@ export class AdminFiltersService {
     return departments.map((d) => FilterOptionResponseDto.Map(d));
   }
 
-  async GetPrograms(departmentId?: string): Promise<FilterOptionResponseDto[]> {
+  async GetPrograms(
+    departmentId?: string,
+  ): Promise<ProgramFilterOptionResponseDto[]> {
     const filter: FilterQuery<Program> = {};
     if (departmentId) {
       filter.department = departmentId;
@@ -102,7 +105,7 @@ export class AdminFiltersService {
     const programs = await this.em.find(Program, filter, {
       orderBy: { code: 'ASC' },
     });
-    return programs.map((p) => FilterOptionResponseDto.Map(p));
+    return programs.map((p) => ProgramFilterOptionResponseDto.MapProgram(p));
   }
 
   GetRoles(): UserRole[] {

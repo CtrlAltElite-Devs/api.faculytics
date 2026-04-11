@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { QueueName } from 'src/configurations/common/queue-names';
 import { AuditLog } from 'src/entities/audit-log.entity';
+import { User } from 'src/entities/user.entity';
 import { AppClsModule } from '../common/cls/cls.module';
 import { AuditService } from './audit.service';
 import { AuditProcessor } from './audit.processor';
@@ -14,7 +15,7 @@ import { AuditController } from './audit.controller';
 @Module({
   imports: [
     BullModule.registerQueue({ name: QueueName.AUDIT }),
-    MikroOrmModule.forFeature([AuditLog]),
+    MikroOrmModule.forFeature([AuditLog, User]),
     AppClsModule,
   ],
   controllers: [AuditController],

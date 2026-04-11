@@ -810,4 +810,219 @@ describe('MoodleProvisioningService', () => {
       await first;
     });
   });
+
+  describe('PreviewBulkCourses', () => {
+    const mockProgram = {
+      id: 'prog-1',
+      code: 'BSIT',
+      moodleCategoryId: 42,
+      department: {
+        id: 'dept-1',
+        code: 'CCS',
+        semester: {
+          id: 'sem-1',
+          code: 'S12526',
+          campus: { id: 'campus-1', code: 'UCMN' },
+        },
+      },
+    };
+
+    const baseDto = {
+      semesterId: 'sem-1',
+      departmentId: 'dept-1',
+      programId: 'prog-1',
+      startDate: '2025-08-01',
+      endDate: '2025-12-18',
+      courses: [
+        { courseCode: 'CS101', descriptiveTitle: 'Intro to CS' },
+        { courseCode: 'CS102', descriptiveTitle: 'Data Structures' },
+      ],
+    };
+
+    it('should generate preview rows with correct shortnames and categoryPath', async () => {
+      em.findOne.mockResolvedValue(mockProgram);
+
+      const result = await service.PreviewBulkCourses(baseDto);
+
+      expect(result.valid).toHaveLength(2);
+      expect(result.skipped).toEqual([]);
+      expect(result.errors).toEqual([]);
+      expect(result.valid[0].fullname).toBe('Intro to CS');
+      expect(result.valid[0].categoryId).toBe(42);
+      expect(result.valid[0].categoryPath).toContain('UCMN');
+      expect(result.valid[0].categoryPath).toContain('CCS');
+      expect(result.valid[0].categoryPath).toContain('BSIT');
+      expect(result.valid[0].shortname).toContain('UCMN');
+      expect(result.valid[0].courseCode).toBe('CS101');
+    });
+
+    it('should throw BadRequestException when program not found', async () => {
+      em.findOne.mockResolvedValue(null);
+
+      await expect(service.PreviewBulkCourses(baseDto)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should throw BadRequestException for mismatched departmentId', async () => {
+      em.findOne.mockResolvedValue(mockProgram);
+
+      await expect(
+        service.PreviewBulkCourses({ ...baseDto, departmentId: 'wrong-dept' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException for mismatched semesterId', async () => {
+      em.findOne.mockResolvedValue(mockProgram);
+
+      await expect(
+        service.PreviewBulkCourses({ ...baseDto, semesterId: 'wrong-sem' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException for malformed semester code', async () => {
+      const badProgram = {
+        ...mockProgram,
+        department: {
+          ...mockProgram.department,
+          semester: {
+            ...mockProgram.department.semester,
+            code: 'INVALID',
+          },
+        },
+      };
+      em.findOne.mockResolvedValue(badProgram);
+
+      await expect(service.PreviewBulkCourses(baseDto)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should throw BadRequestException for unprovisioned category', async () => {
+      em.findOne.mockResolvedValue({ ...mockProgram, moodleCategoryId: 0 });
+
+      await expect(service.PreviewBulkCourses(baseDto)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should throw BadRequestException for duplicate course codes', async () => {
+      em.findOne.mockResolvedValue(mockProgram);
+
+      await expect(
+        service.PreviewBulkCourses({
+          ...baseDto,
+          courses: [
+            { courseCode: 'CS101', descriptiveTitle: 'A' },
+            { courseCode: 'CS101', descriptiveTitle: 'B' },
+          ],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('ExecuteBulkCourses', () => {
+    const mockProgram = {
+      id: 'prog-1',
+      code: 'BSIT',
+      moodleCategoryId: 42,
+      department: {
+        id: 'dept-1',
+        code: 'CCS',
+        semester: {
+          id: 'sem-1',
+          code: 'S12526',
+          campus: { id: 'campus-1', code: 'UCMN' },
+        },
+      },
+    };
+
+    const baseDto = {
+      semesterId: 'sem-1',
+      departmentId: 'dept-1',
+      programId: 'prog-1',
+      startDate: '2025-08-01',
+      endDate: '2025-12-18',
+      courses: [
+        {
+          courseCode: 'CS101',
+          descriptiveTitle: 'Intro to CS',
+          categoryId: 42,
+        },
+      ],
+    };
+
+    it('should create courses and return result', async () => {
+      em.findOne.mockResolvedValue(mockProgram);
+      moodleService.CreateCourses.mockResolvedValue([
+        { id: 1001, shortname: 'UCMN-S12526-CS101-00001' },
+      ]);
+
+      const result = await service.ExecuteBulkCourses(baseDto);
+
+      expect(result.created).toBe(1);
+      expect(result.errors).toBe(0);
+      expect(result.details[0].status).toBe('created');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(moodleService.CreateCourses).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            categoryid: 42,
+            fullname: 'Intro to CS',
+          }),
+        ]),
+      );
+    });
+
+    it('should throw BadRequestException when program not found', async () => {
+      em.findOne.mockResolvedValue(null);
+
+      await expect(service.ExecuteBulkCourses(baseDto)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should throw BadRequestException for mismatched hierarchy', async () => {
+      em.findOne.mockResolvedValue(mockProgram);
+
+      await expect(
+        service.ExecuteBulkCourses({ ...baseDto, departmentId: 'wrong' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should use program.moodleCategoryId, not client-supplied categoryId', async () => {
+      em.findOne.mockResolvedValue(mockProgram);
+      moodleService.CreateCourses.mockResolvedValue([
+        { id: 1001, shortname: 'test' },
+      ]);
+
+      await service.ExecuteBulkCourses({
+        ...baseDto,
+        courses: [
+          { courseCode: 'CS101', descriptiveTitle: 'A', categoryId: 999 },
+        ],
+      });
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(moodleService.CreateCourses).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({ categoryid: 42 })]),
+      );
+    });
+
+    it('should release guard after error', async () => {
+      em.findOne.mockResolvedValue(mockProgram);
+      moodleService.CreateCourses.mockRejectedValue(new Error('Moodle down'));
+
+      const result = await service.ExecuteBulkCourses(baseDto);
+
+      expect(result.errors).toBe(1);
+      // Guard should be released -- second call should not throw ConflictException
+      em.findOne.mockResolvedValue(mockProgram);
+      moodleService.CreateCourses.mockResolvedValue([
+        { id: 1, shortname: 'x' },
+      ]);
+      const result2 = await service.ExecuteBulkCourses(baseDto);
+      expect(result2.created).toBe(1);
+    });
+  });
 });

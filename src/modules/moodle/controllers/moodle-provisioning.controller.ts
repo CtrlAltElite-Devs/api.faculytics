@@ -1,17 +1,25 @@
 import {
+  BadGatewayException,
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
+  Logger,
+  Param,
+  ParseIntPipe,
   Post,
+  ServiceUnavailableException,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import {
+  ApiBearerAuth,
   ApiBody,
   ApiConsumes,
   ApiOperation,
+  ApiParam,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -33,6 +41,9 @@ import { ProvisionResultDto } from '../dto/responses/provision-result.response.d
 import { CoursePreviewResultDto } from '../dto/responses/course-preview.response.dto';
 import { CoursePreviewRowResponseDto } from '../dto/responses/course-preview.response.dto';
 import { SeedUsersResultDto } from '../dto/responses/seed-users-result.response.dto';
+import { MoodleConnectivityError } from '../lib/moodle.client';
+import { MoodleCategoryTreeResponseDto } from '../dto/responses/moodle-tree.response.dto';
+import { MoodleCategoryCoursesResponseDto } from '../dto/responses/moodle-course-preview.response.dto';
 import { SeedContext } from '../lib/provisioning.types';
 
 function csvFileFilter(
@@ -70,6 +81,8 @@ function buildSeedContext(dto: SeedCoursesContextDto): SeedContext {
 @ApiTags('Moodle Provisioning')
 @Controller('moodle/provision')
 export class MoodleProvisioningController {
+  private readonly logger = new Logger(MoodleProvisioningController.name);
+
   constructor(
     private readonly provisioningService: MoodleProvisioningService,
   ) {}
@@ -209,5 +222,55 @@ export class MoodleProvisioningController {
     @Body() dto: SeedUsersRequestDto,
   ): Promise<SeedUsersResultDto> {
     return await this.provisioningService.SeedUsers(dto);
+  }
+
+  @Get('tree')
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Fetch Moodle category tree (live)' })
+  @ApiResponse({ status: 200, type: MoodleCategoryTreeResponseDto })
+  async GetCategoryTree(): Promise<MoodleCategoryTreeResponseDto> {
+    try {
+      return await this.provisioningService.GetCategoryTree();
+    } catch (e) {
+      if (e instanceof MoodleConnectivityError) {
+        throw new BadGatewayException('Moodle is unreachable');
+      }
+      this.logger.error(
+        'Failed to fetch category tree',
+        e instanceof Error ? e.stack : e,
+      );
+      throw new ServiceUnavailableException(
+        'Failed to fetch Moodle categories',
+      );
+    }
+  }
+
+  @Get('tree/:categoryId/courses')
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Fetch courses for a Moodle category (live)' })
+  @ApiResponse({ status: 200, type: MoodleCategoryCoursesResponseDto })
+  @ApiParam({ name: 'categoryId', type: Number })
+  async GetCategoryCourses(
+    @Param('categoryId', ParseIntPipe) categoryId: number,
+  ): Promise<MoodleCategoryCoursesResponseDto> {
+    if (categoryId < 1) {
+      throw new BadRequestException('Category ID must be a positive integer');
+    }
+    try {
+      return await this.provisioningService.GetCoursesByCategoryWithMasterKey(
+        categoryId,
+      );
+    } catch (e) {
+      if (e instanceof MoodleConnectivityError) {
+        throw new BadGatewayException('Moodle is unreachable');
+      }
+      this.logger.error(
+        `Failed to fetch courses for category ${categoryId}`,
+        e instanceof Error ? e.stack : e,
+      );
+      throw new ServiceUnavailableException('Failed to fetch Moodle courses');
+    }
   }
 }

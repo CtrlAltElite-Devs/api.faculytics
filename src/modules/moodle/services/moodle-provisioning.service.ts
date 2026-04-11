@@ -10,6 +10,14 @@ import { MoodleCourseTransformService } from './moodle-course-transform.service'
 import { MoodleCsvParserService } from './moodle-csv-parser.service';
 import { MoodleCategorySyncService } from './moodle-category-sync.service';
 import { MoodleCategoryResponse } from '../lib/moodle.types';
+import {
+  MoodleCategoryTreeNodeDto,
+  MoodleCategoryTreeResponseDto,
+} from '../dto/responses/moodle-tree.response.dto';
+import {
+  MoodleCoursePreviewDto,
+  MoodleCategoryCoursesResponseDto,
+} from '../dto/responses/moodle-course-preview.response.dto';
 import { env } from 'src/configurations/env';
 import { Program } from 'src/entities/program.entity';
 import {
@@ -615,6 +623,80 @@ export class MoodleProvisioningService {
     } finally {
       this.releaseGuard('users');
     }
+  }
+
+  async GetCategoryTree(): Promise<MoodleCategoryTreeResponseDto> {
+    const flat = await this.moodleService.GetCategoriesWithMasterKey();
+
+    // Pass 1: create nodes + track sortorder
+    const nodeMap = new Map<number, MoodleCategoryTreeNodeDto>();
+    const sortorderMap = new Map<number, number>();
+    for (const cat of flat) {
+      const node: MoodleCategoryTreeNodeDto = {
+        id: cat.id,
+        name: cat.name,
+        depth: cat.depth,
+        coursecount: cat.coursecount,
+        visible: cat.visible,
+        children: [],
+      };
+      nodeMap.set(cat.id, node);
+      sortorderMap.set(cat.id, cat.sortorder);
+    }
+
+    // Pass 2: attach children
+    const rootNodes: MoodleCategoryTreeNodeDto[] = [];
+    for (const cat of flat) {
+      const node = nodeMap.get(cat.id)!;
+      if (cat.parent === 0) {
+        rootNodes.push(node);
+      } else {
+        const parent = nodeMap.get(cat.parent);
+        if (parent) {
+          parent.children.push(node);
+        }
+      }
+    }
+
+    // Pass 3: sort children by sortorder
+    const sortByOrder = (
+      a: MoodleCategoryTreeNodeDto,
+      b: MoodleCategoryTreeNodeDto,
+    ) => (sortorderMap.get(a.id) ?? 0) - (sortorderMap.get(b.id) ?? 0);
+
+    for (const node of nodeMap.values()) {
+      if (node.children.length > 1) {
+        node.children.sort(sortByOrder);
+      }
+    }
+    rootNodes.sort(sortByOrder);
+
+    return {
+      tree: rootNodes,
+      fetchedAt: new Date().toISOString(),
+      totalCategories: flat.length,
+    };
+  }
+
+  async GetCoursesByCategoryWithMasterKey(
+    categoryId: number,
+  ): Promise<MoodleCategoryCoursesResponseDto> {
+    const { courses } = await this.moodleService.GetCoursesByFieldWithMasterKey(
+      'category',
+      categoryId.toString(),
+    );
+
+    const mapped: MoodleCoursePreviewDto[] = courses.map((c) => ({
+      id: c.id,
+      shortname: c.shortname,
+      fullname: c.fullname,
+      enrolledusercount: c.enrolledusercount ?? undefined,
+      visible: c.visible,
+      startdate: c.startdate,
+      enddate: c.enddate,
+    }));
+
+    return { categoryId, courses: mapped };
   }
 
   private acquireGuard(opType: string) {

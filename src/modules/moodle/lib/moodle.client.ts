@@ -137,8 +137,12 @@ export class MoodleClient {
 
     const moodleError = data as { exception?: string; message?: string };
     if (moodleError.exception) {
+      const hint =
+        moodleError.exception === 'webservice_access_exception'
+          ? ' Ensure the wsfunction is added to your Moodle external service (Site admin > Server > External services).'
+          : '';
       throw new Error(
-        `Moodle API error (${moodleError.exception}): ${moodleError.message || 'Unknown error'}`,
+        `Moodle API error (${moodleError.exception}): ${moodleError.message || 'Unknown error'}${hint}`,
       );
     }
 

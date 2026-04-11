@@ -90,6 +90,7 @@ export class MoodleProvisioningController {
   @Post('categories')
   @HttpCode(HttpStatus.OK)
   @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
   @Audited({
     action: AuditAction.MOODLE_PROVISION_CATEGORIES,
     resource: 'MoodleCategory',
@@ -104,7 +105,25 @@ export class MoodleProvisioningController {
   async ProvisionCategories(
     @Body() dto: ProvisionCategoriesRequestDto,
   ): Promise<ProvisionResultDto> {
-    return await this.provisioningService.ProvisionCategories(dto);
+    return this.handleCategoryOperation(
+      () => this.provisioningService.ProvisionCategories(dto),
+      'provision',
+    );
+  }
+
+  @Post('categories/preview')
+  @HttpCode(HttpStatus.OK)
+  @UseJwtGuard(UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Preview Moodle category provisioning (dry run)' })
+  @ApiResponse({ status: 200, type: ProvisionResultDto })
+  async PreviewCategories(
+    @Body() dto: ProvisionCategoriesRequestDto,
+  ): Promise<ProvisionResultDto> {
+    return this.handleCategoryOperation(
+      () => this.provisioningService.PreviewCategories(dto),
+      'preview',
+    );
   }
 
   @Post('courses/preview')
@@ -271,6 +290,29 @@ export class MoodleProvisioningController {
         e instanceof Error ? e.stack : e,
       );
       throw new ServiceUnavailableException('Failed to fetch Moodle courses');
+    }
+  }
+
+  private async handleCategoryOperation(
+    operation: () => Promise<ProvisionResultDto>,
+    label: string,
+  ): Promise<ProvisionResultDto> {
+    try {
+      return await operation();
+    } catch (e) {
+      if (e instanceof MoodleConnectivityError) {
+        throw new BadGatewayException('Moodle is unreachable');
+      }
+      if (e instanceof Error && e.message.startsWith('Invalid semester')) {
+        throw new BadRequestException(e.message);
+      }
+      this.logger.error(
+        `Failed to ${label} categories`,
+        e instanceof Error ? e.stack : e,
+      );
+      throw new ServiceUnavailableException(
+        `Failed to ${label} Moodle categories`,
+      );
     }
   }
 }

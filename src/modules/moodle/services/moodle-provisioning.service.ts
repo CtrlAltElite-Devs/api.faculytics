@@ -62,9 +62,6 @@ export class MoodleProvisioningService {
         existingByParentAndName.set(`${cat.parent}:${cat.name}`, cat);
       }
 
-      const startYY = input.startDate.slice(2, 4);
-      const endYY = input.endDate.slice(2, 4);
-
       // Depth 1: Campuses
       const campusIds = new Map<string, number>();
       const missingCampuses = input.campuses.filter((c) => {
@@ -109,6 +106,11 @@ export class MoodleProvisioningService {
         const campusId = campusIds.get(campus.toUpperCase());
         if (!campusId) continue;
         for (const sem of input.semesters) {
+          const { startYY, endYY } = this.transformService.ComputeSchoolYears(
+            sem,
+            input.startDate,
+            input.endDate,
+          );
           const tag = this.transformService.BuildSemesterTag(
             String(sem),
             startYY,
@@ -162,6 +164,11 @@ export class MoodleProvisioningService {
       }[] = [];
       for (const campus of input.campuses) {
         for (const sem of input.semesters) {
+          const { startYY, endYY } = this.transformService.ComputeSchoolYears(
+            sem,
+            input.startDate,
+            input.endDate,
+          );
           const tag = this.transformService.BuildSemesterTag(
             String(sem),
             startYY,
@@ -215,6 +222,11 @@ export class MoodleProvisioningService {
       const missingProgs: { name: string; parent: number }[] = [];
       for (const campus of input.campuses) {
         for (const sem of input.semesters) {
+          const { startYY, endYY } = this.transformService.ComputeSchoolYears(
+            sem,
+            input.startDate,
+            input.endDate,
+          );
           const tag = this.transformService.BuildSemesterTag(
             String(sem),
             startYY,
@@ -285,6 +297,80 @@ export class MoodleProvisioningService {
     } finally {
       this.releaseGuard('categories');
     }
+  }
+
+  async PreviewCategories(
+    input: ProvisionCategoriesInput,
+  ): Promise<ProvisionResult> {
+    const start = Date.now();
+    const details: ProvisionDetailItem[] = [];
+
+    const existing = await this.moodleService.GetCategoriesWithMasterKey();
+    const byParentAndName = new Map<string, MoodleCategoryResponse>();
+    for (const cat of existing) {
+      byParentAndName.set(`${cat.parent}:${cat.name}`, cat);
+    }
+
+    for (const campus of input.campuses) {
+      const campusName = campus.toUpperCase();
+      const campusCat = byParentAndName.get(`0:${campusName}`);
+      const campusId = campusCat?.id;
+      details.push({
+        name: campusName,
+        status: campusCat ? 'skipped' : 'created',
+      });
+
+      for (const sem of input.semesters) {
+        const { startYY, endYY } = this.transformService.ComputeSchoolYears(
+          sem,
+          input.startDate,
+          input.endDate,
+        );
+        const tag = this.transformService.BuildSemesterTag(
+          String(sem),
+          startYY,
+          endYY,
+        );
+        const semCat = campusId
+          ? byParentAndName.get(`${campusId}:${tag}`)
+          : undefined;
+        const semId = semCat?.id;
+        details.push({ name: tag, status: semCat ? 'skipped' : 'created' });
+
+        for (const dept of input.departments) {
+          const deptName = dept.code.toUpperCase();
+          const deptCat = semId
+            ? byParentAndName.get(`${semId}:${deptName}`)
+            : undefined;
+          const deptId = deptCat?.id;
+          details.push({
+            name: deptName,
+            status: deptCat ? 'skipped' : 'created',
+          });
+
+          for (const prog of dept.programs) {
+            const progName = prog.toUpperCase();
+            const progCat = deptId
+              ? byParentAndName.get(`${deptId}:${progName}`)
+              : undefined;
+            details.push({
+              name: progName,
+              status: progCat ? 'skipped' : 'created',
+            });
+          }
+        }
+      }
+    }
+
+    const created = details.filter((d) => d.status === 'created').length;
+    const skipped = details.filter((d) => d.status === 'skipped').length;
+    return {
+      created,
+      skipped,
+      errors: 0,
+      details,
+      durationMs: Date.now() - start,
+    };
   }
 
   async PreviewCourses(

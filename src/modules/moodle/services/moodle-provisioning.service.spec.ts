@@ -96,6 +96,82 @@ describe('MoodleProvisioningService', () => {
       expect(skipped[0].name).toBe('UCMN');
     });
 
+    it('should produce correct tag S22526 for sem 2 with same-year dates', async () => {
+      moodleService.GetCategoriesWithMasterKey.mockResolvedValue([
+        {
+          id: 1,
+          name: 'UCMN',
+          parent: 0,
+          depth: 1,
+          path: '1',
+          coursecount: 0,
+          visible: 1,
+        },
+      ] as any);
+      moodleService.CreateCategories.mockResolvedValue([
+        { id: 10, name: 'S22526' },
+      ]);
+      categorySyncService.SyncAndRebuildHierarchy.mockResolvedValue({
+        status: 'success',
+        durationMs: 100,
+        fetched: 0,
+        inserted: 0,
+        updated: 0,
+        deactivated: 0,
+        errors: 0,
+      });
+
+      const result = await service.ProvisionCategories({
+        campuses: ['UCMN'],
+        semesters: [2],
+        startDate: '2026-01-20',
+        endDate: '2026-06-01',
+        departments: [],
+      });
+
+      const semDetail = result.details.find((d) => d.name.startsWith('S2'));
+      expect(semDetail).toBeDefined();
+      expect(semDetail!.name).toBe('S22526');
+    });
+
+    it('should produce correct tag S12526 for sem 1 with same-year dates', async () => {
+      moodleService.GetCategoriesWithMasterKey.mockResolvedValue([
+        {
+          id: 1,
+          name: 'UCMN',
+          parent: 0,
+          depth: 1,
+          path: '1',
+          coursecount: 0,
+          visible: 1,
+        },
+      ] as any);
+      moodleService.CreateCategories.mockResolvedValue([
+        { id: 10, name: 'S12526' },
+      ]);
+      categorySyncService.SyncAndRebuildHierarchy.mockResolvedValue({
+        status: 'success',
+        durationMs: 100,
+        fetched: 0,
+        inserted: 0,
+        updated: 0,
+        deactivated: 0,
+        errors: 0,
+      });
+
+      const result = await service.ProvisionCategories({
+        campuses: ['UCMN'],
+        semesters: [1],
+        startDate: '2025-08-01',
+        endDate: '2025-12-18',
+        departments: [],
+      });
+
+      const semDetail = result.details.find((d) => d.name.startsWith('S1'));
+      expect(semDetail).toBeDefined();
+      expect(semDetail!.name).toBe('S12526');
+    });
+
     it('should set syncCompleted to false when sync fails', async () => {
       moodleService.GetCategoriesWithMasterKey.mockResolvedValue([]);
       moodleService.CreateCategories.mockResolvedValue([
@@ -114,6 +190,161 @@ describe('MoodleProvisioningService', () => {
       });
 
       expect(result.syncCompleted).toBe(false);
+    });
+  });
+
+  describe('PreviewCategories', () => {
+    it('should mark all as skipped when full hierarchy exists', async () => {
+      moodleService.GetCategoriesWithMasterKey.mockResolvedValue([
+        {
+          id: 1,
+          name: 'UCMN',
+          parent: 0,
+          depth: 1,
+          coursecount: 0,
+          visible: 1,
+        },
+        {
+          id: 10,
+          name: 'S22526',
+          parent: 1,
+          depth: 2,
+          coursecount: 0,
+          visible: 1,
+        },
+        {
+          id: 20,
+          name: 'CCS',
+          parent: 10,
+          depth: 3,
+          coursecount: 0,
+          visible: 1,
+        },
+        {
+          id: 30,
+          name: 'BSCSAI',
+          parent: 20,
+          depth: 4,
+          coursecount: 0,
+          visible: 1,
+        },
+      ] as any);
+
+      const result = await service.PreviewCategories({
+        campuses: ['UCMN'],
+        semesters: [2],
+        startDate: '2025-08-01',
+        endDate: '2026-06-01',
+        departments: [{ code: 'CCS', programs: ['BSCSAI'] }],
+      });
+
+      expect(result.errors).toBe(0);
+      expect(result.skipped).toBe(4);
+      expect(result.created).toBe(0);
+      expect(result.details.every((d) => d.status === 'skipped')).toBe(true);
+    });
+
+    it('should mark leaf as created when only program is missing', async () => {
+      moodleService.GetCategoriesWithMasterKey.mockResolvedValue([
+        {
+          id: 1,
+          name: 'UCMN',
+          parent: 0,
+          depth: 1,
+          coursecount: 0,
+          visible: 1,
+        },
+        {
+          id: 10,
+          name: 'S22526',
+          parent: 1,
+          depth: 2,
+          coursecount: 0,
+          visible: 1,
+        },
+        {
+          id: 20,
+          name: 'CCS',
+          parent: 10,
+          depth: 3,
+          coursecount: 0,
+          visible: 1,
+        },
+      ] as any);
+
+      const result = await service.PreviewCategories({
+        campuses: ['UCMN'],
+        semesters: [2],
+        startDate: '2025-08-01',
+        endDate: '2026-06-01',
+        departments: [{ code: 'CCS', programs: ['BSCSAI'] }],
+      });
+
+      expect(result.skipped).toBe(3);
+      expect(result.created).toBe(1);
+      const createdItem = result.details.find((d) => d.status === 'created');
+      expect(createdItem!.name).toBe('BSCSAI');
+    });
+
+    it('should cascade created when parent is missing', async () => {
+      moodleService.GetCategoriesWithMasterKey.mockResolvedValue([
+        {
+          id: 1,
+          name: 'UCMN',
+          parent: 0,
+          depth: 1,
+          coursecount: 0,
+          visible: 1,
+        },
+      ] as any);
+
+      const result = await service.PreviewCategories({
+        campuses: ['UCMN'],
+        semesters: [2],
+        startDate: '2025-08-01',
+        endDate: '2026-06-01',
+        departments: [{ code: 'CCS', programs: ['BSCSAI'] }],
+      });
+
+      expect(result.skipped).toBe(1); // campus
+      expect(result.created).toBe(3); // semester, dept, program
+    });
+
+    it('should not call CreateCategories', async () => {
+      moodleService.GetCategoriesWithMasterKey.mockResolvedValue([]);
+
+      await service.PreviewCategories({
+        campuses: ['UCMN'],
+        semesters: [1],
+        startDate: '2025-08-01',
+        endDate: '2026-06-01',
+        departments: [],
+      });
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(moodleService.CreateCategories).not.toHaveBeenCalled();
+    });
+
+    it('should not block concurrent preview calls', async () => {
+      moodleService.GetCategoriesWithMasterKey.mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve([]), 50)),
+      );
+
+      const input = {
+        campuses: ['UCMN'],
+        semesters: [1],
+        startDate: '2025-08-01',
+        endDate: '2026-06-01',
+        departments: [],
+      };
+
+      const [a, b] = await Promise.all([
+        service.PreviewCategories(input),
+        service.PreviewCategories(input),
+      ]);
+
+      expect(a.errors).toBe(0);
+      expect(b.errors).toBe(0);
     });
   });
 

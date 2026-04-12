@@ -49,7 +49,7 @@ Append-only, immutable. Does **not** extend `CustomBaseEntity` (no `updatedAt`, 
 
 Queries must use `filters: { softDelete: false }` to bypass the global soft-delete filter.
 
-## MVP Actions
+## Action Codes
 
 ```typescript
 export const AuditAction = {
@@ -65,8 +65,15 @@ export const AuditAction = {
   ANALYSIS_PIPELINE_CREATE: 'analysis.pipeline.create',
   ANALYSIS_PIPELINE_CONFIRM: 'analysis.pipeline.confirm',
   ANALYSIS_PIPELINE_CANCEL: 'analysis.pipeline.cancel',
+  MOODLE_PROVISION_CATEGORIES: 'moodle.provision.categories',
+  MOODLE_PROVISION_COURSES: 'moodle.provision.courses',
+  MOODLE_PROVISION_QUICK_COURSE: 'moodle.provision.quick-course',
+  MOODLE_PROVISION_USERS: 'moodle.provision.users',
+  MOODLE_BULK_PROVISION_COURSES: 'moodle.provision.bulk-courses',
 } as const;
 ```
+
+The `moodle.provision.*` actions are emitted by the Moodle seeding toolkit — see [Moodle Provisioning](../moodle/provisioning.md).
 
 ## Interceptor Path Detail
 
@@ -115,3 +122,55 @@ Audit failures never break the request:
 1. `AuditService.Emit()` wraps `queue.add()` in try/catch — logs a warning, returns void.
 2. `AuditInterceptor` wraps the entire `tap` callback in try/catch — errors are logged, never propagated.
 3. The `.catch()` on the `Emit()` promise handles async rejections.
+
+## Query API
+
+`AuditController` exposes read-only query endpoints for operators. All routes require `SUPER_ADMIN` — any other role receives `403 Forbidden`.
+
+| Method | Path              | Description                                      |
+| ------ | ----------------- | ------------------------------------------------ |
+| GET    | `/audit-logs`     | Paginated, filterable list of audit records      |
+| GET    | `/audit-logs/:id` | Fetch a single record by UUID (`404` if missing) |
+
+### List Filters (`ListAuditLogsQueryDto`)
+
+| Field            | Match type                                                     | Notes                                              |
+| ---------------- | -------------------------------------------------------------- | -------------------------------------------------- |
+| `action`         | Exact                                                          | e.g., `auth.login.success`                         |
+| `actorId`        | Exact (UUID)                                                   |                                                    |
+| `actorUsername`  | Case-insensitive partial (`$ilike %value%`)                    | Trimmed; `%`, `_`, `\` are escaped before matching |
+| `resourceType`   | Exact                                                          | e.g., `User`, `AnalysisPipeline`                   |
+| `resourceId`     | Exact                                                          |                                                    |
+| `from` / `to`    | Inclusive range on `occurredAt`                                | ISO 8601 date strings                              |
+| `search`         | OR `$ilike` across `actorUsername` / `action` / `resourceType` | Same escape rules                                  |
+| `page` / `limit` | Inherited from `PaginationQueryDto`                            | Defaults `page=1`, `limit=10`; `limit` max `100`   |
+
+Explicit filters are combined with AND; `search` is always wrapped in its own `$or` so operators can express "admin login in January" by combining `search=login` with `from/to`.
+
+### Ordering & Pagination
+
+Results are ordered `occurredAt DESC, id DESC`. The secondary sort on `id` is load-bearing: audit writes land at sub-millisecond precision, so ordering by `occurredAt` alone would yield non-deterministic paging for bursty activity (logins, sync kickoff).
+
+`findAndCount` is issued with `filters: { softDelete: false }` — belt-and-suspenders, since the entity does not extend `CustomBaseEntity` and cannot be soft-deleted today.
+
+### Response Shapes
+
+```ts
+// GET /audit-logs
+{
+  data: AuditLogItemResponseDto[],
+  meta: {
+    totalItems: number,
+    itemCount: number,
+    itemsPerPage: number,
+    totalPages: number,
+    currentPage: number,
+  },
+}
+```
+
+`AuditLogItemResponseDto` and `AuditLogDetailResponseDto` currently share the same shape (`id`, `action`, `actorId?`, `actorUsername?`, `resourceType?`, `resourceId?`, `metadata?`, `browserName?`, `os?`, `ipAddress?`, `occurredAt`). They are kept as separate DTOs on purpose: the list view may later strip heavy fields (`metadata`, `ipAddress`) for bandwidth/privacy without breaking the single-record contract.
+
+### LIKE-Pattern Escaping
+
+User-supplied strings are trimmed and sanitized before being wrapped in `%…%`. `%`, `_`, and `\` are replaced with their backslash-escaped variants so that a username containing `%` cannot silently widen the match to every row.

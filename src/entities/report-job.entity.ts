@@ -10,6 +10,19 @@ export type ReportJobStatus =
   | 'failed'
   | 'skipped';
 
+@Index({
+  name: 'uq_report_job_pending',
+  expression: `create unique index "uq_report_job_pending" on "report_job" ("faculty_id", "semester_id", "questionnaire_type_code", "report_type") where status in ('waiting', 'active') and deleted_at is null`,
+})
+@Index({
+  name: 'report_job_batch_id_index',
+  expression:
+    'create index "report_job_batch_id_index" on "report_job" ("batch_id") where batch_id is not null',
+})
+@Index({
+  name: 'report_job_status_completed_at_index',
+  properties: ['status', 'completedAt'],
+})
 @Entity({ repository: () => ReportJobRepository })
 export class ReportJob extends CustomBaseEntity {
   @Property()
@@ -36,7 +49,7 @@ export class ReportJob extends CustomBaseEntity {
   questionnaireTypeCode: string;
 
   @Property({ nullable: true })
-  @Index()
+  // Indexed via class-level @Index (name: 'report_job_batch_id_index') — see top of file
   batchId?: string;
 
   @Property({ nullable: true })

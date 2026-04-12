@@ -206,6 +206,78 @@ describe('SentimentProcessor', () => {
       );
     });
 
+    it('should drop unknown submissionId and persist valid majority', async () => {
+      const mockRun = { id: 'r1', status: RunStatus.PENDING };
+      mockFork.findOneOrFail.mockResolvedValue(mockRun);
+      const warnSpy = jest
+        .spyOn(processor['logger'], 'warn')
+        .mockImplementation();
+
+      const job = createMockBatchJob();
+      const result: BatchAnalysisResultMessage = {
+        jobId: '550e8400-e29b-41d4-a716-446655440000',
+        version: '1.0',
+        status: 'completed',
+        results: [
+          { submissionId: 's1', positive: 0.8, neutral: 0.1, negative: 0.1 },
+          { submissionId: 's2', positive: 0.1, neutral: 0.1, negative: 0.8 },
+          {
+            submissionId: 'unknown-id',
+            positive: 0.5,
+            neutral: 0.3,
+            negative: 0.2,
+          },
+        ],
+        completedAt: '2026-03-12T00:01:00.000Z',
+      };
+
+      await processor.Persist(job, result);
+
+      expect(mockFork.create).toHaveBeenCalledTimes(2);
+      expect(mockOrchestrator.OnSentimentComplete).toHaveBeenCalledWith('p1');
+      expect(mockOrchestrator.OnStageFailed).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Dropped 1 of 3'),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('r1'));
+    });
+
+    it('should call OnStageFailed and skip fork when all submissionIds are unknown', async () => {
+      const job = createMockBatchJob();
+      const result: BatchAnalysisResultMessage = {
+        jobId: '550e8400-e29b-41d4-a716-446655440000',
+        version: '1.0',
+        status: 'completed',
+        results: [
+          {
+            submissionId: 'bad-id-1',
+            positive: 0.8,
+            neutral: 0.1,
+            negative: 0.1,
+          },
+          {
+            submissionId: 'bad-id-2',
+            positive: 0.1,
+            neutral: 0.1,
+            negative: 0.8,
+          },
+        ],
+        completedAt: '2026-03-12T00:01:00.000Z',
+      };
+
+      await processor.Persist(job, result);
+
+      expect(mockOrchestrator.OnStageFailed).toHaveBeenCalledWith(
+        'p1',
+        'sentiment_analysis',
+        expect.stringContaining('All sentiment results were dropped'),
+      );
+      expect(mockFork.create).not.toHaveBeenCalled();
+      expect(mockOrchestrator.OnSentimentComplete).not.toHaveBeenCalled();
+      expect(mockFork.findOneOrFail).not.toHaveBeenCalled();
+    });
+
     it('should skip invalid result items and continue', async () => {
       const mockRun = { id: 'r1', status: RunStatus.PENDING };
       mockFork.findOneOrFail.mockResolvedValue(mockRun);

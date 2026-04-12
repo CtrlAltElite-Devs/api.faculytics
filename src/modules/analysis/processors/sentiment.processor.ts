@@ -61,10 +61,31 @@ export class SentimentProcessor extends RunPodBatchProcessor {
       return;
     }
 
+    const dispatchedIds = new Set(job.data.items.map((i) => i.submissionId));
+    const validResults = result.results.filter((raw) => {
+      if (typeof raw !== 'object' || raw === null) return false;
+      const id = (raw as { submissionId?: unknown }).submissionId;
+      return typeof id === 'string' && dispatchedIds.has(id);
+    });
+    const droppedCount = result.results.length - validResults.length;
+    if (droppedCount > 0) {
+      this.logger.warn(
+        `Dropped ${droppedCount} of ${result.results.length} sentiment results for run ${runId} (unknown submissionIds)`,
+      );
+    }
+    if (validResults.length === 0) {
+      await this.orchestrator.OnStageFailed(
+        pipelineId,
+        'sentiment_analysis',
+        'All sentiment results were dropped (no valid submissionIds)',
+      );
+      return;
+    }
+
     const fork = this.em.fork();
     const run = await fork.findOneOrFail(SentimentRun, runId);
 
-    for (const raw of result.results) {
+    for (const raw of validResults) {
       const parsed = sentimentResultItemSchema.safeParse(raw);
       if (!parsed.success) {
         this.logger.error(

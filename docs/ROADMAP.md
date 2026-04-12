@@ -1,6 +1,6 @@
 # Roadmap: api.faculytics
 
-This roadmap tracks the implementation status of the `api.faculytics` backend against the product direction. It reflects the checked-in `develop` branch as of 2026-03-31.
+This roadmap tracks the implementation status of the `api.faculytics` backend against the product direction. It reflects the checked-in `develop` branch as of 2026-04-12.
 
 ## Project Vision
 
@@ -8,13 +8,13 @@ Provide a robust, analytics-driven bridge between Moodle learning environments a
 
 ## Status Snapshot
 
-| Phase                                         | Status          | Notes                                                                                                                              |
-| --------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Phase 1. Foundation & Core Synchronization    | Complete        | Core auth, Moodle sync, hydration, scheduling, and resilience are in place.                                                        |
-| Phase 2. Questionnaire & Ingestion Engine     | Mostly complete | Questionnaire management, draft/submit flows, and CSV ingestion are live; self-serve file mapping is still pending.                |
-| Phase 3. AI & Inference Pipeline              | Mostly complete | End-to-end pipeline is shipped; production worker rollout and operator monitoring remain open.                                     |
-| Phase 4. Analytics & Reporting Infrastructure | In progress     | Materialized-view analytics, faculty reports, and PDF export are live; Excel export and long-term analytics scaling remain open.   |
-| Phase 5. Governance & Ecosystem               | In progress     | Scoped access, admin tooling, and audit logging are implemented; finer-grained permissions and ecosystem integrations remain open. |
+| Phase                                         | Status          | Notes                                                                                                                                                     |
+| --------------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 1. Foundation & Core Synchronization    | Complete        | Core auth, Moodle sync, hydration, scheduling, and resilience are in place.                                                                               |
+| Phase 2. Questionnaire & Ingestion Engine     | Mostly complete | Questionnaire management, draft/submit flows, and CSV ingestion are live; self-serve file mapping is still pending.                                       |
+| Phase 3. AI & Inference Pipeline              | Mostly complete | End-to-end pipeline is shipped; production worker rollout and operator monitoring remain open.                                                            |
+| Phase 4. Analytics & Reporting Infrastructure | In progress     | Materialized-view analytics, faculty reports, and PDF export are live; Excel export and long-term analytics scaling remain open.                          |
+| Phase 5. Governance & Ecosystem               | In progress     | Scoped access, admin tooling, audit logging, and audit query endpoints are implemented; finer-grained permissions and ecosystem integrations remain open. |
 
 Cross-cutting platform capabilities already present in the codebase but not treated as separate roadmap phases include Redis-backed caching and throttling, structured health checks, request-scoped CLS metadata, and the authenticated `ChatKit` endpoint.
 
@@ -28,7 +28,8 @@ Cross-cutting platform capabilities already present in the codebase but not trea
 - [x] **Institutional Hierarchy Sync:** Campuses, semesters, departments, programs, courses, and enrollments are mirrored from Moodle.
 - [x] **Per-User Hydration on Login:** Moodle logins refresh the user's courses, enrollments, sections, and institutional roles.
 - [x] **Section Sync from Moodle Groups:** Course groups are materialized locally as `Section` and attached to enrollments.
-- [x] **Institutional Authority Mapping:** Dean and chairperson scope is derived from Moodle category structure, with support for manual dean assignment.
+- [x] **Institutional Authority Mapping:** Dean and chairperson scope is derived from Moodle category structure, with support for manual dean assignment and a server-resolved dean-eligibility lookup for the admin UI.
+- [x] **User Scope & Role Backfill During Sync:** Enrollment sync now populates `user.campus/program/department` and derives `user.roles` from enrollments + institutional roles (protecting manually granted `SUPER_ADMIN`/`ADMIN`) as explicit post-enrollment phases.
 - [x] **Dynamic Sync Scheduling & SyncLog Observability:** Sync cadence is runtime-configurable and every run is recorded with per-phase metrics.
 - [x] **Semester Label Enrichment:** Moodle semester codes are parsed into display labels and academic year metadata.
 - [x] **Moodle Connectivity Resilience (FAC-33):** 10-second request timeouts and connectivity-specific failures prevent hanging auth and sync paths.
@@ -38,7 +39,7 @@ Cross-cutting platform capabilities already present in the codebase but not trea
 
 - [x] **Recursive Schema Validation:** Questionnaire schemas enforce leaf-only questions and exact weight totals.
 - [x] **Dimension Registry & Admin API:** Canonical dimensions are seeded and can be managed through the dimensions module.
-- [x] **Questionnaire Lifecycle Management:** Questionnaires support creation, update, archive, publish, deprecate, and version detail flows.
+- [x] **Questionnaire Lifecycle Management:** Questionnaires support creation, update, archive, publish, deprecate, version detail, and version-from-template flows (draft seeded from any prior published version).
 - [x] **Institutional Snapshotting:** Submissions persist faculty, department, program, campus, and semester snapshots for historical stability.
 - [x] **Draft Save/Resume Flow:** Respondents can save, retrieve, list, and delete drafts before final submission.
 - [x] **Submission & Scoring:** Finalized submissions validate answers, compute normalized scores, and enforce duplicate-submission rules.
@@ -56,7 +57,8 @@ Cross-cutting platform capabilities already present in the codebase but not trea
 - [x] **Topic Modeling (FAC-46):** Topic discovery persists assignments, keywords, and run provenance.
 - [x] **Topic Labeling:** Topic clusters are labeled before recommendation generation.
 - [x] **Embedding Generation (FAC-46):** pgvector-backed embeddings are stored and upserted per submission.
-- [x] **Recommendations Engine v2 (FAC-55):** Recommendations are generated directly via OpenAI with structured output, confidence, and supporting evidence.
+- [x] **Recommendations Engine v2 (FAC-55):** Recommendations are generated directly via OpenAI with structured output, confidence, and pipeline-scoped supporting evidence (topic counts narrowed to the pipeline's `submissionIds`, preventing cross-faculty leakage).
+- [x] **LLM Worker Hardening:** Sentiment processor pins responses to the dispatched `submissionId` set, drops hallucinated IDs with observability logs, and terminally fails the stage when a batch is 100% hallucinated (retrying the LLM is counter-productive).
 - [x] **Worker Contracts & Inference Versioning:** Zod-validated contracts and version fields exist across pipeline runs.
 - [x] **Local Worker Simulation:** `mock-worker/` supports local development without deployed inference workers.
 - [ ] **RunPod / Production Worker Rollout:** Sentiment and topic-model stages still need production endpoint deployment and cutover.
@@ -81,9 +83,10 @@ Cross-cutting platform capabilities already present in the codebase but not trea
 - [x] **Scoped Dean/Chairperson Access:** `ScopeResolverService` restricts analytics, curriculum, and faculty queries to authorized departments and programs.
 - [x] **Institutional Role Administration:** Super admins can assign and remove manual dean/chairperson roles through admin endpoints.
 - [x] **Admin Directory APIs:** Super-admin endpoints support user listing, filtering, and institutional role management workflows.
-- [x] **Append-Only Audit Trail:** Auth, sync, questionnaire, and analysis actions are captured through the global audit pipeline.
+- [x] **Append-Only Audit Trail:** Auth, sync, questionnaire, analysis, and Moodle provisioning actions are captured through the global audit pipeline.
+- [x] **Audit Review Surface:** `GET /audit-logs` and `GET /audit-logs/:id` expose filterable, paginated audit queries (super-admin only) with stable ordering and LIKE-pattern sanitization.
+- [x] **Moodle Seeding Toolkit:** API-native provisioning of categories, bulk/quick courses, and fake users replaces the external Rust CLI, with live Moodle tree inspection and cascading admin filters.
 - [ ] **Fine-Grained Permission Model:** Access control is still role-centric rather than permission-centric.
-- [ ] **Audit Review Surface:** The write path exists, but there are no audit query/reporting endpoints for operators yet.
 - [ ] **Notification Engine:** Automated reminders and outbound notifications are still pending.
 - [ ] **External SIS Integration:** Moodle remains the only production integration surface for institutional data.
 

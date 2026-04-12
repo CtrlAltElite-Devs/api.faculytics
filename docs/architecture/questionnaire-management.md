@@ -91,6 +91,7 @@ stateDiagram-v2
   - `DEPRECATED`: Cannot accept new submissions, read-only, but historical submissions linked to it remain accessible.
   - Transition: `DRAFT` can be `PUBLISHED` to `ACTIVE`. An `ACTIVE` version can be manually `DEPRECATED`. Publishing a new version automatically `DEPRECATES` the previously `ACTIVE` version.
 - **Single Draft Rule**: Only one `DRAFT` version can exist for a given `Questionnaire` at any time, preventing conflicting edits.
+- **Version Templating**: Admins can seed a new draft from any non-draft version via `POST /questionnaires/:id/versions/from-template { sourceVersionId }`. The service deep-copies `schemaSnapshot` (via `structuredClone`), assigns the next sequential version number, and creates the record as `DRAFT` / `isActive: false`. Rejects with 400 if the source belongs to a different questionnaire or is itself a draft, 409 if a draft already exists (single-draft rule), and 400 if the questionnaire is `ARCHIVED`. All work runs inside a single `unitOfWork.runInTransaction`; the `QUESTIONNAIRE_VERSIONS` cache namespace is invalidated post-commit.
 - **Strict Incremental Versioning**: `QuestionnaireVersion` numbers are strictly sequential (v1, v2, v3...), enforced by the system to prevent skipping and maintain a clear audit trail.
 - **Submission Linking**: All submissions are permanently linked to the specific `QuestionnaireVersion` they were made against, ensuring data immutability and historical accuracy.
 - **Editing and Submissions**: Only `DRAFT` versions are editable. Only `ACTIVE` versions accept submissions.
@@ -144,3 +145,32 @@ The `IngestionEngine` processes asynchronous streams of submission data using a 
 - **CSV configuration**: Supports `delimiter`, `quote`, `escape`, and `separator` options.
 - **Excel configuration**: Supports `sheetName` or 1-based `sheetIndex` selection.
 - **Row identification**: `sourceIdentifier` is 1-based for data rows (header row excluded).
+
+## 6. Admin Test Submission Generator
+
+For development and staging, `AdminGenerateController` (mounted at `/admin/generate-submissions`, `SUPER_ADMIN` only) produces synthetic-but-realistic submissions without touching the CSV ingestion pipeline.
+
+### Endpoints
+
+| Method | Path                                  | Purpose                                                                                                                       |
+| ------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/admin/generate-submissions/status`  | Reports `{ totalEnrolled, alreadySubmitted, availableStudents }` for a target `versionId + facultyUsername + courseShortname` |
+| POST   | `/admin/generate-submissions/preview` | Builds a preview of generated rows (questions + Likert answers + optional LLM comments) without persisting                    |
+| POST   | `/admin/generate-submissions/commit`  | Persists up to 200 rows at a time via the real submission service path                                                        |
+
+Selection uses one of two filter flows supported by new routes on `AdminFiltersController`:
+
+- Faculty-first: `GET /admin/filters/faculty` → `GET /admin/filters/courses?facultyUsername=...`
+- Type-first: `GET /admin/filters/questionnaire-types` → `GET /admin/filters/questionnaire-versions?typeId=...`
+
+### Why the Ingestion Pipeline Is Bypassed
+
+Commit calls `QuestionnaireService.submitQuestionnaire()` directly per row rather than routing through the `IngestionEngine`:
+
+- The ingestion pipeline is shaped around file-sourced records (CSV/Excel) and its mapper assumes external identifiers, header normalization, and row-based error reporting. Test generation already has structured data in-hand.
+- Going through the real service path preserves validation, FK resolution, and BullMQ analysis-job dispatch so the generated submissions exercise the full pipeline that production submissions hit.
+- On per-row failure the service calls `em.clear()` before processing the next row — a failed commit inside a MikroORM fork leaves tracked entities in an inconsistent state, and clearing forces a clean slate without aborting the batch.
+
+### Comment Generation
+
+`CommentGeneratorService` uses OpenAI `gpt-4o-mini` to produce multilingual (Filipino/English/code-switched) comments that match the real corpus's noise profile. A deterministic fallback is used when `OPENAI_API_KEY` is missing or the call fails, so the generator remains usable in environments without LLM access.

@@ -1,6 +1,7 @@
 import {
   Collection,
   Entity,
+  Index,
   ManyToOne,
   OneToMany,
   Property,
@@ -18,6 +19,10 @@ import { UserInstitutionalRole } from './user-institutional-role.entity';
 import { UserRole, MoodleRoleMapping } from '../modules/auth/roles.enum';
 
 @Entity({ repository: () => UserRepository })
+@Index({
+  name: 'user_home_department_id_index',
+  properties: ['homeDepartment'],
+})
 export class User extends CustomBaseEntity {
   @Property({ unique: true })
   userName: string;
@@ -43,8 +48,19 @@ export class User extends CustomBaseEntity {
   @ManyToOne(() => Campus, { nullable: true })
   campus?: Campus;
 
+  /**
+   * Primary teaching department derived from enrollment load.
+   * Flaps with Moodle sync. Do NOT use for scoping or authorization.
+   */
   @ManyToOne(() => Department, { nullable: true })
   department?: Department;
+
+  /**
+   * Institutional home department. Stable across enrollment changes.
+   * Use this for scoping queries and dean authorization.
+   */
+  @ManyToOne(() => Department, { nullable: true })
+  homeDepartment?: Department;
 
   @ManyToOne(() => Program, { nullable: true })
   program?: Program;

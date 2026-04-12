@@ -65,9 +65,6 @@ sequenceDiagram
 
     Note over MoodleUserHydrationService: Upsert Sections + assign to Enrollments
 
-    Note over MoodleUserHydrationService: Derive user scope (campus, program, department) from primary program
-    Note over MoodleUserHydrationService: Username prefix → Campus.code; fallback to program→department→semester→campus chain
-
     Note over MoodleUserHydrationService: Resolve Institutional Roles (Chairperson auto-detection)
     MoodleUserHydrationService->>MoodleService: GetUsersWithCapability(withcapability=moodle/category:manage)
     Note over MoodleUserHydrationService: Capability at program (depth 4) → CHAIRPERSON (source=auto)
@@ -127,15 +124,12 @@ Manual roles (`source=manual`) are never modified by the hydration process. They
 
 After institutional role resolution, the user's `roles` array is derived from both enrollment roles (via `MoodleRoleMapping`) and institutional roles. A user can have multiple roles (e.g., `[FACULTY, DEAN]` or `[FACULTY, CHAIRPERSON]`).
 
-Manually-granted `SUPER_ADMIN` and `ADMIN` roles are **never** dropped by hydration or by the batch role-derivation phase in institutional sync. `User.updateRolesFromEnrollments()` snapshots them before recomputing and merges them back in — hydration can promote a user (add FACULTY/CHAIRPERSON) but cannot revoke out-of-band admin roles. See [Institutional Sync — Phase 5](./institutional-sync.md#phase-5-user-role-derivation).
+Manually-granted `SUPER_ADMIN` and `ADMIN` roles are **never** dropped by hydration or by the batch role-derivation phase in institutional sync. `User.updateRolesFromEnrollments()` snapshots them before recomputing and merges them back in — hydration can promote a user (add FACULTY/CHAIRPERSON) but cannot revoke out-of-band admin roles. See [Institutional Sync — Phase 4](./institutional-sync.md#phase-4-user-role-derivation).
 
-## User Scope Derivation
+## User Scope Fields (Frozen)
 
-The same login flow also derives `user.campus`, `user.program`, and `user.department` from the user's primary program (the program with the most active enrollments; ties broken by lowest program UUID). Campus is resolved via username prefix first (`userName.split('-')[0]` → `Campus.code`), falling back to the `program → department → semester → campus` chain.
+The fields `user.campus`, `user.program`, and `user.department` are no longer derived during login. Existing values remain frozen as of FAC-124.
 
-These three fields are populated by both code paths:
+> **Historical context:** These fields were previously derived from the user's "primary program" (most enrollments). This represented teaching load rather than institutional belonging. FAC-125 will introduce `home_department_id` populated from Moodle profile custom fields as the authoritative source.
 
-- **Login hydration** — `MoodleUserHydrationService.deriveUserScopes()` runs inside the hydration transaction on every Moodle login.
-- **Sync Phase 4** — `MoodleEnrollmentSyncService.backfillUserScopes()` covers users who were synced but have not yet logged in.
-
-`MeResponse` exposes `campus`, `program`, and `department` so clients can display the user's institutional context without additional lookups.
+`MeResponse` still exposes `campus`, `program`, and `department` for clients that rely on them, but values will not change until FAC-125's backfill completes.

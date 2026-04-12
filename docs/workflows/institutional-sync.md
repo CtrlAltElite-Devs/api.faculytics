@@ -31,8 +31,7 @@ flowchart TD
     Courses --> CourseOK{Success?}
     CourseOK -->|Yes| Enrollments[Phase 3: Enrollment Sync]
     CourseOK -->|No| Abort2([Abort — skip enrollments])
-    Enrollments --> Scopes[Phase 4: User Scope Backfill]
-    Scopes --> Roles[Phase 5: User Role Derivation]
+    Enrollments --> Roles[Phase 4: User Role Derivation]
     Roles --> Cache[Invalidate ENROLLMENTS_ME cache]
     Cache --> Done([Complete])
 ```
@@ -60,24 +59,13 @@ Uses a 3-phase architecture to avoid deadlocks from overlapping user rows:
 
 No additional Moodle API calls are needed for sections — group data is already returned by the enrolled users endpoint.
 
-### Phase 4: User Scope Backfill
+### Phase 4: User Role Derivation
 
-After enrollments land, `backfillUserScopes()` loads each synced user, picks their "primary program" (the one they have the most active enrollments in; ties broken by lowest program UUID), and persists `campus`, `program`, and `department` onto the `User` row.
-
-Campus is resolved with a two-tier strategy:
-
-1. **Username prefix lookup** — split `userName` on `-`, uppercase the prefix, match against `Campus.code`. Handles the common `UCMN-jdoe` convention.
-2. **Category hierarchy fallback** — walk `program → department → semester → campus` when the prefix is missing or unmatched.
-
-The phase is wrapped in try/catch — a backfill failure logs a warning but does not fail the overall sync. These scope fields are consumed by `UserLoader` (populated alongside `campus` as `['campus', 'program', 'department']`) so scoped queries and the `MeResponse` DTO can return the full chain without extra round-trips.
-
-The same algorithm runs inline during login hydration via `MoodleUserHydrationService.deriveUserScopes()`, keeping the scope fields in sync from the user's very first login. See [Auth Hydration](./auth-hydration.md) for the full login flow.
-
-### Phase 5: User Role Derivation
-
-After scope backfill, `deriveUserRoles()` batch-loads each synced user's active `Enrollment` rows and `UserInstitutionalRole` rows in parallel, groups them per user, and calls `User.updateRolesFromEnrollments()` to recompute the `roles` array. Without this phase, freshly synced users had empty role arrays until their first login.
+After enrollments land, `deriveUserRoles()` batch-loads each synced user's active `Enrollment` rows and `UserInstitutionalRole` rows in parallel, groups them per user, and calls `User.updateRolesFromEnrollments()` to recompute the `roles` array.
 
 `updateRolesFromEnrollments()` snapshots existing `SUPER_ADMIN` and `ADMIN` roles and merges them back after recomputing. Those two roles are manually granted outside Moodle — the snapshot prevents a sync from ever revoking a role it never granted. The phase is non-fatal (try/catch); role drift is preferred over a broken sync run.
+
+> **Note:** Prior to FAC-124, a Phase 4 "User Scope Backfill" derived `user.campus`, `user.program`, and `user.department` from enrollment counts. This was removed because these fields represented teaching load rather than institutional belonging. FAC-125 will introduce the replacement `home_department_id` mechanism.
 
 ## Observability — SyncLog
 

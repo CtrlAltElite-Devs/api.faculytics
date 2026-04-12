@@ -39,6 +39,6 @@ export class AuditLog {
   ipAddress?: string;
 
   @Index()
-  @Property()
-  occurredAt!: Date;
+  @Property({ defaultRaw: 'now()', length: 6 })
+  occurredAt: Date & Opt = new Date();
 }

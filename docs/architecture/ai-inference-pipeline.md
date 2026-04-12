@@ -119,6 +119,19 @@ The recommendations stage does **not** use the batch message contract — see [R
 
 See `docs/worker-contracts/` for full per-worker contracts.
 
+### Dispatch-Set Pinning (LLM Workers)
+
+Zod validates the **shape** of a worker response but cannot validate that the `submissionId` keys actually correspond to rows the API dispatched. For LLM-backed workers this matters: under some prompts the model hallucinates UUIDs that don't exist in the dispatched batch, and persisting them causes PostgreSQL FK violations that abort the whole batch transaction — losing even the valid results.
+
+`SentimentProcessor.Persist()` pins the response against a dispatch set:
+
+1. Build `dispatchedIds = new Set(job.data.items.map(i => i.submissionId))` before any DB work.
+2. Drop every result whose `submissionId` is not in `dispatchedIds`. Log `warn "Dropped X of Y sentiment results for run {runId} (unknown submissionIds)"` whenever the drop count is non-zero.
+3. If **all** results are dropped, call `orchestrator.OnStageFailed(pipelineId, 'sentiment_analysis', ...)` and return. Retry is not useful — more LLM calls will produce more hallucinations.
+4. The pre-existing `sentimentResultItemSchema.safeParse` loop still runs on the filtered set as a second validation layer.
+
+Treat any new LLM-backed processor under `BaseAnalysisProcessor` as needing the same pattern. See [Decision #41 — LLM-Backed Worker Dispatch-Set Pinning](../decisions/decisions.md#41-llm-backed-worker-dispatch-set-pinning).
+
 ## 4. Sentiment Gate
 
 Between sentiment analysis and topic modeling, a **sentiment gate** filters the corpus:
@@ -291,6 +304,8 @@ Each `RecommendedAction` stores a `supportingEvidence` JSONB column with:
 - **Sources:** Discriminated union of `TopicSource` (topic label, comment count, sentiment breakdown, sample quotes) and `DimensionScoresSource` (dimension code + average score pairs)
 - **Confidence level:** HIGH / MEDIUM / LOW
 - **basedOnSubmissions:** Total comment count in scope
+
+> **Pipeline-scoped counts.** `TopicSource.commentCount` is derived from `TopicAssignment` rows filtered by **both** `topic.id IN (...)` and `submission.id IN (pipelineSubmissionIds)` — **not** from the `Topic.docCount` column. `Topic` is a shared entity: multiple pipelines across different faculty can produce assignments against the same topic, and `docCount` is a global counter over all of them. Scoping by `submissionIds` prevents cross-faculty evidence leakage and makes `confidenceLevel` reflect the current pipeline's evidence rather than the topic's global activity. Any future consumer of topic-derived evidence must apply the same scoping.
 
 ### Output Schema
 

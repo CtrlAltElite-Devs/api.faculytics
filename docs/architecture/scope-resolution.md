@@ -91,6 +91,19 @@ Returns `string[] | null` — program UUIDs, or `null` for unrestricted.
 | DEAN        | `null` (sees all programs in their departments)                        |
 | CHAIRPERSON | Returns specific program UUIDs matching their institutional role codes |
 
+### `ResolveProgramCodes(semesterId)`
+
+Returns `string[] | null` — program **codes** instead of UUIDs, for consumers that filter against snapshotted string columns rather than FK relations.
+
+| Role        | Behavior                                                            |
+| ----------- | ------------------------------------------------------------------- |
+| SUPER_ADMIN | `null` (unrestricted)                                               |
+| DEAN        | `null` (sees all programs in their departments)                     |
+| CHAIRPERSON | Returns program codes matching their institutional role assignments |
+| Other       | `ForbiddenException`                                                |
+
+Used by `AnalyticsService` to narrow queries against `mv_faculty_semester_stats.program_code_snapshot`. The chairperson branch shares a private `resolveChairpersonPrograms(userId, semesterId)` helper with `ResolveProgramIds` — category→program lookup logic is not duplicated.
+
 ## Consumers
 
 The following services call `ScopeResolverService`:

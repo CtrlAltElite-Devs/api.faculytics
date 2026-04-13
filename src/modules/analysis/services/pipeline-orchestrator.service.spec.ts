@@ -677,6 +677,80 @@ describe('PipelineOrchestratorService', () => {
       expect(status.stages.embeddings.status).toBe('failed');
     });
 
+    it('should recompute coverage stats for AWAITING_CONFIRMATION pipelines', async () => {
+      // Pipeline was created with a stale snapshot (200 submissions, 205 enrolled).
+      // By the time GetPipelineStatus is called, more submissions have arrived.
+      const pipeline = {
+        ...basePipeline,
+        status: PipelineStatus.AWAITING_CONFIRMATION,
+        totalEnrolled: 205,
+        submissionCount: 200,
+        commentCount: 150,
+        responseRate: 200 / 205,
+        warnings: ['Only 200 submissions (minimum recommended: 30).'],
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline) // pipeline lookup
+        .mockResolvedValueOnce(null) // sentiment run
+        .mockResolvedValueOnce(null) // topic model run
+        .mockResolvedValueOnce(null) // recommendation run
+        .mockResolvedValueOnce({ updatedAt: new Date() }); // latest enrollment in ComputeCoverageStats
+
+      // ComputeCoverageStats flow: count submissions, count comments, find
+      // scoped submissions for course ids, count enrollments.
+      mockFork.count
+        .mockResolvedValueOnce(520) // fresh submissionCount
+        .mockResolvedValueOnce(410) // fresh commentCount
+        .mockResolvedValueOnce(600); // fresh totalEnrolled
+      mockFork.find.mockResolvedValueOnce([{ course: { id: 'c1' } }]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      // Fresh values, not the stale snapshot
+      expect(status.coverage.submissionCount).toBe(520);
+      expect(status.coverage.totalEnrolled).toBe(600);
+      expect(status.coverage.commentCount).toBe(410);
+      expect(status.coverage.responseRate).toBeCloseTo(520 / 600, 5);
+
+      // Pipeline entity was mutated with fresh values and flushed
+      expect(pipeline.submissionCount).toBe(520);
+      expect(pipeline.totalEnrolled).toBe(600);
+      expect(mockFork.flush).toHaveBeenCalled();
+
+      // Stale "Only 200 submissions" warning is replaced with fresh warnings
+      expect(
+        status.warnings.some((w) => w.includes('Only 200 submissions')),
+      ).toBe(false);
+    });
+
+    it('should use stored coverage snapshot for confirmed pipelines', async () => {
+      const pipeline = {
+        ...basePipeline,
+        status: PipelineStatus.SENTIMENT_ANALYSIS,
+        totalEnrolled: 205,
+        submissionCount: 200,
+        commentCount: 150,
+        responseRate: 200 / 205,
+      };
+
+      mockFork.findOne
+        .mockResolvedValueOnce(pipeline)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+
+      // No scoped submissions → no fresh recompute; stored snapshot wins
+      mockFork.find.mockResolvedValueOnce([]);
+
+      const status = await service.GetPipelineStatus('p1');
+
+      expect(status.coverage.submissionCount).toBe(200);
+      expect(status.coverage.totalEnrolled).toBe(205);
+      // ComputeCoverageStats should NOT have been invoked (no count calls)
+      expect(mockFork.count).not.toHaveBeenCalled();
+    });
+
     it('should return sentiment gate included/excluded with completed status', async () => {
       const pipeline = {
         ...basePipeline,

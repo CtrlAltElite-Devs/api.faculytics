@@ -128,34 +128,7 @@ export class PipelineOrchestratorService {
     if (input.courseId) scope.course = input.courseId;
 
     const coverage = await this.ComputeCoverageStats(fork, scope);
-
-    // Generate warnings
-    const warnings: string[] = [];
-    if (coverage.responseRate < COVERAGE_WARNINGS.MIN_RESPONSE_RATE) {
-      warnings.push(
-        `Response rate is ${(coverage.responseRate * 100).toFixed(1)}% (below ${COVERAGE_WARNINGS.MIN_RESPONSE_RATE * 100}% threshold).`,
-      );
-    }
-    if (coverage.submissionCount < COVERAGE_WARNINGS.MIN_SUBMISSIONS) {
-      warnings.push(
-        `Only ${coverage.submissionCount} submissions (minimum recommended: ${COVERAGE_WARNINGS.MIN_SUBMISSIONS}).`,
-      );
-    }
-    if (coverage.commentCount < COVERAGE_WARNINGS.MIN_COMMENTS) {
-      warnings.push(
-        `Only ${coverage.commentCount} qualitative comments (minimum recommended: ${COVERAGE_WARNINGS.MIN_COMMENTS}).`,
-      );
-    }
-    if (coverage.lastEnrollmentSyncAt) {
-      const hoursSinceSync =
-        (Date.now() - coverage.lastEnrollmentSyncAt.getTime()) / 3_600_000;
-      if (hoursSinceSync > COVERAGE_WARNINGS.STALE_SYNC_HOURS) {
-        const daysStale = Math.floor(hoursSinceSync / 24);
-        warnings.push(
-          `Enrollment data may be stale (last synced ${daysStale} day${daysStale !== 1 ? 's' : ''} ago).`,
-        );
-      }
-    }
+    const warnings = this.BuildCoverageWarnings(coverage);
 
     const pipeline = fork.create(AnalysisPipeline, {
       semester: fork.getReference(Semester, input.semesterId),
@@ -478,30 +451,63 @@ export class PipelineOrchestratorService {
       });
     }
 
-    // Compute lastEnrollmentSyncAt by scoping through courses in submission scope
-    const scope = buildSubmissionScope(pipeline);
+    // Coverage stats are cached on the pipeline entity at creation time. For
+    // pipelines still awaiting confirmation, recompute on every status fetch
+    // so the user sees the latest submission/enrollment counts before they
+    // lock in the snapshot. After confirmation, the stored values represent
+    // what was actually analyzed and must not drift.
+    const scope = this.BuildScopeFromPipeline(pipeline);
+    let totalEnrolled = pipeline.totalEnrolled;
+    let submissionCount = pipeline.submissionCount;
+    let commentCount = pipeline.commentCount;
+    let responseRate = Number(pipeline.responseRate);
+    let warnings = pipeline.warnings;
     let lastEnrollmentSyncAt: Date | null = null;
-    const scopedSubs = await fork.find(
-      QuestionnaireSubmission,
-      {
-        ...scope,
-        qualitativeComment: { $ne: null },
-      },
-      { fields: ['course'] },
-    );
-    const courseIds = [
-      ...new Set(
-        scopedSubs.map((s) => s.course?.id).filter((id): id is string => !!id),
-      ),
-    ];
-    if (courseIds.length > 0) {
-      const latestEnrollment = await fork.findOne(
-        Enrollment,
-        { isActive: true, course: { $in: courseIds } },
-        { orderBy: { updatedAt: 'DESC' } },
+
+    if (pipeline.status === PipelineStatus.AWAITING_CONFIRMATION) {
+      const freshCoverage = await this.ComputeCoverageStats(fork, scope);
+      totalEnrolled = freshCoverage.totalEnrolled;
+      submissionCount = freshCoverage.submissionCount;
+      commentCount = freshCoverage.commentCount;
+      responseRate = freshCoverage.responseRate;
+      lastEnrollmentSyncAt = freshCoverage.lastEnrollmentSyncAt;
+      warnings = this.BuildCoverageWarnings(freshCoverage);
+
+      // Persist refreshed snapshot so the values shown here match what will
+      // be locked in at confirmation time.
+      pipeline.totalEnrolled = freshCoverage.totalEnrolled;
+      pipeline.submissionCount = freshCoverage.submissionCount;
+      pipeline.commentCount = freshCoverage.commentCount;
+      pipeline.responseRate = freshCoverage.responseRate;
+      pipeline.warnings = warnings;
+      await fork.flush();
+    } else {
+      // For confirmed/terminal pipelines, derive lastEnrollmentSyncAt from
+      // courses in the original submission scope (snapshot view).
+      const scopedSubs = await fork.find(
+        QuestionnaireSubmission,
+        {
+          ...scope,
+          qualitativeComment: { $ne: null },
+        },
+        { fields: ['course'] },
       );
-      if (latestEnrollment) {
-        lastEnrollmentSyncAt = latestEnrollment.updatedAt;
+      const courseIds = [
+        ...new Set(
+          scopedSubs
+            .map((s) => s.course?.id)
+            .filter((id): id is string => !!id),
+        ),
+      ];
+      if (courseIds.length > 0) {
+        const latestEnrollment = await fork.findOne(
+          Enrollment,
+          { isActive: true, course: { $in: courseIds } },
+          { orderBy: { updatedAt: 'DESC' } },
+        );
+        if (latestEnrollment) {
+          lastEnrollmentSyncAt = latestEnrollment.updatedAt;
+        }
       }
     }
 
@@ -554,10 +560,10 @@ export class PipelineOrchestratorService {
         course: pipeline.course?.shortname || null,
       },
       coverage: {
-        totalEnrolled: pipeline.totalEnrolled,
-        submissionCount: pipeline.submissionCount,
-        commentCount: pipeline.commentCount,
-        responseRate: Number(pipeline.responseRate),
+        totalEnrolled,
+        submissionCount,
+        commentCount,
+        responseRate,
         lastEnrollmentSyncAt: lastEnrollmentSyncAt?.toISOString() || null,
       },
       stages: {
@@ -585,7 +591,7 @@ export class PipelineOrchestratorService {
           recommendationRun,
         ),
       },
-      warnings: pipeline.warnings,
+      warnings,
       errorMessage: pipeline.errorMessage ?? null,
       // Intent signal for future error categorization — currently equivalent to status === FAILED
       retryable: pipeline.status === PipelineStatus.FAILED,
@@ -635,6 +641,48 @@ export class PipelineOrchestratorService {
   }
 
   // --- Private Helpers ---
+
+  private BuildScopeFromPipeline(pipeline: AnalysisPipeline): ScopeFilter {
+    const scope: ScopeFilter = { semester: pipeline.semester.id };
+    if (pipeline.faculty) scope.faculty = pipeline.faculty.id;
+    if (pipeline.questionnaireVersion)
+      scope.questionnaireVersion = pipeline.questionnaireVersion.id;
+    if (pipeline.department) scope.department = pipeline.department.id;
+    if (pipeline.program) scope.program = pipeline.program.id;
+    if (pipeline.campus) scope.campus = pipeline.campus.id;
+    if (pipeline.course) scope.course = pipeline.course.id;
+    return scope;
+  }
+
+  private BuildCoverageWarnings(coverage: CoverageStats): string[] {
+    const warnings: string[] = [];
+    if (coverage.responseRate < COVERAGE_WARNINGS.MIN_RESPONSE_RATE) {
+      warnings.push(
+        `Response rate is ${(coverage.responseRate * 100).toFixed(1)}% (below ${COVERAGE_WARNINGS.MIN_RESPONSE_RATE * 100}% threshold).`,
+      );
+    }
+    if (coverage.submissionCount < COVERAGE_WARNINGS.MIN_SUBMISSIONS) {
+      warnings.push(
+        `Only ${coverage.submissionCount} submissions (minimum recommended: ${COVERAGE_WARNINGS.MIN_SUBMISSIONS}).`,
+      );
+    }
+    if (coverage.commentCount < COVERAGE_WARNINGS.MIN_COMMENTS) {
+      warnings.push(
+        `Only ${coverage.commentCount} qualitative comments (minimum recommended: ${COVERAGE_WARNINGS.MIN_COMMENTS}).`,
+      );
+    }
+    if (coverage.lastEnrollmentSyncAt) {
+      const hoursSinceSync =
+        (Date.now() - coverage.lastEnrollmentSyncAt.getTime()) / 3_600_000;
+      if (hoursSinceSync > COVERAGE_WARNINGS.STALE_SYNC_HOURS) {
+        const daysStale = Math.floor(hoursSinceSync / 24);
+        warnings.push(
+          `Enrollment data may be stale (last synced ${daysStale} day${daysStale !== 1 ? 's' : ''} ago).`,
+        );
+      }
+    }
+    return warnings;
+  }
 
   private async ComputeCoverageStats(
     em: EntityManager,

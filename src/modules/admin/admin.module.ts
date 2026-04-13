@@ -13,6 +13,8 @@ import { QuestionnaireType } from 'src/entities/questionnaire-type.entity';
 import { QuestionnaireVersion } from 'src/entities/questionnaire-version.entity';
 import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
 import { QuestionnaireModule } from 'src/modules/questionnaires/questionnaires.module';
+import { CommonModule } from '../common/common.module';
+import DataLoaderModule from '../common/data-loaders/index.module';
 import { AdminController } from './admin.controller';
 import { AdminFiltersController } from './admin-filters.controller';
 import { AdminGenerateController } from './admin-generate.controller';
@@ -37,6 +39,8 @@ import { CommentGeneratorService } from './services/comment-generator.service';
       QuestionnaireVersion,
       QuestionnaireSubmission,
     ]),
+    CommonModule,
+    DataLoaderModule,
     QuestionnaireModule,
   ],
   controllers: [

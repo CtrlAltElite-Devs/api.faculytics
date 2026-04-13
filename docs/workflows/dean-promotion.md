@@ -42,6 +42,6 @@ Returns `AdminUserDetailResponseDto`:
 | `enrollments[]`                     | `{ id, role, isActive, course: { id, shortname, fullname } }` — filtered by `isActive: true AND course.isActive: true`, ordered `timeModified DESC` |
 | `institutionalRoles[]`              | `{ id, role, source, category: { moodleCategoryId, name, depth } }` — rows whose `moodleCategory` is null are filtered out                          |
 
-Enrollments and institutional roles are loaded in parallel via `Promise.all`. User load populates `['campus', 'department', 'program']` so the scope fields populated in [Phase 4 of institutional sync](./institutional-sync.md#phase-4-user-scope-backfill) / [auth hydration](./auth-hydration.md) are returned without extra queries.
+Enrollments and institutional roles are loaded in parallel via `Promise.all`. User load populates `['campus', 'department', 'program']` so the scope fields are returned without extra queries.
 
 The admin console pairs this endpoint with the dean-eligibility lookup above to drive the full "inspect user → promote to dean" flow from a single details panel.

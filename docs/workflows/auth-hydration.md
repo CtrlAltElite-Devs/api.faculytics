@@ -65,9 +65,6 @@ sequenceDiagram
 
     Note over MoodleUserHydrationService: Upsert Sections + assign to Enrollments
 
-    Note over MoodleUserHydrationService: Derive user scope (campus, program, department) from primary program
-    Note over MoodleUserHydrationService: Username prefix → Campus.code; fallback to program→department→semester→campus chain
-
     Note over MoodleUserHydrationService: Resolve Institutional Roles (Chairperson auto-detection)
     MoodleUserHydrationService->>MoodleService: GetUsersWithCapability(withcapability=moodle/category:manage)
     Note over MoodleUserHydrationService: Capability at program (depth 4) → CHAIRPERSON (source=auto)
@@ -131,11 +128,10 @@ Manually-granted `SUPER_ADMIN` and `ADMIN` roles are **never** dropped by hydrat
 
 ## User Scope Derivation
 
-The same login flow also derives `user.campus`, `user.program`, and `user.department` from the user's primary program (the program with the most active enrollments; ties broken by lowest program UUID). Campus is resolved via username prefix first (`userName.split('-')[0]` → `Campus.code`), falling back to the `program → department → semester → campus` chain.
+After institutional role resolution, hydration derives `user.program` and `user.department` from the user's freshly-fetched Moodle enrollments by calling the shared pure helper `deriveUserScopes()` from `scope-derivation.helper.ts`. The bulk Moodle sync (`EnrollmentSyncService.backfillUserScopes`) calls the same helper, so the cron path and the login path always converge on the same `(primaryProgram, primaryDepartment)` for a given enrollment set.
 
-These three fields are populated by both code paths:
+**Atomic source guard:** if EITHER `user.departmentSource = 'manual'` OR `user.programSource = 'manual'`, the hydration step skips derivation entirely. Manual assignments (admin UI, FAC-127) survive Moodle re-syncs. Reverting either field to `'auto'` re-enables derivation on the next login.
 
-- **Login hydration** — `MoodleUserHydrationService.deriveUserScopes()` runs inside the hydration transaction on every Moodle login.
-- **Sync Phase 4** — `MoodleEnrollmentSyncService.backfillUserScopes()` covers users who were synced but have not yet logged in.
+**Campus is not touched here.** `user.campus` is set only by `UserRepository.UpsertFromMoodle` from the username prefix at login time. There is no `campusSource` column.
 
-`MeResponse` exposes `campus`, `program`, and `department` so clients can display the user's institutional context without additional lookups.
+`MeResponse` exposes `campus`, `program`, and `department` from these derived/manual values.

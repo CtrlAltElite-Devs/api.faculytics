@@ -823,6 +823,10 @@ export class QuestionnaireService {
       facultyEmployeeNumberSnapshot: faculty.userName,
       departmentCodeSnapshot: department.code,
       departmentNameSnapshot: department.name || department.code,
+      facultyDepartment: faculty.department ?? null,
+      facultyDepartmentCodeSnapshot: faculty.department?.code ?? null,
+      facultyDepartmentNameSnapshot:
+        faculty.department?.name ?? faculty.department?.code ?? null,
       programCodeSnapshot: program.code,
       programNameSnapshot: program.name || program.code,
       campusCodeSnapshot: campus.code,
@@ -833,6 +837,14 @@ export class QuestionnaireService {
       semesterLabelSnapshot: semester.label || semester.code,
       academicYearSnapshot: semester.academicYear || 'N/A',
     });
+
+    if (!faculty.department) {
+      this.logger.warn(
+        `[submission.faculty_department_missing] Faculty has no home department at submission time; ` +
+          `persisted with null faculty_department_id ` +
+          `(submissionId=${submission.id} facultyId=${faculty.id} facultyUserName=${faculty.userName} respondentId=${respondent.id})`,
+      );
+    }
 
     // Create Answers
     for (const [questionId, value] of Object.entries(data.answers)) {

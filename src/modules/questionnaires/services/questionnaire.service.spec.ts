@@ -816,6 +816,161 @@ describe('QuestionnaireService', () => {
         'student FACULTY_FEEDBACK must validate enrollment — tracked as follow-up ticket',
       );
     });
+
+    describe('facultyDepartment snapshot', () => {
+      type CreateCall = {
+        facultyDepartment: { id: string } | null;
+        facultyDepartmentCodeSnapshot: string | null;
+        facultyDepartmentNameSnapshot: string | null;
+        department: { id?: string };
+        departmentCodeSnapshot: string;
+        departmentNameSnapshot: string;
+      };
+      const getCreateCall = (): CreateCall => {
+        const calls = (submissionRepo.create as jest.Mock).mock
+          .calls as unknown[][];
+        return calls[0][0] as CreateCall;
+      };
+
+      beforeEach(() => {
+        jest.clearAllMocks();
+        versionRepo.findOne.mockResolvedValue(mockVersion as any);
+        (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+          if (entity === User && id === RESPONDENT_ID) return mockRespondent;
+          if (entity === User && id === FACULTY_ID) return mockFaculty;
+          if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+          if (entity === Course && id === COURSE_ID) return mockCourse;
+          return null;
+        });
+      });
+
+      it('populates facultyDepartment + snapshots when faculty has home department', async () => {
+        enrollmentRepo.findOne.mockResolvedValue({ isActive: true } as any);
+        submissionRepo.findOne.mockResolvedValue(null);
+        const warnSpy = jest
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+
+        await service.submitQuestionnaire(mockData);
+
+        const createCall = getCreateCall();
+        expect(createCall).toHaveProperty('facultyDepartment');
+        expect(createCall.facultyDepartment).toBeTruthy();
+        expect(createCall.facultyDepartment?.id).toEqual(expect.any(String));
+        expect(createCall).toHaveProperty('facultyDepartmentCodeSnapshot');
+        expect(typeof createCall.facultyDepartmentCodeSnapshot).toBe('string');
+        expect(createCall).toHaveProperty('facultyDepartmentNameSnapshot');
+        expect(typeof createCall.facultyDepartmentNameSnapshot).toBe('string');
+
+        expect(warnSpy).not.toHaveBeenCalledWith(
+          expect.stringContaining('[submission.faculty_department_missing]'),
+        );
+
+        warnSpy.mockRestore();
+      });
+
+      it('persists with null snapshot and emits grep-key warn when faculty.department is null', async () => {
+        const facultyNoDept = { ...mockFaculty, department: null };
+        (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+          if (entity === User && id === RESPONDENT_ID) return mockRespondent;
+          if (entity === User && id === FACULTY_ID) return facultyNoDept;
+          if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+          if (entity === Course && id === COURSE_ID) return mockCourse;
+          return null;
+        });
+        enrollmentRepo.findOne.mockResolvedValue({ isActive: true } as any);
+        submissionRepo.findOne.mockResolvedValue(null);
+        const warnSpy = jest
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+
+        await expect(
+          service.submitQuestionnaire(mockData),
+        ).resolves.toBeDefined();
+
+        const createCall = getCreateCall();
+        expect(createCall).toHaveProperty('facultyDepartment', null);
+        expect(createCall).toHaveProperty(
+          'facultyDepartmentCodeSnapshot',
+          null,
+        );
+        expect(createCall).toHaveProperty(
+          'facultyDepartmentNameSnapshot',
+          null,
+        );
+
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('[submission.faculty_department_missing]'),
+        );
+        // Contract: plain-string warn format (NestJS Logger.warn signature).
+        // A second argument would be interpreted as logger context, corrupting
+        // log routing. Assert exactly one string argument.
+        expect(warnSpy.mock.calls[0]).toHaveLength(1);
+        const warnArg = warnSpy.mock.calls[0][0] as string;
+        expect(typeof warnArg).toBe('string');
+        expect(warnArg).toContain('facultyId=');
+        expect(warnArg).toContain('facultyUserName=');
+        expect(warnArg).toContain('respondentId=');
+        expect(warnArg).toContain('null faculty_department_id');
+
+        warnSpy.mockRestore();
+      });
+
+      it('populates facultyDepartment from faculty (not from course) when they diverge', async () => {
+        const facultyDept = {
+          id: 'dept-faculty',
+          code: 'CCS',
+          name: 'Computer Science',
+        };
+        const courseDept = {
+          id: 'dept-course',
+          code: 'ENG',
+          name: 'Engineering',
+          semester: { id: SEMESTER_ID },
+        };
+        const divergentFaculty = { ...mockFaculty, department: facultyDept };
+        const divergentCourse = {
+          ...mockCourse,
+          program: { ...mockCourse.program, department: courseDept },
+        };
+        (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+          if (entity === User && id === RESPONDENT_ID) return mockRespondent;
+          if (entity === User && id === FACULTY_ID) return divergentFaculty;
+          if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+          if (entity === Course && id === COURSE_ID) return divergentCourse;
+          return null;
+        });
+        enrollmentRepo.findOne.mockResolvedValue({ isActive: true } as any);
+        submissionRepo.findOne.mockResolvedValue(null);
+        const warnSpy = jest
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+
+        await service.submitQuestionnaire(mockData);
+
+        const createCall = getCreateCall();
+        expect(createCall.facultyDepartment?.id).toBe('dept-faculty');
+        expect(createCall.department.id).toBe('dept-course');
+        expect(createCall.facultyDepartment?.id).not.toBe(
+          createCall.department.id,
+        );
+        // Contract: the legacy course-derived snapshots must remain sourced
+        // from course.program.department, NOT from faculty.department. Guards
+        // against a regression that rewrites lines 824-825 of the service.
+        expect(createCall.departmentCodeSnapshot).toBe('ENG');
+        expect(createCall.departmentNameSnapshot).toBe('Engineering');
+
+        expect(warnSpy).not.toHaveBeenCalledWith(
+          expect.stringContaining('[submission.faculty_department_missing]'),
+        );
+
+        warnSpy.mockRestore();
+      });
+    });
   });
 
   describe('DeprecateVersion', () => {

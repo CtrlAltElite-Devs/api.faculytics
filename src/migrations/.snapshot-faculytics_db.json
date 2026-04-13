@@ -3886,6 +3886,54 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "text"
+        },
+        "faculty_department_id": {
+          "name": "faculty_department_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "faculty_department_code_snapshot": {
+          "name": "faculty_department_code_snapshot",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "faculty_department_name_snapshot": {
+          "name": "faculty_department_name_snapshot",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
         }
       },
       "name": "questionnaire_submission",
@@ -3910,6 +3958,17 @@
           "composite": true,
           "constraint": false,
           "keyName": "questionnaire_submission_department_id_semester_id_index",
+          "unique": false,
+          "primary": false
+        },
+        {
+          "columnNames": [
+            "faculty_department_id",
+            "semester_id"
+          ],
+          "composite": true,
+          "constraint": false,
+          "keyName": "questionnaire_submission_faculty_department_id_sem_4a4b6_index",
           "unique": false,
           "primary": false
         },
@@ -4010,6 +4069,19 @@
           ],
           "updateRule": "cascade",
           "deleteRule": "no action"
+        },
+        "questionnaire_submission_faculty_department_id_foreign": {
+          "columnNames": [
+            "faculty_department_id"
+          ],
+          "constraintName": "questionnaire_submission_faculty_department_id_foreign",
+          "localTableName": "public.questionnaire_submission",
+          "referencedTableName": "public.department",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "updateRule": "cascade",
+          "deleteRule": "set null"
         },
         "questionnaire_submission_faculty_id_foreign": {
           "columnNames": [

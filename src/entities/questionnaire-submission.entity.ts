@@ -32,6 +32,7 @@ import { QuestionnaireAnswer } from './questionnaire-answer.entity';
 })
 @Index({ properties: ['faculty', 'semester'] })
 @Index({ properties: ['department', 'semester'] })
+@Index({ properties: ['facultyDepartment', 'semester'] })
 @Index({ properties: ['program', 'semester'] })
 @Index({ properties: ['campus', 'semester'] })
 @Index({ properties: ['questionnaireVersion'] })
@@ -85,12 +86,23 @@ export class QuestionnaireSubmission extends CustomBaseEntity {
   @Property({ nullable: true })
   facultyEmployeeNumberSnapshot?: string;
 
-  // Department Snapshots
+  // Department Snapshots (course-derived + faculty home)
   @Property()
   departmentCodeSnapshot!: string;
 
   @Property()
   departmentNameSnapshot!: string;
+
+  // Faculty home department (FAC-128) — sourced from faculty.department, NOT course owner.
+  // Nullable because user.department is nullable.
+  @ManyToOne(() => Department, { nullable: true })
+  facultyDepartment?: Department | null;
+
+  @Property({ nullable: true })
+  facultyDepartmentCodeSnapshot?: string | null;
+
+  @Property({ nullable: true })
+  facultyDepartmentNameSnapshot?: string | null;
 
   // Program Snapshots
   @Property()

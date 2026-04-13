@@ -16,8 +16,9 @@ import { FacultyListResponseDto } from '../dto/responses/faculty-list.response.d
 import { FacultyCardResponseDto } from '../dto/responses/faculty-card.response.dto';
 import { SubmissionCountResponseDto } from '../dto/responses/submission-count.response.dto';
 import { Course } from 'src/entities/course.entity';
-import { FilterQuery } from '@mikro-orm/core';
+import { FilterQuery, QueryOrder } from '@mikro-orm/core';
 import { EnrollmentRole } from 'src/modules/questionnaires/lib/questionnaire.types';
+import { UserRole } from 'src/modules/auth/roles.enum';
 
 @Injectable()
 export class FacultyService {
@@ -80,10 +81,154 @@ export class FacultyService {
       }
     }
 
-    // 4. Build enrollment filter
-    const enrollmentFilter = this.BuildEnrollmentFilter(query, departmentIds);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const offset = (page - 1) * limit;
 
-    // 5. Get distinct faculty count
+    // Empty scope → no home-dept matches are possible; skip DB entirely.
+    if (departmentIds !== null && departmentIds.length === 0) {
+      return this.EmptyListResponse(page, limit);
+    }
+
+    // 4. Query users filtered by home dept/program + role + active.
+    const userFilter = this.BuildUserFilter(query, departmentIds);
+    const [users, totalItems] = await this.em.findAndCount(User, userFilter, {
+      limit,
+      offset,
+      orderBy: {
+        fullName: QueryOrder.ASC_NULLS_LAST,
+        id: QueryOrder.ASC,
+      },
+    });
+
+    if (totalItems === 0 || users.length === 0) {
+      return {
+        data: [],
+        meta: {
+          totalItems,
+          itemCount: 0,
+          itemsPerPage: limit,
+          totalPages: Math.ceil(totalItems / limit),
+          currentPage: page,
+        },
+      };
+    }
+
+    // 5. Enrich with scope-visible teaching (subjects[] may be empty).
+    const userIds = users.map((u) => u.id);
+    const scopedEnrollments = await this.em.find(
+      Enrollment,
+      {
+        user: { $in: userIds },
+        role: {
+          $in: [EnrollmentRole.EDITING_TEACHER, EnrollmentRole.TEACHER],
+        },
+        isActive: true,
+        course: this.BuildCourseFilter(query, departmentIds),
+      },
+      { populate: ['course'] },
+    );
+
+    const userCourseMap = new Map<string, string[]>();
+    for (const enrollment of scopedEnrollments) {
+      const userId = enrollment.user.id;
+      if (!userCourseMap.has(userId)) {
+        userCourseMap.set(userId, []);
+      }
+      const shortname = enrollment.course.shortname;
+      const courses = userCourseMap.get(userId)!;
+      if (!courses.includes(shortname)) {
+        courses.push(shortname);
+      }
+    }
+
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    const data: FacultyCardResponseDto[] = userIds
+      .map((id) => {
+        const u = userMap.get(id);
+        if (!u) return null;
+        return FacultyCardResponseDto.Map(u, userCourseMap.get(id) ?? []);
+      })
+      .filter((dto): dto is FacultyCardResponseDto => dto !== null);
+
+    return {
+      data,
+      meta: {
+        totalItems,
+        itemCount: data.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
+  }
+
+  async ListCrossDepartmentTeaching(
+    query: ListFacultyQueryDto,
+  ): Promise<FacultyListResponseDto> {
+    // 1. Validate semester exists
+    const semester = await this.em.findOne(Semester, { id: query.semesterId });
+    if (!semester) {
+      throw new NotFoundException(
+        `Semester with id '${query.semesterId}' not found.`,
+      );
+    }
+
+    // 2. Resolve scope
+    const departmentIds = await this.scopeResolverService.ResolveDepartmentIds(
+      query.semesterId,
+    );
+
+    // 3. Validate filters (same semantics as primary — departmentId/programId
+    // refer to course-owning dept/program here).
+    if (query.departmentId && departmentIds !== null) {
+      if (!departmentIds.includes(query.departmentId)) {
+        throw new ForbiddenException(
+          'Department is outside your authorized scope.',
+        );
+      }
+    }
+
+    if (query.programId) {
+      const program = await this.em.findOne(
+        Program,
+        { id: query.programId },
+        { populate: ['department'] },
+      );
+
+      if (!program) {
+        throw new NotFoundException(
+          `Program with id '${query.programId}' not found.`,
+        );
+      }
+
+      if (query.departmentId && program.department.id !== query.departmentId) {
+        throw new BadRequestException(
+          'Program does not belong to the specified department.',
+        );
+      }
+
+      if (
+        departmentIds !== null &&
+        !departmentIds.includes(program.department.id)
+      ) {
+        throw new ForbiddenException(
+          'Program is outside your authorized scope.',
+        );
+      }
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const offset = (page - 1) * limit;
+
+    if (departmentIds !== null && departmentIds.length === 0) {
+      return this.EmptyListResponse(page, limit);
+    }
+
+    const enrollmentFilter = this.BuildEnrollmentFilter(query, departmentIds, {
+      crossDeptOnly: true,
+    });
 
     const countResult: { count: string }[] = await this.em
       .getConnection()
@@ -93,24 +238,9 @@ export class FacultyService {
       );
     const totalItems = parseInt(countResult[0]?.count ?? '0', 10);
 
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const offset = (page - 1) * limit;
-
     if (totalItems === 0) {
-      return {
-        data: [],
-        meta: {
-          totalItems: 0,
-          itemCount: 0,
-          itemsPerPage: limit,
-          totalPages: 0,
-          currentPage: page,
-        },
-      };
+      return this.EmptyListResponse(page, limit);
     }
-
-    // 6. Get paginated distinct faculty IDs
 
     const userIdRows: { user_id: string }[] = await this.em
       .getConnection()
@@ -121,7 +251,19 @@ export class FacultyService {
       ]);
     const userIds = userIdRows.map((row) => row.user_id);
 
-    // 7. Batch-fetch faculty users and their scoped enrollments
+    if (userIds.length === 0) {
+      return {
+        data: [],
+        meta: {
+          totalItems,
+          itemCount: 0,
+          itemsPerPage: limit,
+          totalPages: Math.ceil(totalItems / limit),
+          currentPage: page,
+        },
+      };
+    }
+
     const [users, scopedEnrollments] = await Promise.all([
       this.em.find(User, { id: { $in: userIds } }),
       this.em.find(
@@ -138,7 +280,6 @@ export class FacultyService {
       ),
     ]);
 
-    // 8. Map to response — group course shortnames by user
     const userCourseMap = new Map<string, string[]>();
     for (const enrollment of scopedEnrollments) {
       const userId = enrollment.user.id;
@@ -152,7 +293,6 @@ export class FacultyService {
       }
     }
 
-    // Maintain the order from the paginated query
     const userMap = new Map(users.map((u) => [u.id, u]));
     const data: FacultyCardResponseDto[] = userIds
       .map((id) => {
@@ -201,9 +341,60 @@ export class FacultyService {
     return { count };
   }
 
+  private BuildUserFilter(
+    query: ListFacultyQueryDto,
+    departmentIds: string[] | null,
+  ): FilterQuery<User> {
+    const filter: Record<string, unknown> = {
+      roles: { $contains: [UserRole.FACULTY] },
+      isActive: true,
+    };
+
+    // Home-dept scoping: super-admin (null scope) still excludes NULL home;
+    // restricted scope narrows to the caller's departments.
+    if (departmentIds === null) {
+      filter.department = { $ne: null };
+    } else {
+      filter.department = { $in: departmentIds };
+    }
+
+    // departmentId / programId filter against home dept/program (user.*).
+    if (query.departmentId) {
+      filter.department = query.departmentId;
+    }
+
+    if (query.programId) {
+      filter.program = query.programId;
+    }
+
+    if (query.search) {
+      const escaped = this.EscapeLikeWildcards(query.search);
+      filter.fullName = { $ilike: `%${escaped}%` };
+    }
+
+    return filter as FilterQuery<User>;
+  }
+
+  private EmptyListResponse(
+    page: number,
+    limit: number,
+  ): FacultyListResponseDto {
+    return {
+      data: [],
+      meta: {
+        totalItems: 0,
+        itemCount: 0,
+        itemsPerPage: limit,
+        totalPages: 0,
+        currentPage: page,
+      },
+    };
+  }
+
   private BuildEnrollmentFilter(
     query: ListFacultyQueryDto,
     departmentIds: string[] | null,
+    options: { crossDeptOnly?: boolean } = {},
   ): EnrollmentFilterParts {
     const conditions: string[] = [
       "e.role IN ('editingteacher', 'teacher')",
@@ -242,6 +433,17 @@ export class FacultyService {
       const escaped = this.EscapeLikeWildcards(query.search);
       conditions.push("u.full_name ILIKE ? ESCAPE '\\'");
       params.push(`%${escaped}%`);
+    }
+
+    if (options.crossDeptOnly) {
+      // True cross-dept: home dept differs from course-owning dept, and the
+      // home dept must exist + not be soft-deleted (raw SQL bypasses the
+      // global MikroORM softDelete filter).
+      conditions.push('u.department_id IS NOT NULL');
+      conditions.push('u.department_id <> d.id');
+      conditions.push(
+        'EXISTS (SELECT 1 FROM department hd WHERE hd.id = u.department_id AND hd.deleted_at IS NULL)',
+      );
     }
 
     return { conditions, params };

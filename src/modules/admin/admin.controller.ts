@@ -5,8 +5,10 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -17,19 +19,23 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { UseJwtGuard } from 'src/security/decorators';
+import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-user.interceptor';
 import { UserRole } from '../auth/roles.enum';
 import { AdminService } from './services/admin.service';
 import { AssignInstitutionalRoleDto } from './dto/requests/assign-institutional-role.request.dto';
 import { RemoveInstitutionalRoleDto } from './dto/requests/remove-institutional-role.request.dto';
 import { ListUsersQueryDto } from './dto/requests/list-users-query.dto';
 import { DeanEligibleCategoriesQueryDto } from './dto/requests/dean-eligible-categories-query.dto';
+import { UpdateScopeAssignmentDto } from './dto/requests/update-scope-assignment.request.dto';
 import { AdminUserDetailResponseDto } from './dto/responses/admin-user-detail.response.dto';
 import { AdminUserListResponseDto } from './dto/responses/admin-user-list.response.dto';
+import { AdminUserScopeAssignmentResponseDto } from './dto/responses/admin-user-scope-assignment.response.dto';
 import { DeanEligibleCategoryResponseDto } from './dto/responses/dean-eligible-category.response.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
 @UseJwtGuard(UserRole.SUPER_ADMIN)
+@UseInterceptors(CurrentUserInterceptor)
 @ApiBearerAuth()
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
@@ -109,6 +115,29 @@ export class AdminController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<AdminUserDetailResponseDto> {
     return this.adminService.GetUserDetail(id);
+  }
+
+  @Patch('users/:id/scope-assignment')
+  @ApiOperation({
+    summary:
+      "Update a user's department/program scope assignment (manual override)",
+  })
+  @ApiParam({ name: 'id', type: String, description: 'User UUID' })
+  @ApiResponse({ status: 200, type: AdminUserScopeAssignmentResponseDto })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Validation failed (empty body, invalid UUID, or program/department mismatch)',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User, department, or program not found',
+  })
+  async UpdateUserScopeAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateScopeAssignmentDto,
+  ): Promise<AdminUserScopeAssignmentResponseDto> {
+    return this.adminService.UpdateUserScopeAssignment(id, dto);
   }
 
   @Get('institutional-roles/dean-eligible-categories')

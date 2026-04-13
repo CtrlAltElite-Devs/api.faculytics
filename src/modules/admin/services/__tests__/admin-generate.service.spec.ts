@@ -365,6 +365,7 @@ describe('AdminGenerateService', () => {
           semesterId: 'sem-1',
           courseId: 'course-1',
         }),
+        { skipAuthorization: true },
       );
     });
 

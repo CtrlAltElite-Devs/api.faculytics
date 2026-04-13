@@ -20,6 +20,7 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { CacheService } from '../../../common/cache/cache.service';
 import { AnalysisService } from '../../../analysis/analysis.service';
 import { CurrentUserService } from '../../../common/cls/current-user.service';
+import { ScopeResolverService } from '../../../common/services/scope-resolver.service';
 import { QuestionnaireStatus } from '../../lib/questionnaire.types';
 import UnitOfWork from '../../../common/unit-of-work';
 
@@ -122,6 +123,12 @@ describe('QuestionnaireService - Types & Versions', () => {
           provide: CurrentUserService,
           useValue: {
             getOrFail: jest.fn().mockReturnValue({ id: 'test-user' }),
+          },
+        },
+        {
+          provide: ScopeResolverService,
+          useValue: {
+            ResolveDepartmentIds: jest.fn(),
           },
         },
         {

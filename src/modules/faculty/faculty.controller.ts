@@ -32,6 +32,18 @@ export class FacultyController {
     return this.facultyService.ListFaculty(query);
   }
 
+  @Get('cross-department-teaching')
+  @ApiOperation({
+    summary:
+      'List faculty teaching courses outside their home department, scoped to caller',
+  })
+  @ApiResponse({ status: 200, type: FacultyListResponseDto })
+  async findCrossDepartmentTeaching(
+    @Query() query: ListFacultyQueryDto,
+  ): Promise<FacultyListResponseDto> {
+    return this.facultyService.ListCrossDepartmentTeaching(query);
+  }
+
   @Get(':facultyId/submission-count')
   @ApiOperation({
     summary: 'Get submission count for a faculty member in a semester',

@@ -126,6 +126,12 @@ export class AdminUserDetailResponseDto {
   @ApiPropertyOptional({ type: AdminUserScopedRelationDto, nullable: true })
   program: AdminUserScopedRelationDto | null;
 
+  @ApiProperty({ enum: ['auto', 'manual'] })
+  departmentSource: string;
+
+  @ApiProperty({ enum: ['auto', 'manual'] })
+  programSource: string;
+
   @ApiProperty({ type: [AdminEnrollmentItemDto] })
   enrollments: AdminEnrollmentItemDto[];
 
@@ -170,6 +176,8 @@ export class AdminUserDetailResponseDto {
             name: user.program.name,
           }
         : null,
+      departmentSource: user.departmentSource,
+      programSource: user.programSource,
       enrollments: enrollments.map((e) => AdminEnrollmentItemDto.Map(e)),
       institutionalRoles: institutionalRoles
         .map((ir) => AdminInstitutionalRoleItemDto.Map(ir))

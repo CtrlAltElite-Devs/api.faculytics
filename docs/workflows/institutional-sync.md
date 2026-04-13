@@ -31,8 +31,7 @@ flowchart TD
     Courses --> CourseOK{Success?}
     CourseOK -->|Yes| Enrollments[Phase 3: Enrollment Sync]
     CourseOK -->|No| Abort2([Abort — skip enrollments])
-    Enrollments --> Scopes[Phase 4: User Scope Backfill]
-    Scopes --> Roles[Phase 5: User Role Derivation]
+    Enrollments --> Roles[Phase 4: User Role Derivation]
     Roles --> Cache[Invalidate ENROLLMENTS_ME cache]
     Cache --> Done([Complete])
 ```
@@ -62,22 +61,23 @@ No additional Moodle API calls are needed for sections — group data is already
 
 ### Phase 4: User Scope Backfill
 
-After enrollments land, `backfillUserScopes()` loads each synced user, picks their "primary program" (the one they have the most active enrollments in; ties broken by lowest program UUID), and persists `campus`, `program`, and `department` onto the `User` row.
+`backfillUserScopes()` derives each synced user's `user.program` and `user.department` from enrollment majority (most enrollments wins; ties broken by alphabetical `moodleCategoryId` so the result is identical across dev/staging/prod for the same Moodle state). It calls the shared pure helper `deriveUserScopes()` from `scope-derivation.helper.ts` so the cron path and the login path (`MoodleUserHydrationService`) cannot diverge.
 
-Campus is resolved with a two-tier strategy:
+**Atomic source rule:** If EITHER `user.departmentSource = 'manual'` OR `user.programSource = 'manual'`, the user is skipped entirely. The two fields update together or not at all — preventing a `user.department ≠ user.program.department` inconsistency. An equality guard skips no-op writes so `updatedAt` is not bumped on idempotent runs.
 
-1. **Username prefix lookup** — split `userName` on `-`, uppercase the prefix, match against `Campus.code`. Handles the common `UCMN-jdoe` convention.
-2. **Category hierarchy fallback** — walk `program → department → semester → campus` when the prefix is missing or unmatched.
+**Campus backfill (fill-if-null only):** for users with `user.campus IS NULL`, the phase parses the username prefix (`<campus_code>-<id>`, e.g. `ucmn-262141935`), looks up `Campus.code = 'UCMN'`, and assigns it. This mirrors `UserRepository.UpsertFromMoodle`'s login-time behavior so cron-discovered users get a campus before they ever log in. **Existing campus values are never overwritten** — there is no `campus_source` column, so the only safe rule is "only fill if empty." Manual reassignments are preserved; an admin who clears a campus would see it re-derived on the next sync.
 
-The phase is wrapped in try/catch — a backfill failure logs a warning but does not fail the overall sync. These scope fields are consumed by `UserLoader` (populated alongside `campus` as `['campus', 'program', 'department']`) so scoped queries and the `MeResponse` DTO can return the full chain without extra round-trips.
-
-The same algorithm runs inline during login hydration via `MoodleUserHydrationService.deriveUserScopes()`, keeping the scope fields in sync from the user's very first login. See [Auth Hydration](./auth-hydration.md) for the full login flow.
+The phase logs an aggregate line: `Scope backfill: X derived, Y manual skipped, Z no enrollments, W campus assigned`.
 
 ### Phase 5: User Role Derivation
 
-After scope backfill, `deriveUserRoles()` batch-loads each synced user's active `Enrollment` rows and `UserInstitutionalRole` rows in parallel, groups them per user, and calls `User.updateRolesFromEnrollments()` to recompute the `roles` array. Without this phase, freshly synced users had empty role arrays until their first login.
+After enrollments land, `deriveUserRoles()` batch-loads each synced user's active `Enrollment` rows and `UserInstitutionalRole` rows in parallel, groups them per user, and calls `User.updateRolesFromEnrollments()` to recompute the `roles` array.
 
 `updateRolesFromEnrollments()` snapshots existing `SUPER_ADMIN` and `ADMIN` roles and merges them back after recomputing. Those two roles are manually granted outside Moodle — the snapshot prevents a sync from ever revoking a role it never granted. The phase is non-fatal (try/catch); role drift is preferred over a broken sync run.
+
+### Source Tracking
+
+`user.departmentSource` and `user.programSource` (`'auto' | 'manual'`) follow the same pattern as `UserInstitutionalRole.source`. New users default to `'auto'` and are eligible for sync-driven derivation. Manual assignments (admin UI, FAC-127) flip the source to `'manual'`, after which the bulk sync and the login-path hydration both skip the user atomically. Reverting to `'auto'` re-enables derivation on the next sync.
 
 ## Observability — SyncLog
 

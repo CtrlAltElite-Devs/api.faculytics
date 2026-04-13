@@ -124,12 +124,14 @@ Manual roles (`source=manual`) are never modified by the hydration process. They
 
 After institutional role resolution, the user's `roles` array is derived from both enrollment roles (via `MoodleRoleMapping`) and institutional roles. A user can have multiple roles (e.g., `[FACULTY, DEAN]` or `[FACULTY, CHAIRPERSON]`).
 
-Manually-granted `SUPER_ADMIN` and `ADMIN` roles are **never** dropped by hydration or by the batch role-derivation phase in institutional sync. `User.updateRolesFromEnrollments()` snapshots them before recomputing and merges them back in — hydration can promote a user (add FACULTY/CHAIRPERSON) but cannot revoke out-of-band admin roles. See [Institutional Sync — Phase 4](./institutional-sync.md#phase-4-user-role-derivation).
+Manually-granted `SUPER_ADMIN` and `ADMIN` roles are **never** dropped by hydration or by the batch role-derivation phase in institutional sync. `User.updateRolesFromEnrollments()` snapshots them before recomputing and merges them back in — hydration can promote a user (add FACULTY/CHAIRPERSON) but cannot revoke out-of-band admin roles. See [Institutional Sync — Phase 5](./institutional-sync.md#phase-5-user-role-derivation).
 
-## User Scope Fields (Frozen)
+## User Scope Derivation
 
-The fields `user.campus`, `user.program`, and `user.department` are no longer derived during login. Existing values remain frozen as of FAC-124.
+After institutional role resolution, hydration derives `user.program` and `user.department` from the user's freshly-fetched Moodle enrollments by calling the shared pure helper `deriveUserScopes()` from `scope-derivation.helper.ts`. The bulk Moodle sync (`EnrollmentSyncService.backfillUserScopes`) calls the same helper, so the cron path and the login path always converge on the same `(primaryProgram, primaryDepartment)` for a given enrollment set.
 
-> **Historical context:** These fields were previously derived from the user's "primary program" (most enrollments). This represented teaching load rather than institutional belonging. FAC-125 will introduce `home_department_id` populated from Moodle profile custom fields as the authoritative source.
+**Atomic source guard:** if EITHER `user.departmentSource = 'manual'` OR `user.programSource = 'manual'`, the hydration step skips derivation entirely. Manual assignments (admin UI, FAC-127) survive Moodle re-syncs. Reverting either field to `'auto'` re-enables derivation on the next login.
 
-`MeResponse` still exposes `campus`, `program`, and `department` for clients that rely on them, but values will not change until FAC-125's backfill completes.
+**Campus is not touched here.** `user.campus` is set only by `UserRepository.UpsertFromMoodle` from the username prefix at login time. There is no `campusSource` column.
+
+`MeResponse` exposes `campus`, `program`, and `department` from these derived/manual values.

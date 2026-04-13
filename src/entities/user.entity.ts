@@ -1,7 +1,6 @@
 import {
   Collection,
   Entity,
-  Index,
   ManyToOne,
   OneToMany,
   Property,
@@ -19,10 +18,6 @@ import { UserInstitutionalRole } from './user-institutional-role.entity';
 import { UserRole, MoodleRoleMapping } from '../modules/auth/roles.enum';
 
 @Entity({ repository: () => UserRepository })
-@Index({
-  name: 'user_home_department_id_index',
-  properties: ['homeDepartment'],
-})
 export class User extends CustomBaseEntity {
   @Property({ unique: true })
   userName: string;
@@ -49,21 +44,30 @@ export class User extends CustomBaseEntity {
   campus?: Campus;
 
   /**
-   * Primary teaching department derived from enrollment load.
-   * Flaps with Moodle sync. Do NOT use for scoping or authorization.
+   * User's institutional department. Auto-derived from enrollment majority
+   * (see EnrollmentSyncService.backfillUserScopes), or manually assigned via
+   * admin UI (FAC-127). Manual assignments are protected from sync overwrites
+   * via departmentSource = 'manual'.
    */
   @ManyToOne(() => Department, { nullable: true })
   department?: Department;
 
   /**
-   * Institutional home department. Stable across enrollment changes.
-   * Use this for scoping queries and dean authorization.
+   * User's institutional program. Auto-derived from enrollment majority
+   * (most enrollments wins; tiebreaker = alphabetically first moodleCategoryId).
+   * Manual assignments are protected via programSource = 'manual'.
    */
-  @ManyToOne(() => Department, { nullable: true })
-  homeDepartment?: Department;
-
   @ManyToOne(() => Program, { nullable: true })
   program?: Program;
+
+  // Literal 'auto' (not InstitutionalRoleSource.AUTO): user-institutional-role.entity
+  // imports User, so the enum is undefined at this decorator's eval time when the
+  // cycle resolves user.entity first.
+  @Property({ default: 'auto' })
+  departmentSource!: string;
+
+  @Property({ default: 'auto' })
+  programSource!: string;
 
   @OneToMany(() => MoodleToken, (token) => token.user)
   moodleTokens = new Collection<MoodleToken>(this);
@@ -93,6 +97,8 @@ export class User extends CustomBaseEntity {
     user.fullName = siteInfoData.fullname;
     user.lastLoginAt = new Date();
     user.isActive = true;
+    user.departmentSource = 'auto';
+    user.programSource = 'auto';
 
     return user;
   }

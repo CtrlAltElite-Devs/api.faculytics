@@ -19,6 +19,7 @@ import {
   MoodleCourseUserGroupsResponse,
 } from '../lib/moodle.types';
 import { UserRole } from 'src/modules/auth/roles.enum';
+import { deriveUserScopes } from './scope-derivation.helper';
 
 @Injectable()
 export class MoodleUserHydrationService {
@@ -240,6 +241,36 @@ export class MoodleUserHydrationService {
         tx,
         moodleToken,
       );
+
+      // 4. Derive department/program from enrollment majority (atomic source guard)
+      if (
+        user.departmentSource !== (InstitutionalRoleSource.MANUAL as string) &&
+        user.programSource !== (InstitutionalRoleSource.MANUAL as string)
+      ) {
+        const userEnrollments = remoteCourses
+          .map((rc) => ({ program: programCache.get(rc.category) }))
+          .filter((e): e is { program: Program } => !!e.program);
+
+        const allPrograms = [...new Set(userEnrollments.map((e) => e.program))];
+        if (allPrograms.length > 0) {
+          await tx.populate(allPrograms, ['department']);
+        }
+
+        const result = deriveUserScopes({ enrollments: userEnrollments });
+
+        if (result.primaryProgram) {
+          const programChanged = user.program?.id !== result.primaryProgram.id;
+          const departmentChanged =
+            user.department?.id !== result.primaryDepartment?.id;
+
+          if (programChanged || departmentChanged) {
+            user.program = result.primaryProgram;
+            user.department = result.primaryDepartment ?? undefined;
+            user.programSource = InstitutionalRoleSource.AUTO;
+            user.departmentSource = InstitutionalRoleSource.AUTO;
+          }
+        }
+      }
 
       // Derive user roles from active enrollments and institutional roles
       const activeEnrollments = await tx.find(Enrollment, {

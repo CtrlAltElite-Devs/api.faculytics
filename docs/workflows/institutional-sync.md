@@ -59,13 +59,25 @@ Uses a 3-phase architecture to avoid deadlocks from overlapping user rows:
 
 No additional Moodle API calls are needed for sections — group data is already returned by the enrolled users endpoint.
 
-### Phase 4: User Role Derivation
+### Phase 4: User Scope Backfill
+
+`backfillUserScopes()` derives each synced user's `user.program` and `user.department` from enrollment majority (most enrollments wins; ties broken by alphabetical `moodleCategoryId` so the result is identical across dev/staging/prod for the same Moodle state). It calls the shared pure helper `deriveUserScopes()` from `scope-derivation.helper.ts` so the cron path and the login path (`MoodleUserHydrationService`) cannot diverge.
+
+**Atomic source rule:** If EITHER `user.departmentSource = 'manual'` OR `user.programSource = 'manual'`, the user is skipped entirely. The two fields update together or not at all — preventing a `user.department ≠ user.program.department` inconsistency. An equality guard skips no-op writes so `updatedAt` is not bumped on idempotent runs.
+
+**Campus backfill (fill-if-null only):** for users with `user.campus IS NULL`, the phase parses the username prefix (`<campus_code>-<id>`, e.g. `ucmn-262141935`), looks up `Campus.code = 'UCMN'`, and assigns it. This mirrors `UserRepository.UpsertFromMoodle`'s login-time behavior so cron-discovered users get a campus before they ever log in. **Existing campus values are never overwritten** — there is no `campus_source` column, so the only safe rule is "only fill if empty." Manual reassignments are preserved; an admin who clears a campus would see it re-derived on the next sync.
+
+The phase logs an aggregate line: `Scope backfill: X derived, Y manual skipped, Z no enrollments, W campus assigned`.
+
+### Phase 5: User Role Derivation
 
 After enrollments land, `deriveUserRoles()` batch-loads each synced user's active `Enrollment` rows and `UserInstitutionalRole` rows in parallel, groups them per user, and calls `User.updateRolesFromEnrollments()` to recompute the `roles` array.
 
 `updateRolesFromEnrollments()` snapshots existing `SUPER_ADMIN` and `ADMIN` roles and merges them back after recomputing. Those two roles are manually granted outside Moodle — the snapshot prevents a sync from ever revoking a role it never granted. The phase is non-fatal (try/catch); role drift is preferred over a broken sync run.
 
-> **Note:** Prior to FAC-124, a Phase 4 "User Scope Backfill" derived `user.campus`, `user.program`, and `user.department` from enrollment counts. This was removed because these fields represented teaching load rather than institutional belonging. FAC-125 will introduce the replacement `home_department_id` mechanism.
+### Source Tracking
+
+`user.departmentSource` and `user.programSource` (`'auto' | 'manual'`) follow the same pattern as `UserInstitutionalRole.source`. New users default to `'auto'` and are eligible for sync-driven derivation. Manual assignments (admin UI, FAC-127) flip the source to `'manual'`, after which the bulk sync and the login-path hydration both skip the user atomically. Reverting to `'auto'` re-enables derivation on the next sync.
 
 ## Observability — SyncLog
 

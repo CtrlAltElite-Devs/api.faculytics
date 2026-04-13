@@ -316,3 +316,127 @@ describe('EnrollmentSyncService.backfillUserScopes', () => {
     );
   });
 });
+
+// FAC-131a — verify Moodle sync skip guard prevents local-* username
+// collisions with the user_user_name_unique constraint.
+describe('EnrollmentSyncService.syncAllUsers — local-* collision guard', () => {
+  let service: EnrollmentSyncService;
+  let rootEm: { fork: jest.Mock };
+  let fork: {
+    upsertMany: jest.Mock;
+    upsert: jest.Mock;
+    create: jest.Mock;
+  };
+  let warnSpy: jest.SpyInstance;
+
+  const makeRemote = (id: number, username: string) =>
+    ({
+      id,
+      username,
+      firstname: 'F',
+      lastname: 'L',
+      fullname: `${username}`,
+      profileimageurl: '',
+    }) as unknown as MoodleEnrolledUser;
+
+  beforeEach(async () => {
+    fork = {
+      upsertMany: jest.fn().mockResolvedValue(undefined),
+      upsert: jest.fn().mockResolvedValue(undefined),
+      create: jest
+        .fn()
+        .mockImplementation((_entity: unknown, data: unknown) => data),
+    } as typeof fork & { create: jest.Mock };
+    rootEm = { fork: jest.fn(() => fork) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        EnrollmentSyncService,
+        { provide: EntityManager, useValue: rootEm },
+        { provide: MoodleService, useValue: {} },
+        { provide: UnitOfWork, useValue: {} },
+      ],
+    }).compile();
+
+    service = module.get(EnrollmentSyncService);
+    warnSpy = jest
+      .spyOn((service as unknown as { logger: Logger }).logger, 'warn')
+      .mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('skips Moodle users whose username starts with "local-" and logs a warn', async () => {
+    const remoteUsers = [
+      makeRemote(12345, 'local-testadmin'),
+      makeRemote(12346, 'jdoe'),
+    ];
+    const course = {} as Course;
+
+    await (
+      service as unknown as {
+        syncAllUsers: (
+          f: { course: Course; remoteUsers: MoodleEnrolledUser[] }[],
+        ) => Promise<void>;
+      }
+    ).syncAllUsers([{ course, remoteUsers }]);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Skipping Moodle user with reserved "local-" username prefix',
+      ),
+    );
+
+    expect(fork.upsertMany).toHaveBeenCalledTimes(1);
+    const [, payload] = fork.upsertMany.mock.calls[0] as [
+      unknown,
+      Array<{ userName: string; campusSource: string }>,
+    ];
+    expect(payload).toHaveLength(1);
+    expect(payload[0].userName).toBe('jdoe');
+    expect(payload[0].campusSource).toBe(InstitutionalRoleSource.AUTO);
+  });
+
+  it('sets campusSource=AUTO on every created User payload (FAC-131a)', async () => {
+    const remoteUsers = [makeRemote(1, 'jdoe'), makeRemote(2, 'asmith')];
+    const course = {} as Course;
+
+    await (
+      service as unknown as {
+        syncAllUsers: (
+          f: { course: Course; remoteUsers: MoodleEnrolledUser[] }[],
+        ) => Promise<void>;
+      }
+    ).syncAllUsers([{ course, remoteUsers }]);
+
+    const [, payload] = fork.upsertMany.mock.calls[0] as [
+      unknown,
+      Array<{ userName: string; campusSource: InstitutionalRoleSource }>,
+    ];
+    expect(payload).toHaveLength(2);
+    expect(
+      payload.every((u) => u.campusSource === InstitutionalRoleSource.AUTO),
+    ).toBe(true);
+  });
+
+  it('skips case-insensitively (LOCAL-foo)', async () => {
+    const course = {} as Course;
+
+    await (
+      service as unknown as {
+        syncAllUsers: (
+          f: { course: Course; remoteUsers: MoodleEnrolledUser[] }[],
+        ) => Promise<void>;
+      }
+    ).syncAllUsers([{ course, remoteUsers: [makeRemote(99, 'LOCAL-shouty')] }]);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Skipping Moodle user with reserved "local-" username prefix',
+      ),
+    );
+    expect(fork.upsertMany).not.toHaveBeenCalled();
+  });
+});

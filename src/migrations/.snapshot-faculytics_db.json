@@ -8053,6 +8053,22 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "string"
+        },
+        "campus_source": {
+          "name": "campus_source",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": "'auto'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
         }
       },
       "name": "user",

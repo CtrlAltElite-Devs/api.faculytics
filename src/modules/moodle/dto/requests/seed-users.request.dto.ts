@@ -4,6 +4,7 @@ import {
   IsIn,
   IsInt,
   IsString,
+  Matches,
   Max,
   Min,
   ArrayMinSize,
@@ -29,8 +30,16 @@ export class SeedUsersRequestDto {
   @IsIn(['student', 'faculty'])
   role: 'student' | 'faculty';
 
-  @ApiProperty({ description: 'Campus code', example: 'ucmn' })
+  @ApiProperty({
+    description:
+      'Campus code used as the username prefix (reserved "local" is forbidden to avoid collisions with Faculytics-local accounts)',
+    example: 'ucmn',
+  })
   @IsString()
+  @Matches(/^(?!local$)[a-z0-9][a-z0-9._-]*$/i, {
+    message:
+      'campus code must not equal the reserved "local" prefix used by Faculytics-local accounts',
+  })
   campus: string;
 
   @ApiProperty({

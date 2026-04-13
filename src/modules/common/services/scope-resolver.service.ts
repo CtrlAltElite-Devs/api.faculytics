@@ -5,6 +5,7 @@ import { UserInstitutionalRole } from 'src/entities/user-institutional-role.enti
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
 import { Department } from 'src/entities/department.entity';
 import { Program } from 'src/entities/program.entity';
+import { Semester } from 'src/entities/semester.entity';
 import { CurrentUserService } from '../cls/current-user.service';
 
 @Injectable()
@@ -33,6 +34,10 @@ export class ScopeResolverService {
       return this.resolveChairpersonDepartments(user.id, semesterId);
     }
 
+    if (user.roles.includes(UserRole.CAMPUS_HEAD)) {
+      return this.resolveCampusHeadDepartmentIds(user.id, semesterId);
+    }
+
     throw new ForbiddenException(
       'User does not have a role with scope access.',
     );
@@ -40,7 +45,8 @@ export class ScopeResolverService {
 
   /**
    * Resolves program IDs the user is allowed to access for a given semester.
-   * Returns `null` for unrestricted access (super admin, dean), or `string[]` of program UUIDs.
+   * Returns `null` for unrestricted access (super admin, dean, campus head),
+   * or `string[]` of program UUIDs.
    */
   async ResolveProgramIds(semesterId: string): Promise<string[] | null> {
     const user = this.currentUserService.getOrFail();
@@ -51,6 +57,12 @@ export class ScopeResolverService {
 
     if (user.roles.includes(UserRole.DEAN)) {
       return null; // Deans see all programs in their departments
+    }
+
+    if (user.roles.includes(UserRole.CAMPUS_HEAD)) {
+      // Campus Head is unrestricted at program level — the department-level
+      // filter in ResolveDepartmentIds is the true scope boundary.
+      return null;
     }
 
     if (user.roles.includes(UserRole.CHAIRPERSON)) {
@@ -68,7 +80,8 @@ export class ScopeResolverService {
 
   /**
    * Resolves program codes the user is allowed to access for a given semester.
-   * Returns `null` for unrestricted access (super admin, dean), or `string[]` of program codes.
+   * Returns `null` for unrestricted access (super admin, dean, campus head),
+   * or `string[]` of program codes.
    */
   async ResolveProgramCodes(semesterId: string): Promise<string[] | null> {
     const user = this.currentUserService.getOrFail();
@@ -78,6 +91,10 @@ export class ScopeResolverService {
     }
 
     if (user.roles.includes(UserRole.DEAN)) {
+      return null;
+    }
+
+    if (user.roles.includes(UserRole.CAMPUS_HEAD)) {
       return null;
     }
 
@@ -161,6 +178,40 @@ export class ScopeResolverService {
       semester: semesterId,
     });
 
+    return departments.map((d) => d.id);
+  }
+
+  private async resolveCampusHeadDepartmentIds(
+    userId: string,
+    semesterId: string,
+  ): Promise<string[]> {
+    const roles = await this.em.find(
+      UserInstitutionalRole,
+      { user: userId, role: UserRole.CAMPUS_HEAD as string },
+      { populate: ['moodleCategory'] },
+    );
+    if (roles.length === 0) return [];
+
+    const promotedCategoryIds = new Set(
+      roles
+        .map((r) => r.moodleCategory?.moodleCategoryId)
+        .filter((id): id is number => id != null),
+    );
+
+    const semester = await this.em.findOne(
+      Semester,
+      { id: semesterId },
+      { populate: ['campus'] },
+    );
+    if (!semester?.campus?.moodleCategoryId) return [];
+
+    if (!promotedCategoryIds.has(semester.campus.moodleCategoryId)) {
+      return [];
+    }
+
+    const departments = await this.em.find(Department, {
+      semester: semesterId,
+    });
     return departments.map((d) => d.id);
   }
 

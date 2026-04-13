@@ -3,7 +3,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { env } from 'src/configurations/env';
 import { Test, TestingModule } from '@nestjs/testing';
-import { QuestionnaireService } from './questionnaire.service';
+import {
+  QuestionnaireService,
+  SUBMISSION_TYPE_MATRIX,
+} from './questionnaire.service';
 import { getRepositoryToken } from '@mikro-orm/nestjs';
 import { EntityRepository } from '@mikro-orm/postgresql';
 import {
@@ -24,6 +27,7 @@ import { CacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-namespaces';
 import { AnalysisService } from '../../analysis/analysis.service';
 import { CurrentUserService } from '../../common/cls/current-user.service';
+import { ScopeResolverService } from '../../common/services/scope-resolver.service';
 import {
   BadRequestException,
   ConflictException,
@@ -34,6 +38,7 @@ import { UserRole } from '../../auth/roles.enum';
 import {
   EnrollmentRole,
   QuestionnaireStatus,
+  RespondentRole,
 } from '../lib/questionnaire.types';
 import UnitOfWork from '../../common/unit-of-work';
 
@@ -46,6 +51,7 @@ describe('QuestionnaireService', () => {
   let versionRepo: jest.Mocked<EntityRepository<QuestionnaireVersion>>;
   let questionnaireRepo: jest.Mocked<EntityRepository<Questionnaire>>;
   let analysisService: { EnqueueJob: jest.Mock };
+  let scopeResolverService: { ResolveDepartmentIds: jest.Mock };
   let cacheService: {
     invalidateNamespace: jest.Mock;
     invalidateNamespaces: jest.Mock;
@@ -177,6 +183,14 @@ describe('QuestionnaireService', () => {
             getOrFail: jest.fn().mockReturnValue({ id: RESPONDENT_ID }),
           },
         },
+        {
+          provide: ScopeResolverService,
+          useValue: {
+            ResolveDepartmentIds: jest
+              .fn()
+              .mockResolvedValue(['fac126-dept-1']),
+          },
+        },
       ],
     }).compile();
 
@@ -189,6 +203,7 @@ describe('QuestionnaireService', () => {
     questionnaireRepo = module.get(getRepositoryToken(Questionnaire));
     analysisService = module.get(AnalysisService);
     cacheService = module.get(CacheService);
+    scopeResolverService = module.get(ScopeResolverService);
   });
 
   it('should be defined', () => {
@@ -210,7 +225,7 @@ describe('QuestionnaireService', () => {
       isActive: true,
       questionnaire: {
         status: QuestionnaireStatus.ACTIVE,
-        type: { code: 'T1' },
+        type: { code: 'FACULTY_FEEDBACK' },
       },
       schemaSnapshot: {
         meta: { maxScore: 5 },
@@ -230,7 +245,7 @@ describe('QuestionnaireService', () => {
       userName: 'fac123',
       fullName: 'Faculty Name',
       campus: { code: 'C1', name: 'Campus 1' },
-      department: { code: 'D1', name: 'Dept 1' },
+      department: { id: 'fac126-dept-1', code: 'D1', name: 'Dept 1' },
       program: { code: 'P1', name: 'Prog 1' },
     };
     const mockSemester = {
@@ -460,6 +475,14 @@ describe('QuestionnaireService', () => {
 
     it('should allow Dean to submit without enrollment', async () => {
       const deanRespondent = { ...mockRespondent, roles: [UserRole.DEAN] };
+      const deanVersion = {
+        ...mockVersion,
+        questionnaire: {
+          ...mockVersion.questionnaire,
+          type: { code: 'FACULTY_IN_CLASSROOM' },
+        },
+      };
+      versionRepo.findOne.mockResolvedValue(deanVersion as any);
       (em.findOne as jest.Mock).mockImplementation((entity, id) => {
         if (entity === User && id === RESPONDENT_ID) return deanRespondent;
         if (entity === User && id === FACULTY_ID) return mockFaculty;
@@ -480,6 +503,318 @@ describe('QuestionnaireService', () => {
 
       const result = await service.submitQuestionnaire(mockData);
       expect(result).toBeDefined();
+    });
+
+    describe('authorization gate', () => {
+      const mockDataNoCourse = {
+        versionId: 'v1',
+        respondentId: RESPONDENT_ID,
+        facultyId: FACULTY_ID,
+        semesterId: SEMESTER_ID,
+        answers: { q1: 4 },
+      };
+
+      const cloneVersionWithType = (code: string) => ({
+        ...mockVersion,
+        questionnaire: {
+          ...mockVersion.questionnaire,
+          type: { code },
+        },
+      });
+
+      const setRespondent = (roles: UserRole[]) => {
+        const respondent = { ...mockRespondent, roles };
+        (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+          if (entity === User && id === RESPONDENT_ID) return respondent;
+          if (entity === User && id === FACULTY_ID) return mockFaculty;
+          if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+          if (entity === Course && id === COURSE_ID) return mockCourse;
+          return null;
+        });
+      };
+
+      beforeEach(() => {
+        submissionRepo.findOne.mockResolvedValue(null);
+        enrollmentRepo.findOne.mockResolvedValue({ isActive: true } as any);
+      });
+
+      it('student FACULTY_FEEDBACK succeeds', async () => {
+        const result = await service.submitQuestionnaire(mockDataNoCourse);
+        expect(result).toBeDefined();
+        expect(
+          scopeResolverService.ResolveDepartmentIds,
+        ).not.toHaveBeenCalled();
+        expect(submissionRepo.create).toHaveBeenCalledWith(
+          expect.objectContaining({ respondentRole: RespondentRole.STUDENT }),
+        );
+      });
+
+      it('student FACULTY_IN_CLASSROOM rejected with type message', async () => {
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        enrollmentRepo.findOne.mockClear();
+        await expect(
+          service.submitQuestionnaire(mockDataNoCourse),
+        ).rejects.toThrow(
+          new ForbiddenException(
+            'Your role is not permitted to submit this questionnaire type.',
+          ),
+        );
+        expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it('student FACULTY_OUT_OF_CLASSROOM rejected with type message', async () => {
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_OUT_OF_CLASSROOM') as any,
+        );
+        enrollmentRepo.findOne.mockClear();
+        await expect(
+          service.submitQuestionnaire(mockDataNoCourse),
+        ).rejects.toThrow(
+          new ForbiddenException(
+            'Your role is not permitted to submit this questionnaire type.',
+          ),
+        );
+        expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it('dean in-scope FACULTY_IN_CLASSROOM succeeds', async () => {
+        setRespondent([UserRole.DEAN]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        const result = await service.submitQuestionnaire(mockDataNoCourse);
+        expect(result).toBeDefined();
+        expect(scopeResolverService.ResolveDepartmentIds).toHaveBeenCalledTimes(
+          1,
+        );
+        expect(submissionRepo.create).toHaveBeenCalledWith(
+          expect.objectContaining({ respondentRole: RespondentRole.DEAN }),
+        );
+      });
+
+      it('dean in-scope FACULTY_OUT_OF_CLASSROOM succeeds', async () => {
+        setRespondent([UserRole.DEAN]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_OUT_OF_CLASSROOM') as any,
+        );
+        const result = await service.submitQuestionnaire(mockDataNoCourse);
+        expect(result).toBeDefined();
+      });
+
+      it('dean out-of-scope rejected with scope message', async () => {
+        setRespondent([UserRole.DEAN]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        scopeResolverService.ResolveDepartmentIds.mockResolvedValueOnce([
+          'other-dept',
+        ]);
+        enrollmentRepo.findOne.mockClear();
+        await expect(
+          service.submitQuestionnaire(mockDataNoCourse),
+        ).rejects.toThrow(
+          new ForbiddenException('Faculty is not within your scope.'),
+        );
+        expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it('dean FACULTY_FEEDBACK rejected with type message', async () => {
+        setRespondent([UserRole.DEAN]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_FEEDBACK') as any,
+        );
+        enrollmentRepo.findOne.mockClear();
+        scopeResolverService.ResolveDepartmentIds.mockClear();
+        await expect(
+          service.submitQuestionnaire(mockDataNoCourse),
+        ).rejects.toThrow(
+          new ForbiddenException(
+            'Your role is not permitted to submit this questionnaire type.',
+          ),
+        );
+        expect(
+          scopeResolverService.ResolveDepartmentIds,
+        ).not.toHaveBeenCalled();
+        expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it('chairperson out-of-scope rejected with scope message + empty-scope warn', async () => {
+        setRespondent([UserRole.CHAIRPERSON]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        scopeResolverService.ResolveDepartmentIds.mockResolvedValueOnce([]);
+        const warnSpy = jest
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+        enrollmentRepo.findOne.mockClear();
+        await expect(
+          service.submitQuestionnaire(mockDataNoCourse),
+        ).rejects.toThrow(
+          new ForbiddenException('Faculty is not within your scope.'),
+        );
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('empty department scope'),
+        );
+        expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
+        warnSpy.mockRestore();
+      });
+
+      it('chairperson FACULTY_FEEDBACK rejected with type message', async () => {
+        setRespondent([UserRole.CHAIRPERSON]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_FEEDBACK') as any,
+        );
+        enrollmentRepo.findOne.mockClear();
+        await expect(
+          service.submitQuestionnaire(mockDataNoCourse),
+        ).rejects.toThrow(
+          new ForbiddenException(
+            'Your role is not permitted to submit this questionnaire type.',
+          ),
+        );
+        expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it('dean + null faculty.department rejected with scope message', async () => {
+        const respondent = { ...mockRespondent, roles: [UserRole.DEAN] };
+        const facultyNoDept = { ...mockFaculty, department: null };
+        (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+          if (entity === User && id === RESPONDENT_ID) return respondent;
+          if (entity === User && id === FACULTY_ID) return facultyNoDept;
+          if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+          if (entity === Course && id === COURSE_ID) return mockCourse;
+          return null;
+        });
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        enrollmentRepo.findOne.mockClear();
+        await expect(
+          service.submitQuestionnaire(mockDataNoCourse),
+        ).rejects.toThrow(
+          new ForbiddenException('Faculty is not within your scope.'),
+        );
+        expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it('super admin + FACULTY_FEEDBACK succeeds and ScopeResolver NOT called', async () => {
+        setRespondent([UserRole.SUPER_ADMIN]);
+        const result = await service.submitQuestionnaire(mockDataNoCourse);
+        expect(result).toBeDefined();
+        expect(
+          scopeResolverService.ResolveDepartmentIds,
+        ).not.toHaveBeenCalled();
+      });
+
+      it('super admin + FACULTY_IN_CLASSROOM succeeds and ScopeResolver NOT called', async () => {
+        setRespondent([UserRole.SUPER_ADMIN]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        const result = await service.submitQuestionnaire(mockDataNoCourse);
+        expect(result).toBeDefined();
+        expect(
+          scopeResolverService.ResolveDepartmentIds,
+        ).not.toHaveBeenCalled();
+      });
+
+      it('skipAuthorization bypasses matrix (student + FACULTY_IN_CLASSROOM)', async () => {
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        const warnSpy = jest
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+        const result = await service.submitQuestionnaire(mockDataNoCourse, {
+          skipAuthorization: true,
+        });
+        expect(result).toBeDefined();
+        expect(
+          scopeResolverService.ResolveDepartmentIds,
+        ).not.toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('skipAuthorization'),
+        );
+        warnSpy.mockRestore();
+      });
+
+      it('skipAuthorization bypasses scope (dean + out-of-scope)', async () => {
+        setRespondent([UserRole.DEAN]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        scopeResolverService.ResolveDepartmentIds.mockResolvedValueOnce([
+          'other-dept',
+        ]);
+        const result = await service.submitQuestionnaire(mockDataNoCourse, {
+          skipAuthorization: true,
+        });
+        expect(result).toBeDefined();
+        expect(
+          scopeResolverService.ResolveDepartmentIds,
+        ).not.toHaveBeenCalled();
+      });
+
+      it('matrix exhaustiveness — every seeded type code is covered', () => {
+        const seededTypeCodes = [
+          'FACULTY_IN_CLASSROOM',
+          'FACULTY_OUT_OF_CLASSROOM',
+          'FACULTY_FEEDBACK',
+        ];
+        const allMatrixTypes = new Set<string>();
+        for (const set of Object.values(SUBMISSION_TYPE_MATRIX)) {
+          for (const code of set) allMatrixTypes.add(code);
+        }
+        for (const code of seededTypeCodes) {
+          expect(allMatrixTypes.has(code)).toBe(true);
+        }
+      });
+
+      it('dean in-scope FACULTY_IN_CLASSROOM with course — both gates and enrollment-skip run in sequence', async () => {
+        setRespondent([UserRole.DEAN]);
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
+        );
+        enrollmentRepo.findOne.mockReset();
+        enrollmentRepo.findOne.mockImplementation(((
+          criteria: Record<string, any>,
+        ) => {
+          if (criteria.role === EnrollmentRole.EDITING_TEACHER)
+            return Promise.resolve({ isActive: true });
+          return Promise.resolve(null);
+        }) as any);
+
+        const result = await service.submitQuestionnaire(mockData);
+        expect(result).toBeDefined();
+        expect(scopeResolverService.ResolveDepartmentIds).toHaveBeenCalledTimes(
+          1,
+        );
+        expect(enrollmentRepo.findOne).toHaveBeenCalledTimes(1);
+        expect(enrollmentRepo.findOne).toHaveBeenCalledWith(
+          expect.objectContaining({ role: EnrollmentRole.EDITING_TEACHER }),
+        );
+      });
+
+      it('recorded respondentRole for [SUPER_ADMIN, DEAN] overlap is DEAN', async () => {
+        setRespondent([UserRole.SUPER_ADMIN, UserRole.DEAN]);
+        const result = await service.submitQuestionnaire(mockDataNoCourse);
+        expect(result).toBeDefined();
+        expect(
+          scopeResolverService.ResolveDepartmentIds,
+        ).not.toHaveBeenCalled();
+        expect(submissionRepo.create).toHaveBeenCalledWith(
+          expect.objectContaining({ respondentRole: RespondentRole.DEAN }),
+        );
+      });
+
+      it.todo(
+        'student FACULTY_FEEDBACK must validate enrollment — tracked as follow-up ticket',
+      );
     });
   });
 

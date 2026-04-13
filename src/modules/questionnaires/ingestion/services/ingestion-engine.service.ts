@@ -180,6 +180,7 @@ export class IngestionEngine {
             mapped,
             {
               skipAnalysis: true,
+              skipAuthorization: true,
             },
           );
           throw new DryRunRollbackError();
@@ -194,6 +195,7 @@ export class IngestionEngine {
 
     return this.questionnaireService.submitQuestionnaire(mapped, {
       skipAnalysis: false,
+      skipAuthorization: true,
     });
   }
 

@@ -52,6 +52,22 @@ import { CurrentUserService } from '../../common/cls/current-user.service';
 import { env } from 'src/configurations/env';
 import { cleanText } from '../utils/clean-text';
 import UnitOfWork from '../../common/unit-of-work';
+import { ScopeResolverService } from '../../common/services/scope-resolver.service';
+
+export const SUBMISSION_TYPE_MATRIX: Record<
+  RespondentRole,
+  ReadonlySet<string>
+> = {
+  [RespondentRole.STUDENT]: new Set(['FACULTY_FEEDBACK']),
+  [RespondentRole.DEAN]: new Set([
+    'FACULTY_IN_CLASSROOM',
+    'FACULTY_OUT_OF_CLASSROOM',
+  ]),
+  [RespondentRole.CHAIRPERSON]: new Set([
+    'FACULTY_IN_CLASSROOM',
+    'FACULTY_OUT_OF_CLASSROOM',
+  ]),
+};
 
 @Injectable()
 export class QuestionnaireService {
@@ -76,6 +92,7 @@ export class QuestionnaireService {
     private readonly cacheService: CacheService,
     private readonly analysisService: AnalysisService,
     private readonly currentUserService: CurrentUserService,
+    private readonly scopeResolverService: ScopeResolverService,
     private readonly unitOfWork: UnitOfWork,
   ) {}
 
@@ -584,7 +601,7 @@ export class QuestionnaireService {
       answers: Record<string, number>; // questionId -> numericValue
       qualitativeComment?: string;
     },
-    options?: { skipAnalysis?: boolean },
+    options?: { skipAnalysis?: boolean; skipAuthorization?: boolean },
   ) {
     const version = await this.versionRepo.findOne(data.versionId, {
       populate: ['questionnaire.type'],
@@ -630,6 +647,19 @@ export class QuestionnaireService {
     if (!semester) {
       throw new NotFoundException(
         `Semester with ID ${data.semesterId} not found.`,
+      );
+    }
+
+    if (options?.skipAuthorization) {
+      this.logger.warn(
+        `submitQuestionnaire called with skipAuthorization=true (respondentId=${data.respondentId}, versionId=${data.versionId})`,
+      );
+    } else {
+      await this.assertSubmissionAuthorization(
+        respondent,
+        faculty,
+        version.questionnaire.type.code,
+        semester.id,
       );
     }
 
@@ -773,11 +803,7 @@ export class QuestionnaireService {
       questionnaireVersion: version,
       respondent,
       faculty,
-      respondentRole: respondent.roles.includes(UserRole.DEAN)
-        ? RespondentRole.DEAN
-        : respondent.roles.includes(UserRole.CHAIRPERSON)
-          ? RespondentRole.CHAIRPERSON
-          : RespondentRole.STUDENT,
+      respondentRole: this.resolveRespondentRole(respondent),
       semester,
       course: course || undefined,
       department,
@@ -878,6 +904,43 @@ export class QuestionnaireService {
       }
     }
     return questions;
+  }
+
+  private resolveRespondentRole(respondent: User): RespondentRole {
+    if (respondent.roles.includes(UserRole.DEAN)) return RespondentRole.DEAN;
+    if (respondent.roles.includes(UserRole.CHAIRPERSON))
+      return RespondentRole.CHAIRPERSON;
+    return RespondentRole.STUDENT;
+  }
+
+  private async assertSubmissionAuthorization(
+    respondent: User,
+    faculty: User,
+    typeCode: string,
+    semesterId: string,
+  ): Promise<void> {
+    if (respondent.roles.includes(UserRole.SUPER_ADMIN)) return;
+
+    const role = this.resolveRespondentRole(respondent);
+    if (!SUBMISSION_TYPE_MATRIX[role].has(typeCode)) {
+      throw new ForbiddenException(
+        'Your role is not permitted to submit this questionnaire type.',
+      );
+    }
+
+    if (role === RespondentRole.DEAN || role === RespondentRole.CHAIRPERSON) {
+      const allowedDepartmentIds =
+        await this.scopeResolverService.ResolveDepartmentIds(semesterId);
+      if (allowedDepartmentIds === null) return;
+      if (allowedDepartmentIds.length === 0) {
+        this.logger.warn(
+          `Respondent ${respondent.id} (role=${role}) has an empty department scope for semester ${semesterId} — likely mis-provisioned.`,
+        );
+      }
+      if (!allowedDepartmentIds.includes(faculty.department?.id ?? '')) {
+        throw new ForbiddenException('Faculty is not within your scope.');
+      }
+    }
   }
 
   private findQuestionMeta(

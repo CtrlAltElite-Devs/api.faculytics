@@ -310,15 +310,18 @@ export class AdminGenerateService {
           continue;
         }
 
-        const result = await this.questionnaireService.submitQuestionnaire({
-          versionId: dto.versionId,
-          respondentId: student.id,
-          facultyId,
-          semesterId,
-          courseId,
-          answers: row.answers,
-          qualitativeComment: row.comment,
-        });
+        const result = await this.questionnaireService.submitQuestionnaire(
+          {
+            versionId: dto.versionId,
+            respondentId: student.id,
+            facultyId,
+            semesterId,
+            courseId,
+            answers: row.answers,
+            qualitativeComment: row.comment,
+          },
+          { skipAuthorization: true },
+        );
 
         records.push({
           externalId: row.externalId,

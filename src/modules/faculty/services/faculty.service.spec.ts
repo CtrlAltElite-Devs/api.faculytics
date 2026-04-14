@@ -7,10 +7,13 @@ import {
 import { EntityManager } from '@mikro-orm/postgresql';
 import { QueryOrder } from '@mikro-orm/core';
 import { FacultyService } from './faculty.service';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
 import { User } from 'src/entities/user.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { UserRole } from 'src/modules/auth/roles.enum';
+import { EnrollmentRole } from 'src/modules/questionnaires/lib/questionnaire.types';
+import { GetFacultyEnrollmentsQueryDto } from '../dto/requests/get-faculty-enrollments-query.dto';
 import { ListFacultyQueryDto } from '../dto/requests/list-faculty-query.dto';
 
 describe('FacultyService', () => {
@@ -23,6 +26,7 @@ describe('FacultyService', () => {
     getConnection: jest.Mock;
   };
   let scopeResolver: { ResolveDepartmentIds: jest.Mock };
+  let currentUserService: { getOrFail: jest.Mock };
   let executeMock: jest.Mock;
 
   const semesterId = 'semester-1';
@@ -34,6 +38,12 @@ describe('FacultyService', () => {
     semesterId,
     page: 1,
     limit: 20,
+  };
+
+  const baseEnrollmentsQuery: GetFacultyEnrollmentsQueryDto = {
+    semesterId,
+    page: 1,
+    limit: 10,
   };
 
   const mockUser = (
@@ -71,11 +81,19 @@ describe('FacultyService', () => {
       ResolveDepartmentIds: jest.fn(),
     };
 
+    currentUserService = {
+      getOrFail: jest.fn().mockReturnValue({
+        id: 'dean-user',
+        roles: [UserRole.DEAN],
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         FacultyService,
         { provide: EntityManager, useValue: em },
         { provide: ScopeResolverService, useValue: scopeResolver },
+        { provide: CurrentUserService, useValue: currentUserService },
       ],
     }).compile();
 
@@ -801,6 +819,201 @@ describe('FacultyService', () => {
         faculty: facultyId,
         semester: semesterId,
       });
+    });
+  });
+
+  describe('GetFacultyEnrollments', () => {
+    const facultyId = 'faculty-1';
+
+    beforeEach(() => {
+      currentUserService.getOrFail.mockReturnValue({
+        id: 'dean-user',
+        roles: [UserRole.DEAN],
+      });
+    });
+
+    it('returns paginated teaching enrollments for an in-scope faculty', async () => {
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce({
+          id: facultyId,
+          isActive: true,
+          roles: [UserRole.FACULTY],
+          department: { id: deptId },
+          fullName: 'Prof. Ada Lovelace',
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          userName: 'EMP001',
+          userProfilePicture: 'https://example.com/ada.jpg',
+        });
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
+      em.findAndCount.mockResolvedValueOnce([
+        [
+          {
+            id: 'enrollment-1',
+            role: EnrollmentRole.EDITING_TEACHER,
+            course: {
+              id: 'course-1',
+              moodleCourseId: 101,
+              shortname: 'CS101',
+              fullname: 'Intro to CS',
+              courseImage: null,
+              program: {
+                department: {
+                  semester: {
+                    id: semesterId,
+                    code: 'S12526',
+                    label: '1st Semester',
+                    academicYear: '2025-2026',
+                  },
+                },
+              },
+            },
+            section: { id: 'section-1', name: 'A' },
+          },
+        ],
+        1,
+      ]);
+
+      const result = await service.GetFacultyEnrollments(
+        facultyId,
+        baseEnrollmentsQuery,
+      );
+
+      expect(result.meta).toEqual({
+        totalItems: 1,
+        itemCount: 1,
+        itemsPerPage: 10,
+        totalPages: 1,
+        currentPage: 1,
+      });
+      expect(result.data[0]).toEqual({
+        id: 'enrollment-1',
+        role: EnrollmentRole.EDITING_TEACHER,
+        course: {
+          id: 'course-1',
+          moodleCourseId: 101,
+          shortname: 'CS101',
+          fullname: 'Intro to CS',
+          courseImage: undefined,
+        },
+        faculty: {
+          id: facultyId,
+          fullName: 'Prof. Ada Lovelace',
+          employeeNumber: 'EMP001',
+          profilePicture: 'https://example.com/ada.jpg',
+        },
+        semester: {
+          id: semesterId,
+          code: 'S12526',
+          label: '1st Semester',
+          academicYear: '2025-2026',
+        },
+        section: { id: 'section-1', name: 'A' },
+        submission: { submitted: false },
+      });
+
+      expect(em.findAndCount).toHaveBeenCalledWith(
+        Enrollment,
+        {
+          user: facultyId,
+          role: {
+            $in: [EnrollmentRole.EDITING_TEACHER, EnrollmentRole.TEACHER],
+          },
+          isActive: true,
+          course: {
+            isActive: true,
+            program: { department: { semester: semesterId } },
+          },
+        },
+        expect.objectContaining({
+          populate: ['course.program.department.semester', 'section'],
+          limit: 10,
+          offset: 0,
+          orderBy: { timeModified: QueryOrder.DESC },
+        }),
+      );
+    });
+
+    it('allows faculty to fetch their own enrollments', async () => {
+      currentUserService.getOrFail.mockReturnValue({
+        id: facultyId,
+        roles: [UserRole.FACULTY],
+      });
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce({
+          id: facultyId,
+          isActive: true,
+          roles: [UserRole.FACULTY],
+          department: { id: deptId },
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          userName: 'EMP001',
+          userProfilePicture: '',
+        });
+      em.findAndCount.mockResolvedValueOnce([[], 0]);
+
+      const result = await service.GetFacultyEnrollments(
+        facultyId,
+        baseEnrollmentsQuery,
+      );
+
+      expect(result.data).toEqual([]);
+      expect(scopeResolver.ResolveDepartmentIds).not.toHaveBeenCalled();
+    });
+
+    it('forbids faculty from fetching another faculty member', async () => {
+      currentUserService.getOrFail.mockReturnValue({
+        id: 'other-faculty',
+        roles: [UserRole.FACULTY],
+      });
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce({
+          id: facultyId,
+          isActive: true,
+          roles: [UserRole.FACULTY],
+          department: { id: deptId },
+        });
+
+      await expect(
+        service.GetFacultyEnrollments(facultyId, baseEnrollmentsQuery),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('forbids dean when faculty is outside scope', async () => {
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce({
+          id: facultyId,
+          isActive: true,
+          roles: [UserRole.FACULTY],
+          department: { id: deptId2 },
+        });
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
+
+      await expect(
+        service.GetFacultyEnrollments(facultyId, baseEnrollmentsQuery),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('throws NotFoundException when semester does not exist', async () => {
+      em.findOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.GetFacultyEnrollments(facultyId, baseEnrollmentsQuery),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException when faculty does not exist', async () => {
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce(null);
+
+      await expect(
+        service.GetFacultyEnrollments(facultyId, baseEnrollmentsQuery),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

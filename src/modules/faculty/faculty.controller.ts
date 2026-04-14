@@ -15,6 +15,8 @@ import { ListFacultyQueryDto } from './dto/requests/list-faculty-query.dto';
 import { FacultyListResponseDto } from './dto/responses/faculty-list.response.dto';
 import { GetSubmissionCountQueryDto } from './dto/requests/get-submission-count-query.dto';
 import { SubmissionCountResponseDto } from './dto/responses/submission-count.response.dto';
+import { GetFacultyEnrollmentsQueryDto } from './dto/requests/get-faculty-enrollments-query.dto';
+import { FacultyEnrollmentsResponseDto } from './dto/responses/faculty-enrollments.response.dto';
 
 @ApiTags('Faculty')
 @Controller('faculty')
@@ -64,5 +66,34 @@ export class FacultyController {
     @Query() query: GetSubmissionCountQueryDto,
   ): Promise<SubmissionCountResponseDto> {
     return this.facultyService.GetSubmissionCount(facultyId, query.semesterId);
+  }
+
+  @Get(':facultyId/enrollments')
+  @UseJwtGuard(
+    UserRole.SUPER_ADMIN,
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+    UserRole.CAMPUS_HEAD,
+    UserRole.FACULTY,
+  )
+  @ApiOperation({
+    summary:
+      'Get active teaching enrollments for a faculty member in a semester',
+  })
+  @ApiResponse({ status: 200, type: FacultyEnrollmentsResponseDto })
+  @ApiResponse({ status: 400, description: 'Invalid UUID format' })
+  @ApiResponse({
+    status: 403,
+    description: 'You do not have access to this faculty member',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Faculty or semester not found',
+  })
+  async getFacultyEnrollments(
+    @Param('facultyId', ParseUUIDPipe) facultyId: string,
+    @Query() query: GetFacultyEnrollmentsQueryDto,
+  ): Promise<FacultyEnrollmentsResponseDto> {
+    return this.facultyService.GetFacultyEnrollments(facultyId, query);
   }
 }

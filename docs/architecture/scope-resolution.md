@@ -152,6 +152,10 @@ When a user holds multiple roles, the highest-priority role wins:
 2. `DEAN` — department-level scope
 3. `CHAIRPERSON` — program-level scope (narrower)
 
+### Pipeline-scope authorization
+
+Analysis-pipeline authorization (create/confirm/cancel/read) reuses `ResolveDepartmentIds`, `ResolveProgramIds`, and `ResolveCampusIds`. Pipeline-specific rules — required axis per role, list default-fill, FACULTY auto-override, 404-before-403 ordering, and the active-scope unique index — live in [analysis-pipeline.md §Access Control](../workflows/analysis-pipeline.md#access-control). `PipelineOrchestratorService` calls these resolvers before any DB write or flush so a foreign caller cannot cause side effects.
+
 ## Source Files
 
 | File                                                          | Purpose                                                      |

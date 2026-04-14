@@ -18,7 +18,12 @@ import { SubmissionCountResponseDto } from './dto/responses/submission-count.res
 
 @ApiTags('Faculty')
 @Controller('faculty')
-@UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.DEAN, UserRole.CHAIRPERSON)
+@UseJwtGuard(
+  UserRole.SUPER_ADMIN,
+  UserRole.DEAN,
+  UserRole.CHAIRPERSON,
+  UserRole.CAMPUS_HEAD,
+)
 @UseInterceptors(CurrentUserInterceptor)
 export class FacultyController {
   constructor(private readonly facultyService: FacultyService) {}

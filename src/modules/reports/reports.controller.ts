@@ -25,7 +25,12 @@ import { BatchStatusResponseDto } from './dto/batch-status.response.dto';
 
 @ApiTags('Reports')
 @Controller('reports')
-@UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.DEAN, UserRole.CHAIRPERSON)
+@UseJwtGuard(
+  UserRole.SUPER_ADMIN,
+  UserRole.DEAN,
+  UserRole.CHAIRPERSON,
+  UserRole.CAMPUS_HEAD,
+)
 @UseInterceptors(CurrentUserInterceptor)
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}

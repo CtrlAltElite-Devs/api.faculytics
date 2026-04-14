@@ -28,6 +28,7 @@ import { AdminUserDetailResponseDto } from '../dto/responses/admin-user-detail.r
 import { AdminUserListResponseDto } from '../dto/responses/admin-user-list.response.dto';
 import { AdminUserScopeAssignmentResponseDto } from '../dto/responses/admin-user-scope-assignment.response.dto';
 import { DeanEligibleCategoryResponseDto } from '../dto/responses/dean-eligible-category.response.dto';
+import { CampusHeadEligibleCategoryResponseDto } from '../dto/responses/campus-head-eligible-category.response.dto';
 
 const SCOPE_FIELD_NAMES = [
   'department',
@@ -215,6 +216,14 @@ export class AdminService {
       { failHandler: () => new NotFoundException('Moodle category not found') },
     );
 
+    if (
+      ![UserRole.DEAN, UserRole.CHAIRPERSON, UserRole.CAMPUS_HEAD].includes(
+        dto.role,
+      )
+    ) {
+      throw new BadRequestException('Unsupported institutional role');
+    }
+
     // DEAN must be assigned at the department level (depth 3).
     // If a program-level category (depth 4) is provided, auto-resolve to its parent department.
     if (dto.role === UserRole.DEAN) {
@@ -232,6 +241,16 @@ export class AdminService {
       if (moodleCategory.depth !== 3) {
         throw new BadRequestException(
           `DEAN role must be assigned to a department-level category (depth 3), got depth ${moodleCategory.depth}`,
+        );
+      }
+    }
+
+    // CAMPUS_HEAD must be assigned at the campus level (depth 1).
+    // Unlike DEAN, there is no auto-resolution — depth 1 has no parent.
+    if (dto.role === UserRole.CAMPUS_HEAD) {
+      if (moodleCategory.depth !== 1) {
+        throw new BadRequestException(
+          `CAMPUS_HEAD role must be assigned to a campus-level category (depth 1), got depth ${moodleCategory.depth}`,
         );
       }
     }
@@ -353,6 +372,37 @@ export class AdminService {
     return [...candidates.values()]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((cat) => DeanEligibleCategoryResponseDto.Map(cat));
+  }
+
+  async GetCampusHeadEligibleCategories(
+    userId: string,
+  ): Promise<CampusHeadEligibleCategoryResponseDto[]> {
+    await this.em.findOneOrFail(
+      User,
+      { id: userId },
+      { failHandler: () => new NotFoundException('User not found') },
+    );
+
+    const existing = await this.em.find(
+      UserInstitutionalRole,
+      { user: userId, role: UserRole.CAMPUS_HEAD as string },
+      { populate: ['moodleCategory'] },
+    );
+    const assignedCategoryIds = new Set(
+      existing
+        .map((ir) => ir.moodleCategory?.moodleCategoryId)
+        .filter((id): id is number => id != null),
+    );
+
+    const depthOneCategories = await this.em.find(
+      MoodleCategory,
+      { depth: 1 },
+      { orderBy: { name: 'ASC' } },
+    );
+
+    return depthOneCategories
+      .filter((cat) => !assignedCategoryIds.has(cat.moodleCategoryId))
+      .map((cat) => CampusHeadEligibleCategoryResponseDto.Map(cat));
   }
 
   private async refreshUserRoles(user: User) {

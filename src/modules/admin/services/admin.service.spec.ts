@@ -457,6 +457,139 @@ describe('AdminService', () => {
         expect.anything(),
       );
     });
+
+    it('should accept CAMPUS_HEAD at depth 1', async () => {
+      const campusCategory = {
+        moodleCategoryId: 101,
+        name: 'UCMN',
+        depth: 1,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(campusCategory);
+
+      await service.AssignInstitutionalRole({
+        userId: 'user-1',
+        role: UserRole.CAMPUS_HEAD,
+        moodleCategoryId: 101,
+      });
+
+      expect(em.create).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ moodleCategory: campusCategory }),
+        expect.anything(),
+      );
+    });
+
+    it('should reject CAMPUS_HEAD at depth 3 with a clear message', async () => {
+      const deptCategory = { moodleCategoryId: 8, name: 'CCS', depth: 3 };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(deptCategory);
+
+      await expect(
+        service.AssignInstitutionalRole({
+          userId: 'user-1',
+          role: UserRole.CAMPUS_HEAD,
+          moodleCategoryId: 8,
+        }),
+      ).rejects.toThrow(/depth 1/);
+    });
+
+    it('should reject CAMPUS_HEAD at depth 2', async () => {
+      const semesterCategory = {
+        moodleCategoryId: 6,
+        name: 'S22526',
+        depth: 2,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(semesterCategory);
+
+      await expect(
+        service.AssignInstitutionalRole({
+          userId: 'user-1',
+          role: UserRole.CAMPUS_HEAD,
+          moodleCategoryId: 6,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject unsupported institutional role with "Unsupported institutional role"', async () => {
+      const campusCategory = {
+        moodleCategoryId: 101,
+        name: 'UCMN',
+        depth: 1,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(campusCategory);
+
+      await expect(
+        service.AssignInstitutionalRole({
+          userId: 'user-1',
+          role: UserRole.FACULTY,
+          moodleCategoryId: 101,
+        }),
+      ).rejects.toThrow('Unsupported institutional role');
+    });
+  });
+
+  describe('GetCampusHeadEligibleCategories', () => {
+    const mockUser = { id: 'user-1' } as User;
+
+    it('returns all depth-1 categories when the user has no CAMPUS_HEAD rows', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([]) // existing CAMPUS_HEAD roles
+        .mockResolvedValueOnce([
+          { id: 'uuid-ucmn', moodleCategoryId: 101, name: 'UCMN', depth: 1 },
+          { id: 'uuid-ucb', moodleCategoryId: 202, name: 'UCB', depth: 1 },
+        ]);
+
+      const result = await service.GetCampusHeadEligibleCategories('user-1');
+
+      expect(result).toEqual([
+        { id: 'uuid-ucmn', moodleCategoryId: 101, name: 'UCMN', depth: 1 },
+        { id: 'uuid-ucb', moodleCategoryId: 202, name: 'UCB', depth: 1 },
+      ]);
+    });
+
+    it('excludes depth-1 categories where the user is already a CAMPUS_HEAD', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([{ moodleCategory: { moodleCategoryId: 101 } }])
+        .mockResolvedValueOnce([
+          { id: 'uuid-ucmn', moodleCategoryId: 101, name: 'UCMN', depth: 1 },
+          { id: 'uuid-ucb', moodleCategoryId: 202, name: 'UCB', depth: 1 },
+        ]);
+
+      const result = await service.GetCampusHeadEligibleCategories('user-1');
+
+      expect(result).toEqual([
+        { id: 'uuid-ucb', moodleCategoryId: 202, name: 'UCB', depth: 1 },
+      ]);
+    });
+
+    it('throws NotFoundException when the user does not exist', async () => {
+      em.findOneOrFail.mockImplementationOnce(
+        (
+          _entity: unknown,
+          _filter: unknown,
+          opts: { failHandler: () => Error },
+        ) => {
+          throw opts.failHandler();
+        },
+      );
+
+      await expect(
+        service.GetCampusHeadEligibleCategories('nonexistent'),
+      ).rejects.toThrow(NotFoundException);
+    });
   });
 
   describe('GetDeanEligibleCategories', () => {

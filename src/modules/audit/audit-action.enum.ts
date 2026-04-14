@@ -6,6 +6,7 @@ export const AuditAction = {
   ADMIN_SYNC_TRIGGER: 'admin.sync.trigger',
   ADMIN_SYNC_SCHEDULE_UPDATE: 'admin.sync-schedule.update',
   ADMIN_USER_SCOPE_UPDATE: 'admin.user.scope.update',
+  ADMIN_USER_CREATE: 'admin.user.create',
   QUESTIONNAIRE_SUBMIT: 'questionnaire.submit',
   QUESTIONNAIRE_INGEST: 'questionnaire.ingest',
   QUESTIONNAIRE_SUBMISSIONS_WIPE: 'questionnaire.submissions.wipe',

@@ -933,6 +933,13 @@ export class QuestionnaireService {
   ): Promise<void> {
     if (respondent.roles.includes(UserRole.SUPER_ADMIN)) return;
 
+    // FAC-131 — Campus Heads are read-only analytics consumers.
+    if (respondent.roles.includes(UserRole.CAMPUS_HEAD)) {
+      throw new ForbiddenException(
+        'Campus Heads are not permitted to submit faculty evaluations.',
+      );
+    }
+
     const role = this.resolveRespondentRole(respondent);
     if (!SUBMISSION_TYPE_MATRIX[role].has(typeCode)) {
       throw new ForbiddenException(

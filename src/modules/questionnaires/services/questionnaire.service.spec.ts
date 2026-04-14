@@ -370,6 +370,25 @@ describe('QuestionnaireService', () => {
       );
     });
 
+    it('should explicitly deny CAMPUS_HEAD submissions with a clear message (FAC-131)', async () => {
+      const campusHeadRespondent = {
+        id: RESPONDENT_ID,
+        roles: [UserRole.CAMPUS_HEAD],
+      };
+      (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+        if (entity === User && id === RESPONDENT_ID)
+          return campusHeadRespondent;
+        if (entity === User && id === FACULTY_ID) return mockFaculty;
+        if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+        if (entity === Course && id === COURSE_ID) return mockCourse;
+        return null;
+      });
+
+      await expect(service.submitQuestionnaire(mockData)).rejects.toThrow(
+        'Campus Heads are not permitted to submit faculty evaluations.',
+      );
+    });
+
     it('should throw ForbiddenException if faculty is not enrolled', async () => {
       enrollmentRepo.findOne.mockImplementation(((
         criteria: Record<string, any>,

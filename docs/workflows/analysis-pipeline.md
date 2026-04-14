@@ -154,3 +154,93 @@ Returns a structured response with:
 - Sentiment gate statistics
 - Warnings and error messages
 - Timestamps (created, confirmed, completed)
+
+The `scope` object returns **both IDs and display values** side-by-side (e.g., `{ semesterId, semesterCode, departmentId, departmentCode, facultyId, facultyName, ... }`). IDs are used by the frontend for cache keys and lookups; display values are used for rendering. See FAC-132 TD-9 for the contract.
+
+## Discovery
+
+**Endpoint:** `GET /analysis/pipelines`
+
+Returns the 10 most recent pipelines matching the query, ordered by `createdAt DESC`. Query parameters:
+
+| Parameter                | Required | Description                         |
+| ------------------------ | -------- | ----------------------------------- |
+| `semesterId`             | Yes      | Target semester                     |
+| `facultyId`              | No       | Filter to a specific faculty member |
+| `departmentId`           | No       | Filter to a department              |
+| `programId`              | No       | Filter to a program                 |
+| `campusId`               | No       | Filter to a campus                  |
+| `courseId`               | No       | Filter to a course                  |
+| `questionnaireVersionId` | No       | Filter to a specific version        |
+
+Scope-filling behavior per role is documented in [Access Control](#access-control).
+
+## Access Control
+
+Authorization for every `/analysis/*` endpoint is enforced at two layers:
+
+1. **Role guard (`@UseJwtGuard` + `RolesGuard`)** — class-level allowlist plus per-method widening. Roles outside the allowlist get `403 Forbidden` before the service runs.
+2. **Service-layer scope check** — `PipelineOrchestratorService` validates the caller's institutional scope against the pipeline's scope fields via `ScopeResolverService`. Belt-and-braces against guard misconfiguration.
+
+### Role allowlist per endpoint
+
+| Endpoint                                       | Allowed roles                                        |
+| ---------------------------------------------- | ---------------------------------------------------- |
+| `POST /analysis/pipelines`                     | SUPER_ADMIN, DEAN, CHAIRPERSON, CAMPUS_HEAD          |
+| `POST /analysis/pipelines/:id/confirm`         | SUPER_ADMIN, DEAN, CHAIRPERSON, CAMPUS_HEAD          |
+| `POST /analysis/pipelines/:id/cancel`          | SUPER_ADMIN, DEAN, CHAIRPERSON, CAMPUS_HEAD          |
+| `GET  /analysis/pipelines`                     | SUPER_ADMIN, DEAN, CHAIRPERSON, CAMPUS_HEAD, FACULTY |
+| `GET  /analysis/pipelines/:id/status`          | SUPER_ADMIN, DEAN, CHAIRPERSON, CAMPUS_HEAD, FACULTY |
+| `GET  /analysis/pipelines/:id/recommendations` | SUPER_ADMIN, DEAN, CHAIRPERSON, CAMPUS_HEAD, FACULTY |
+
+STUDENT and ADMIN are never in the allowlist. STUDENT is end-user; ADMIN is reserved for admin-console operations (not analytics).
+
+### Create / Confirm / Cancel / Read-by-id scope matrix
+
+These operations require an **explicit scope filter** on the axis appropriate to the caller's role. Absence of the filter returns `400 Bad Request` with `"scope filter required for your role"`. A filter outside the caller's resolved set returns `403 Forbidden` with `"scope not in your assigned access"`.
+
+| Role        | Required on create           | Validation against                          |
+| ----------- | ---------------------------- | ------------------------------------------- |
+| SUPER_ADMIN | None (`semesterId` only OK)  | — (unrestricted)                            |
+| DEAN        | `departmentId`               | `ResolveDepartmentIds(semesterId)`          |
+| CHAIRPERSON | `programId`                  | `ResolveProgramIds(semesterId)`             |
+| CAMPUS_HEAD | `campusId` OR `departmentId` | `ResolveCampusIds` / `ResolveDepartmentIds` |
+| FACULTY     | _(blocked at guard — 403)_   | —                                           |
+| STUDENT     | _(blocked at guard — 403)_   | —                                           |
+
+**Read-by-id additional rules:**
+
+- FACULTY may read `GET /:id/status` or `GET /:id/recommendations` only when `pipeline.faculty.id === user.id`. Department-scoped pipelines (null `faculty` FK) are 403 for FACULTY.
+- A pipeline with a **null** scope field on the caller's axis (e.g., `pipeline.department === null` for a DEAN) is 403 for all scoped roles — null means "no filter", i.e., broader-than-role access, reserved for SUPER_ADMIN.
+- Pipelines not found return `404 Not Found` **before** the scope check, so 404 takes precedence over 403. This exposes a minor existence-oracle for scoped roles who know a foreign UUID. Bounded by UUID opacity and the fact that FACULTY never learns foreign UUIDs (see list auto-override below).
+
+### List scope-filling
+
+`GET /analysis/pipelines` fills in the caller's resolved scope when the corresponding query parameter is omitted — this differs from create, which 400s on absence. Rationale: the dean dashboard can call `listPipelines({ semesterId })` without needing to enumerate department UUIDs on the client.
+
+| Role        | Behavior                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| SUPER_ADMIN | Query unchanged.                                                                                                                            |
+| DEAN        | If `departmentId` omitted, service fills an IN-filter with `ResolveDepartmentIds(semesterId)`. If provided, verify ∈ resolved set else 403. |
+| CHAIRPERSON | Same with `programId` and `ResolveProgramIds(semesterId)`.                                                                                  |
+| CAMPUS_HEAD | Same with `campusId` and `ResolveCampusIds(semesterId)`.                                                                                    |
+| FACULTY     | `facultyId` is silently overridden to the caller's own user id. Any foreign `facultyId` in the query is dropped.                            |
+| STUDENT     | 403.                                                                                                                                        |
+
+The FACULTY auto-override prevents enumeration of other faculty's pipelines and ensures FACULTY never learns foreign pipeline UUIDs.
+
+### Population requirement for ownership checks
+
+`ConfirmPipeline`, `CancelPipeline`, `GetPipelineStatus`, and `GetRecommendations` populate `['faculty', 'department', 'program', 'campus']` on the pipeline before running `assertCanAccessPipeline`. Reading `pipeline.faculty?.id` through an unpopulated reference proxy is fragile — explicit populate is load-bearing.
+
+### Scope check ordering for side-effecting endpoints
+
+For `ConfirmPipeline` and `CancelPipeline`, the scope check runs **before** any `fork.flush()`, status mutation, or queue enqueue. A foreign caller must never cause side effects — even when an unrelated check (e.g., worker URL misconfiguration) would otherwise fail the pipeline.
+
+### Unique-scope invariant
+
+A partial unique index (`uq_analysis_pipeline_active_scope`) enforces one active pipeline per `(semester, scope tuple)` at the DB level. Concurrent creates with identical scope produce `UniqueConstraintViolationException`; the orchestrator catches it and re-fetches the winner so both callers see the same pipeline id (idempotent).
+
+### Scope drift mid-pipeline
+
+A DEAN who triggers a pipeline and is then reassigned to a different department mid-execution loses read access to their own pipeline. This mirrors `/analytics/*` behavior and is intentional — the scope check evaluates against current assignments, not historical ones.

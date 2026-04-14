@@ -20,14 +20,22 @@ const sentimentGateSchema = stageStatusSchema.extend({
 export const pipelineStatusSchema = z.object({
   id: z.string().uuid(),
   status: z.string(),
+  // TD-9 (FAC-132): paired IDs + display values. Frontend uses IDs for
+  // cache keys / invalidation and display values for UI rendering.
   scope: z.object({
-    semester: z.string(),
-    department: z.string().nullable(),
-    faculty: z.string().nullable(),
-    questionnaireVersion: z.string().nullable(),
-    program: z.string().nullable(),
-    campus: z.string().nullable(),
-    course: z.string().nullable(),
+    semesterId: z.string(),
+    semesterCode: z.string(),
+    departmentId: z.string().nullable(),
+    departmentCode: z.string().nullable(),
+    facultyId: z.string().nullable(),
+    facultyName: z.string().nullable(),
+    programId: z.string().nullable(),
+    programCode: z.string().nullable(),
+    campusId: z.string().nullable(),
+    campusCode: z.string().nullable(),
+    courseId: z.string().nullable(),
+    courseShortname: z.string().nullable(),
+    questionnaireVersionId: z.string().nullable(),
   }),
   coverage: z.object({
     totalEnrolled: z.number().int(),

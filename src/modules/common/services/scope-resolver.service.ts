@@ -5,6 +5,7 @@ import { UserInstitutionalRole } from 'src/entities/user-institutional-role.enti
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
 import { Department } from 'src/entities/department.entity';
 import { Program } from 'src/entities/program.entity';
+import { Campus } from 'src/entities/campus.entity';
 import { Semester } from 'src/entities/semester.entity';
 import { CurrentUserService } from '../cls/current-user.service';
 
@@ -109,6 +110,78 @@ export class ScopeResolverService {
     throw new ForbiddenException(
       'User does not have a role with scope access.',
     );
+  }
+
+  /**
+   * Resolves campus IDs the user is allowed to access for a given semester.
+   * Returns `null` for unrestricted access (super admin, dean, chairperson —
+   * these roles operate at department/program axes and are unrestricted at the
+   * campus level), `[]` when a campus-scoped role has no matching campus, or
+   * `string[]` of campus UUIDs the user is campus head of.
+   *
+   * Note: FACULTY and STUDENT hit the terminal `throw` — matches the behavior
+   * of `ResolveDepartmentIds` / `ResolveProgramIds`. Callers must route by
+   * role before invoking this resolver for those roles.
+   */
+  async ResolveCampusIds(semesterId: string): Promise<string[] | null> {
+    const user = this.currentUserService.getOrFail();
+
+    if (user.roles.includes(UserRole.SUPER_ADMIN)) {
+      return null;
+    }
+
+    if (
+      user.roles.includes(UserRole.DEAN) ||
+      user.roles.includes(UserRole.CHAIRPERSON)
+    ) {
+      return null;
+    }
+
+    if (user.roles.includes(UserRole.CAMPUS_HEAD)) {
+      return this.resolveCampusHeadCampusIds(user.id, semesterId);
+    }
+
+    throw new ForbiddenException(
+      'User does not have a role with scope access.',
+    );
+  }
+
+  private async resolveCampusHeadCampusIds(
+    userId: string,
+    semesterId: string,
+  ): Promise<string[]> {
+    const roles = await this.em.find(
+      UserInstitutionalRole,
+      { user: userId, role: UserRole.CAMPUS_HEAD as string },
+      { populate: ['moodleCategory'] },
+    );
+    if (roles.length === 0) return [];
+
+    const promotedCategoryIds = roles
+      .map((r) => r.moodleCategory?.moodleCategoryId)
+      .filter((id): id is number => id != null);
+
+    if (promotedCategoryIds.length === 0) return [];
+
+    // Restrict to campuses that actually host the given semester — prevents a
+    // CAMPUS_HEAD from triggering pipelines on a semester outside their campus
+    // even if they're head of multiple campuses.
+    const semester = await this.em.findOne(
+      Semester,
+      { id: semesterId },
+      { populate: ['campus'] },
+    );
+    if (!semester?.campus?.moodleCategoryId) return [];
+    if (!promotedCategoryIds.includes(semester.campus.moodleCategoryId)) {
+      return [];
+    }
+
+    const campuses = await this.em.find(Campus, {
+      moodleCategoryId: { $in: promotedCategoryIds },
+      id: semester.campus.id,
+    });
+
+    return campuses.map((c) => c.id);
   }
 
   private async resolveChairpersonPrograms(

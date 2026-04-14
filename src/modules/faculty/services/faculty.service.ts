@@ -10,7 +10,11 @@ import { Enrollment } from 'src/entities/enrollment.entity';
 import { Program } from 'src/entities/program.entity';
 import { Semester } from 'src/entities/semester.entity';
 import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
+import { MyEnrollmentsResponseDto } from 'src/modules/enrollments/dto/responses/my-enrollments.response.dto';
+import { FacultyShortResponseDto } from 'src/modules/enrollments/dto/responses/faculty-short.response.dto';
+import { GetFacultyEnrollmentsQueryDto } from '../dto/requests/get-faculty-enrollments-query.dto';
 import { ListFacultyQueryDto } from '../dto/requests/list-faculty-query.dto';
 import { FacultyListResponseDto } from '../dto/responses/faculty-list.response.dto';
 import { FacultyCardResponseDto } from '../dto/responses/faculty-card.response.dto';
@@ -25,6 +29,7 @@ export class FacultyService {
   constructor(
     private readonly em: EntityManager,
     private readonly scopeResolverService: ScopeResolverService,
+    private readonly currentUserService: CurrentUserService,
   ) {}
 
   async ListFaculty(
@@ -341,6 +346,105 @@ export class FacultyService {
     return { count };
   }
 
+  async GetFacultyEnrollments(
+    facultyId: string,
+    query: GetFacultyEnrollmentsQueryDto,
+  ): Promise<MyEnrollmentsResponseDto> {
+    const semester = await this.em.findOne(Semester, { id: query.semesterId });
+    if (!semester) {
+      throw new NotFoundException(
+        `Semester with id '${query.semesterId}' not found.`,
+      );
+    }
+
+    const faculty = await this.em.findOne(
+      User,
+      { id: facultyId, isActive: true },
+      { populate: ['department'] },
+    );
+    if (!faculty || !faculty.roles.includes(UserRole.FACULTY)) {
+      throw new NotFoundException(`Faculty with id '${facultyId}' not found.`);
+    }
+
+    await this.AssertFacultyAccess(faculty, query.semesterId);
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const offset = (page - 1) * limit;
+
+    const [enrollments, totalItems] = await this.em.findAndCount(
+      Enrollment,
+      {
+        user: facultyId,
+        role: {
+          $in: [EnrollmentRole.EDITING_TEACHER, EnrollmentRole.TEACHER],
+        },
+        isActive: true,
+        course: {
+          isActive: true,
+          program: { department: { semester: query.semesterId } },
+        },
+      },
+      {
+        populate: ['course.program.department.semester', 'section'],
+        limit,
+        offset,
+        orderBy: { timeModified: QueryOrder.DESC },
+      },
+    );
+
+    const facultyDto: FacultyShortResponseDto = {
+      id: faculty.id,
+      fullName: faculty.fullName ?? `${faculty.firstName} ${faculty.lastName}`,
+      employeeNumber: faculty.userName,
+      profilePicture: faculty.userProfilePicture || undefined,
+    };
+
+    return {
+      data: enrollments.map((enrollment) => {
+        const enrollmentSemester =
+          enrollment.course.program?.department?.semester;
+
+        return {
+          id: enrollment.id,
+          role: enrollment.role,
+          course: {
+            id: enrollment.course.id,
+            moodleCourseId: enrollment.course.moodleCourseId,
+            shortname: enrollment.course.shortname,
+            fullname: enrollment.course.fullname,
+            courseImage: enrollment.course.courseImage ?? undefined,
+          },
+          faculty: facultyDto,
+          semester: enrollmentSemester
+            ? {
+                id: enrollmentSemester.id,
+                code: enrollmentSemester.code,
+                label: enrollmentSemester.label,
+                academicYear: enrollmentSemester.academicYear,
+              }
+            : null,
+          section: enrollment.section
+            ? {
+                id: enrollment.section.id,
+                name: enrollment.section.name,
+              }
+            : null,
+          submission: {
+            submitted: false,
+          },
+        };
+      }),
+      meta: {
+        totalItems,
+        itemCount: enrollments.length,
+        itemsPerPage: limit,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: page,
+      },
+    };
+  }
+
   private BuildUserFilter(
     query: ListFacultyQueryDto,
     departmentIds: string[] | null,
@@ -517,6 +621,54 @@ export class FacultyService {
       .replace(/\\/g, '\\\\')
       .replace(/%/g, '\\%')
       .replace(/_/g, '\\_');
+  }
+
+  private async AssertFacultyAccess(
+    faculty: User,
+    semesterId: string,
+  ): Promise<void> {
+    const currentUser = this.currentUserService.getOrFail();
+
+    if (currentUser.roles.includes(UserRole.SUPER_ADMIN)) {
+      return;
+    }
+
+    if (
+      currentUser.roles.some((role) =>
+        [UserRole.DEAN, UserRole.CHAIRPERSON, UserRole.CAMPUS_HEAD].includes(
+          role,
+        ),
+      )
+    ) {
+      const departmentIds =
+        await this.scopeResolverService.ResolveDepartmentIds(semesterId);
+
+      if (departmentIds === null) {
+        return;
+      }
+
+      if (
+        !faculty.department?.id ||
+        !departmentIds.includes(faculty.department.id)
+      ) {
+        throw new ForbiddenException(
+          'You do not have access to this faculty member',
+        );
+      }
+
+      return;
+    }
+
+    if (
+      currentUser.roles.includes(UserRole.FACULTY) &&
+      currentUser.id === faculty.id
+    ) {
+      return;
+    }
+
+    throw new ForbiddenException(
+      'You do not have access to this faculty member',
+    );
   }
 }
 

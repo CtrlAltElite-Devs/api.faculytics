@@ -81,8 +81,10 @@ All endpoints require `DEAN` or `SUPER_ADMIN` role. Dean scope is enforced via `
 | Method | Path                   | Query Params                           | Description                                       |
 | ------ | ---------------------- | -------------------------------------- | ------------------------------------------------- |
 | GET    | `/analytics/overview`  | `semesterId` (required), `programCode` | Department overview with per-faculty stats        |
-| GET    | `/analytics/attention` | `semesterId` (required)                | Faculty flagged for review with attention flags   |
+| GET    | `/analytics/attention` | `semesterId` (required), `programCode` | Faculty flagged for review with attention flags   |
 | GET    | `/analytics/trends`    | `semesterId`, `minSemesters`, `minR2`  | Faculty trend data with linear regression results |
+
+`programCode` on both `overview` and `attention` is trimmed, required non-empty, and capped at 20 characters.
 
 ### Department Overview (`/analytics/overview`)
 
@@ -116,3 +118,15 @@ Falls back to the latest semester for scope resolution when `semesterId` is omit
 ## Scope Resolution
 
 Unlike `FacultyModule` and `CurriculumModule` which resolve to department UUIDs, the `AnalyticsService` resolves to **department codes** (via `ResolveDepartmentCodes()`). This is because the materialized views use `department_code_snapshot` (a string snapshot from submission time) rather than foreign key references to the live department table.
+
+### Program-Level Scope Check
+
+When callers pass `programCode` on `overview` or `attention`, the service validates it against `ScopeResolverService.ResolveProgramCodes(semesterId)`:
+
+- `null` (super admin / dean) — any `programCode` accepted.
+- `string[]` (chairperson) — `programCode` must be in the list.
+- Out-of-scope requests **do not 403**. They short-circuit and return a well-formed empty payload with `lastRefreshedAt` populated.
+
+The silent short-circuit avoids leaking existence information (a 403 tells the caller "that program exists but you can't see it"; an empty result does not). Chairpersons already cannot enumerate programs outside their scope via `/curriculum/programs` — that endpoint applies the same `ResolveProgramIds` filter.
+
+`GetAttentionList` adds `AND program_code_snapshot = ?` to the `mv_faculty_semester_stats` source of the consistency-gap and skipped-signals subqueries. The trend-based signal joins `mv_faculty_trends` against `mv_faculty_semester_stats` on `(faculty_id, department_code_snapshot)` so trend rows can be filtered by the per-semester program snapshot — trend rows are not scoped to a single program by themselves.

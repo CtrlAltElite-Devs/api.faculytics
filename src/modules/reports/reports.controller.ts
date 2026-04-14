@@ -25,7 +25,12 @@ import { BatchStatusResponseDto } from './dto/batch-status.response.dto';
 
 @ApiTags('Reports')
 @Controller('reports')
-@UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.DEAN, UserRole.CHAIRPERSON)
+@UseJwtGuard(
+  UserRole.SUPER_ADMIN,
+  UserRole.DEAN,
+  UserRole.CHAIRPERSON,
+  UserRole.CAMPUS_HEAD,
+)
 @UseInterceptors(CurrentUserInterceptor)
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
@@ -54,6 +59,7 @@ export class ReportsController {
   }
 
   @Get('status/:jobId')
+  @Throttle({ default: { limit: 180, ttl: 60000 } })
   @ApiOperation({ summary: 'Get status of a single report job' })
   @ApiResponse({ status: 200, type: ReportStatusResponseDto })
   async GetReportStatus(
@@ -64,6 +70,7 @@ export class ReportsController {
   }
 
   @Get('batch/:batchId')
+  @Throttle({ default: { limit: 180, ttl: 60000 } })
   @ApiOperation({ summary: 'Get status of a batch report generation' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })

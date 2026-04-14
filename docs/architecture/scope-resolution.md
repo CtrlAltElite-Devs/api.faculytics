@@ -91,6 +91,19 @@ Returns `string[] | null` — program UUIDs, or `null` for unrestricted.
 | DEAN        | `null` (sees all programs in their departments)                        |
 | CHAIRPERSON | Returns specific program UUIDs matching their institutional role codes |
 
+### `ResolveProgramCodes(semesterId)`
+
+Returns `string[] | null` — program **codes** instead of UUIDs, for consumers that filter against snapshotted string columns rather than FK relations.
+
+| Role        | Behavior                                                            |
+| ----------- | ------------------------------------------------------------------- |
+| SUPER_ADMIN | `null` (unrestricted)                                               |
+| DEAN        | `null` (sees all programs in their departments)                     |
+| CHAIRPERSON | Returns program codes matching their institutional role assignments |
+| Other       | `ForbiddenException`                                                |
+
+Used by `AnalyticsService` to narrow queries against `mv_faculty_semester_stats.program_code_snapshot`. The chairperson branch shares a private `resolveChairpersonPrograms(userId, semesterId)` helper with `ResolveProgramIds` — category→program lookup logic is not duplicated.
+
 ## Consumers
 
 The following services call `ScopeResolverService`:
@@ -138,6 +151,10 @@ When a user holds multiple roles, the highest-priority role wins:
 1. `SUPER_ADMIN` — unrestricted (`null`)
 2. `DEAN` — department-level scope
 3. `CHAIRPERSON` — program-level scope (narrower)
+
+### Pipeline-scope authorization
+
+Analysis-pipeline authorization (create/confirm/cancel/read) reuses `ResolveDepartmentIds`, `ResolveProgramIds`, and `ResolveCampusIds`. Pipeline-specific rules — required axis per role, list default-fill, FACULTY auto-override, 404-before-403 ordering, and the active-scope unique index — live in [analysis-pipeline.md §Access Control](../workflows/analysis-pipeline.md#access-control). `PipelineOrchestratorService` calls these resolvers before any DB write or flush so a foreign caller cannot cause side effects.
 
 ## Source Files
 

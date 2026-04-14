@@ -56,19 +56,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "semester_id": {
           "name": "semester_id",
@@ -77,7 +77,7 @@
           "autoincrement": false,
           "primary": false,
           "nullable": false,
-          "unique": false,
+          "unique": true,
           "length": 255,
           "precision": null,
           "scale": null,
@@ -408,6 +408,23 @@
           "keyName": "analysis_pipeline_semester_id_status_index",
           "unique": false,
           "primary": false
+        },
+        {
+          "columnNames": [
+            "semester_id",
+            "COALESCE(faculty_id, NONE::character varying)",
+            "COALESCE(department_id, NONE::character varying)",
+            "COALESCE(program_id, NONE::character varying)",
+            "COALESCE(campus_id, NONE::character varying)",
+            "COALESCE(course_id, NONE::character varying)",
+            "COALESCE(questionnaire_version_id, NONE::character varying)"
+          ],
+          "composite": true,
+          "constraint": false,
+          "keyName": "uq_analysis_pipeline_active_scope",
+          "unique": true,
+          "primary": false,
+          "expression": "CREATE UNIQUE INDEX uq_analysis_pipeline_active_scope ON public.analysis_pipeline USING btree (semester_id, COALESCE(faculty_id, 'NONE'::character varying), COALESCE(department_id, 'NONE'::character varying), COALESCE(program_id, 'NONE'::character varying), COALESCE(campus_id, 'NONE'::character varying), COALESCE(course_id, 'NONE'::character varying), COALESCE(questionnaire_version_id, 'NONE'::character varying)) WHERE ((status <> ALL (ARRAY['COMPLETED'::text, 'FAILED'::text, 'CANCELLED'::text])) AND (deleted_at IS NULL))"
         }
       ],
       "checks": [],
@@ -517,16 +534,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -754,16 +762,7 @@
       ],
       "checks": [],
       "foreignKeys": {},
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -818,19 +817,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "moodle_category_id": {
           "name": "moodle_category_id",
@@ -917,16 +916,7 @@
       ],
       "checks": [],
       "foreignKeys": {},
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -1085,16 +1075,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -1221,16 +1202,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -1285,19 +1257,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "moodle_course_id": {
           "name": "moodle_course_id",
@@ -1510,16 +1482,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -1574,19 +1537,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "moodle_category_id": {
           "name": "moodle_category_id",
@@ -1703,16 +1666,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -1767,19 +1721,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "code": {
           "name": "code",
@@ -1897,16 +1851,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -1961,19 +1906,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "user_id": {
           "name": "user_id",
@@ -2169,16 +2114,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -2233,19 +2169,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "moodle_category_id": {
           "name": "moodle_category_id",
@@ -2428,16 +2364,7 @@
       ],
       "checks": [],
       "foreignKeys": {},
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -2492,19 +2419,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "token": {
           "name": "token",
@@ -2643,95 +2570,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
-      "comment": null
-    },
-    {
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "int4",
-          "unsigned": true,
-          "autoincrement": true,
-          "primary": true,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": 32,
-          "scale": 0,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "integer"
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "text"
-        },
-        "value": {
-          "name": "value",
-          "type": "float4",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": true,
-          "unique": false,
-          "length": null,
-          "precision": 24,
-          "scale": null,
-          "default": null,
-          "comment": null,
-          "enumItems": [],
-          "mappedType": "float"
-        }
-      },
-      "name": "playing_with_neon",
-      "schema": "public",
-      "indexes": [
-        {
-          "columnNames": [
-            "id"
-          ],
-          "composite": false,
-          "constraint": false,
-          "keyName": "playing_with_neon_pkey",
-          "unique": true,
-          "primary": true
-        }
-      ],
-      "checks": [],
-      "foreignKeys": {},
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -2786,19 +2625,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "moodle_category_id": {
           "name": "moodle_category_id",
@@ -2915,16 +2754,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -2979,19 +2809,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "title": {
           "name": "title",
@@ -3087,16 +2917,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -3151,19 +2972,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "submission_id": {
           "name": "submission_id",
@@ -3276,16 +3097,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -3340,19 +3152,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "respondent_id": {
           "name": "respondent_id",
@@ -3587,16 +3399,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -3651,19 +3454,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "questionnaire_version_id": {
           "name": "questionnaire_version_id",
@@ -3728,7 +3531,8 @@
           "comment": null,
           "enumItems": [
             "STUDENT",
-            "DEAN"
+            "DEAN",
+            "CHAIRPERSON"
           ],
           "mappedType": "enum"
         },
@@ -4099,6 +3903,54 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "text"
+        },
+        "faculty_department_id": {
+          "name": "faculty_department_id",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "faculty_department_code_snapshot": {
+          "name": "faculty_department_code_snapshot",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "faculty_department_name_snapshot": {
+          "name": "faculty_department_name_snapshot",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
         }
       },
       "name": "questionnaire_submission",
@@ -4123,6 +3975,17 @@
           "composite": true,
           "constraint": false,
           "keyName": "questionnaire_submission_department_id_semester_id_index",
+          "unique": false,
+          "primary": false
+        },
+        {
+          "columnNames": [
+            "faculty_department_id",
+            "semester_id"
+          ],
+          "composite": true,
+          "constraint": false,
+          "keyName": "questionnaire_submission_faculty_department_id_sem_4a4b6_index",
           "unique": false,
           "primary": false
         },
@@ -4224,6 +4087,19 @@
           "updateRule": "cascade",
           "deleteRule": "no action"
         },
+        "questionnaire_submission_faculty_department_id_foreign": {
+          "columnNames": [
+            "faculty_department_id"
+          ],
+          "constraintName": "questionnaire_submission_faculty_department_id_foreign",
+          "localTableName": "public.questionnaire_submission",
+          "referencedTableName": "public.department",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "updateRule": "cascade",
+          "deleteRule": "set null"
+        },
         "questionnaire_submission_faculty_id_foreign": {
           "columnNames": [
             "faculty_id"
@@ -4290,16 +4166,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -4354,19 +4221,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "name": {
           "name": "name",
@@ -4470,16 +4337,7 @@
       ],
       "checks": [],
       "foreignKeys": {},
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -4534,19 +4392,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "questionnaire_id": {
           "name": "questionnaire_id",
@@ -4644,7 +4502,8 @@
           "enumItems": [
             "DRAFT",
             "ACTIVE",
-            "DEPRECATED"
+            "DEPRECATED",
+            "ARCHIVED"
           ],
           "mappedType": "enum"
         }
@@ -4690,16 +4549,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -4754,19 +4604,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "pipeline_id": {
           "name": "pipeline_id",
@@ -4942,16 +4792,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -5006,19 +4847,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "run_id": {
           "name": "run_id",
@@ -5038,7 +4879,7 @@
         },
         "category": {
           "name": "category",
-          "type": "action_category",
+          "type": "text",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
@@ -5053,8 +4894,7 @@
             "STRENGTH",
             "IMPROVEMENT"
           ],
-          "mappedType": "unknown",
-          "nativeEnumName": "action_category"
+          "mappedType": "enum"
         },
         "headline": {
           "name": "headline",
@@ -5119,7 +4959,7 @@
           "length": null,
           "precision": null,
           "scale": null,
-          "default": "''",
+          "default": null,
           "comment": null,
           "enumItems": [],
           "mappedType": "text"
@@ -5135,7 +4975,7 @@
           "length": null,
           "precision": null,
           "scale": null,
-          "default": "''",
+          "default": null,
           "comment": null,
           "enumItems": [],
           "mappedType": "text"
@@ -5181,16 +5021,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -5245,19 +5076,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "token_hash": {
           "name": "token_hash",
@@ -5420,16 +5251,7 @@
       ],
       "checks": [],
       "foreignKeys": {},
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -5761,16 +5583,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -5825,19 +5638,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "moodle_group_id": {
           "name": "moodle_group_id",
@@ -5964,16 +5777,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -6028,19 +5832,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "moodle_category_id": {
           "name": "moodle_category_id",
@@ -6189,16 +5993,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -6253,19 +6048,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "run_id": {
           "name": "run_id",
@@ -6499,16 +6294,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -6563,19 +6349,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "pipeline_id": {
           "name": "pipeline_id",
@@ -6719,16 +6505,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -6783,19 +6560,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "submission_id": {
           "name": "submission_id",
@@ -6815,13 +6592,13 @@
         },
         "embedding": {
           "name": "embedding",
-          "type": "vector(768)",
+          "type": "vector",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": false,
           "unique": false,
-          "length": 768,
+          "length": null,
           "precision": null,
           "scale": null,
           "default": null,
@@ -6897,16 +6674,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -7160,16 +6928,7 @@
           "deleteRule": "set null"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -7224,19 +6983,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "key": {
           "name": "key",
@@ -7313,16 +7072,7 @@
       ],
       "checks": [],
       "foreignKeys": {},
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -7377,19 +7127,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "run_id": {
           "name": "run_id",
@@ -7528,16 +7278,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -7592,19 +7333,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "topic_id": {
           "name": "topic_id",
@@ -7746,16 +7487,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -7810,19 +7542,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "pipeline_id": {
           "name": "pipeline_id",
@@ -8030,16 +7762,7 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -8094,19 +7817,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "user_name": {
           "name": "user_name",
@@ -8315,6 +8038,54 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "string"
+        },
+        "department_source": {
+          "name": "department_source",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": "'auto'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "program_source": {
+          "name": "program_source",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": "'auto'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "campus_source": {
+          "name": "campus_source",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": "'auto'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
         }
       },
       "name": "user",
@@ -8393,16 +8164,7 @@
           "deleteRule": "set null"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     },
     {
@@ -8457,19 +8219,19 @@
         },
         "deleted_at": {
           "name": "deleted_at",
-          "type": "varchar(255)",
+          "type": "timestamptz(6)",
           "unsigned": false,
           "autoincrement": false,
           "primary": false,
           "nullable": true,
           "unique": false,
-          "length": 255,
+          "length": 6,
           "precision": null,
           "scale": null,
           "default": null,
           "comment": null,
           "enumItems": [],
-          "mappedType": "string"
+          "mappedType": "datetime"
         },
         "user_id": {
           "name": "user_id",
@@ -8591,27 +8353,9 @@
           "deleteRule": "no action"
         }
       },
-      "nativeEnums": {
-        "action_category": {
-          "name": "action_category",
-          "schema": "public",
-          "items": [
-            "STRENGTH",
-            "IMPROVEMENT"
-          ]
-        }
-      },
+      "nativeEnums": {},
       "comment": null
     }
   ],
-  "nativeEnums": {
-    "action_category": {
-      "name": "action_category",
-      "schema": "public",
-      "items": [
-        "STRENGTH",
-        "IMPROVEMENT"
-      ]
-    }
-  }
+  "nativeEnums": {}
 }

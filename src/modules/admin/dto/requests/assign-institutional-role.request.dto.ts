@@ -8,8 +8,9 @@ export class AssignInstitutionalRoleDto {
   userId: string;
 
   @ApiProperty({
-    enum: [UserRole.DEAN, UserRole.CHAIRPERSON],
-    description: 'The institutional role to assign',
+    enum: [UserRole.DEAN, UserRole.CHAIRPERSON, UserRole.CAMPUS_HEAD],
+    description:
+      'The institutional role to assign (DEAN at depth 3, CHAIRPERSON at depth 4, CAMPUS_HEAD at depth 1)',
   })
   @IsEnum(UserRole)
   role: UserRole;

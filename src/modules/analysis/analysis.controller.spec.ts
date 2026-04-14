@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { AuthGuard } from '@nestjs/passport';
 import { AnalysisController } from './analysis.controller';
 import { PipelineOrchestratorService } from './services/pipeline-orchestrator.service';
 import { PipelineStatus } from './enums';
@@ -6,13 +7,15 @@ import {
   auditTestProviders,
   overrideAuditInterceptors,
 } from '../audit/testing/audit-test.helpers';
+import { RolesGuard } from 'src/security/guards/roles.guard';
+import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
 
 const makeMockPipeline = (
   overrides: Partial<Record<string, unknown>> = {},
 ) => ({
   id: 'p1',
   status: PipelineStatus.AWAITING_CONFIRMATION,
-  semester: { id: 's1' },
+  semester: { id: 's1', code: 'S2026' },
   faculty: undefined,
   questionnaireVersion: undefined,
   department: undefined,
@@ -27,6 +30,7 @@ const makeMockPipeline = (
   warnings: [],
   errorMessage: undefined,
   createdAt: new Date('2026-01-01T00:00:00Z'),
+  updatedAt: new Date('2026-01-01T00:00:00Z'),
   confirmedAt: undefined,
   completedAt: undefined,
   ...overrides,
@@ -36,6 +40,7 @@ describe('AnalysisController', () => {
   let controller: AnalysisController;
   let mockOrchestrator: {
     CreatePipeline: jest.Mock;
+    ListPipelines: jest.Mock;
     ConfirmPipeline: jest.Mock;
     CancelPipeline: jest.Mock;
     GetPipelineStatus: jest.Mock;
@@ -45,6 +50,7 @@ describe('AnalysisController', () => {
   beforeEach(async () => {
     mockOrchestrator = {
       CreatePipeline: jest.fn(),
+      ListPipelines: jest.fn(),
       ConfirmPipeline: jest.fn(),
       CancelPipeline: jest.fn(),
       GetPipelineStatus: jest.fn(),
@@ -60,7 +66,16 @@ describe('AnalysisController', () => {
         },
         ...auditTestProviders(),
       ],
-    });
+    })
+      .overrideGuard(AuthGuard('jwt'))
+      .useValue({ canActivate: () => true })
+      .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .overrideInterceptor(CurrentUserInterceptor)
+      .useValue({
+        intercept: (_ctx: unknown, next: { handle: () => unknown }) =>
+          next.handle(),
+      });
     const module: TestingModule =
       await overrideAuditInterceptors(builder).compile();
 
@@ -81,17 +96,20 @@ describe('AnalysisController', () => {
         user: { userId: 'u1', moodleUserId: 1 },
       } as unknown as Parameters<typeof controller.CreatePipeline>[1];
 
-      const result = await controller.CreatePipeline(body, req);
+      const result = (await controller.CreatePipeline(
+        body,
+        req,
+      )) as unknown as {
+        id: string;
+        status: string;
+        scope: { semesterId: string };
+        coverage: { responseRate: number };
+      };
 
-      expect(result).toEqual(
-        expect.objectContaining({
-          id: 'p1',
-          status: PipelineStatus.AWAITING_CONFIRMATION,
-          semesterId: 's1',
-          triggeredById: 'u1',
-          responseRate: 0.5,
-        }),
-      );
+      expect(result.id).toBe('p1');
+      expect(result.status).toBe(PipelineStatus.AWAITING_CONFIRMATION);
+      expect(result.scope.semesterId).toBe('s1');
+      expect(result.coverage.responseRate).toBe(0.5);
       expect(mockOrchestrator.CreatePipeline).toHaveBeenCalledWith(body, 'u1');
     });
   });
@@ -103,15 +121,15 @@ describe('AnalysisController', () => {
       });
       mockOrchestrator.ConfirmPipeline.mockResolvedValue(mockPipeline);
 
-      const result = await controller.ConfirmPipeline('p1');
+      const result = (await controller.ConfirmPipeline('p1')) as unknown as {
+        id: string;
+        status: string;
+        scope: { semesterId: string };
+      };
 
-      expect(result).toEqual(
-        expect.objectContaining({
-          id: 'p1',
-          status: PipelineStatus.EMBEDDING_CHECK,
-          semesterId: 's1',
-        }),
-      );
+      expect(result.id).toBe('p1');
+      expect(result.status).toBe(PipelineStatus.EMBEDDING_CHECK);
+      expect(result.scope.semesterId).toBe('s1');
       expect(mockOrchestrator.ConfirmPipeline).toHaveBeenCalledWith('p1');
     });
   });
@@ -123,15 +141,15 @@ describe('AnalysisController', () => {
       });
       mockOrchestrator.CancelPipeline.mockResolvedValue(mockPipeline);
 
-      const result = await controller.CancelPipeline('p1');
+      const result = (await controller.CancelPipeline('p1')) as unknown as {
+        id: string;
+        status: string;
+        scope: { semesterId: string };
+      };
 
-      expect(result).toEqual(
-        expect.objectContaining({
-          id: 'p1',
-          status: PipelineStatus.CANCELLED,
-          semesterId: 's1',
-        }),
-      );
+      expect(result.id).toBe('p1');
+      expect(result.status).toBe(PipelineStatus.CANCELLED);
+      expect(result.scope.semesterId).toBe('s1');
       expect(mockOrchestrator.CancelPipeline).toHaveBeenCalledWith('p1');
     });
   });
@@ -141,7 +159,13 @@ describe('AnalysisController', () => {
       const mockStatus = {
         id: 'p1',
         status: PipelineStatus.SENTIMENT_ANALYSIS,
-        scope: { semester: 'S2026' },
+        // TD-9 shape — paired IDs + display values
+        scope: {
+          semesterId: 's1',
+          semesterCode: 'S2026',
+          departmentId: null,
+          departmentCode: null,
+        },
         coverage: { totalEnrolled: 100, submissionCount: 50 },
         stages: {
           embeddings: {
@@ -186,6 +210,31 @@ describe('AnalysisController', () => {
 
       expect(result).toBe(mockStatus);
       expect(mockOrchestrator.GetPipelineStatus).toHaveBeenCalledWith('p1');
+    });
+  });
+
+  describe('ListPipelines', () => {
+    it('should delegate to orchestrator.ListPipelines and map to summary DTOs', async () => {
+      const mockPipeline = makeMockPipeline({
+        semester: { id: 's1', code: 'S2026' },
+      });
+      mockOrchestrator.ListPipelines.mockResolvedValue([mockPipeline]);
+
+      const query = { semesterId: 's1' };
+      const result = await controller.ListPipelines(query);
+
+      expect(mockOrchestrator.ListPipelines).toHaveBeenCalledWith(query);
+      expect(Array.isArray(result)).toBe(true);
+      expect(result).toHaveLength(1);
+      const first = result[0] as unknown as {
+        id: string;
+        status: string;
+        scope: { semesterId: string; semesterCode: string };
+      };
+      expect(first.id).toBe('p1');
+      expect(first.status).toBe(PipelineStatus.AWAITING_CONFIRMATION);
+      expect(first.scope.semesterId).toBe('s1');
+      expect(first.scope.semesterCode).toBe('S2026');
     });
   });
 

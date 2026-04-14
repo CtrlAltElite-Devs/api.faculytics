@@ -2,6 +2,7 @@ import { FilterQuery } from '@mikro-orm/core';
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
@@ -11,19 +12,41 @@ import {
 } from 'src/entities/user-institutional-role.entity';
 import { User } from 'src/entities/user.entity';
 import { MoodleCategory } from 'src/entities/moodle-category.entity';
+import { Department } from 'src/entities/department.entity';
+import { Program } from 'src/entities/program.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { UserRole } from 'src/modules/auth/roles.enum';
+import { AuditService } from 'src/modules/audit/audit.service';
+import { AuditAction } from 'src/modules/audit/audit-action.enum';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { AssignInstitutionalRoleDto } from '../dto/requests/assign-institutional-role.request.dto';
 import { RemoveInstitutionalRoleDto } from '../dto/requests/remove-institutional-role.request.dto';
 import { ListUsersQueryDto } from '../dto/requests/list-users-query.dto';
+import { UpdateScopeAssignmentDto } from '../dto/requests/update-scope-assignment.request.dto';
 import { AdminUserItemResponseDto } from '../dto/responses/admin-user-item.response.dto';
 import { AdminUserDetailResponseDto } from '../dto/responses/admin-user-detail.response.dto';
 import { AdminUserListResponseDto } from '../dto/responses/admin-user-list.response.dto';
+import { AdminUserScopeAssignmentResponseDto } from '../dto/responses/admin-user-scope-assignment.response.dto';
 import { DeanEligibleCategoryResponseDto } from '../dto/responses/dean-eligible-category.response.dto';
+import { CampusHeadEligibleCategoryResponseDto } from '../dto/responses/campus-head-eligible-category.response.dto';
+
+const SCOPE_FIELD_NAMES = [
+  'department',
+  'departmentSource',
+  'program',
+  'programSource',
+] as const;
+type ScopeFieldName = (typeof SCOPE_FIELD_NAMES)[number];
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly em: EntityManager) {}
+  private readonly logger = new Logger(AdminService.name);
+
+  constructor(
+    private readonly em: EntityManager,
+    private readonly auditService: AuditService,
+    private readonly currentUserService: CurrentUserService,
+  ) {}
 
   async ListUsers(query: ListUsersQueryDto): Promise<AdminUserListResponseDto> {
     const page = query.page ?? 1;
@@ -86,6 +109,100 @@ export class AdminService {
     );
   }
 
+  async UpdateUserScopeAssignment(
+    userId: string,
+    dto: UpdateScopeAssignmentDto,
+  ): Promise<AdminUserScopeAssignmentResponseDto> {
+    const user = await this.em.findOneOrFail(
+      User,
+      { id: userId },
+      {
+        populate: ['department', 'program'],
+        failHandler: () => new NotFoundException('User not found'),
+      },
+    );
+
+    const before = {
+      department: user.department?.id ?? null,
+      departmentSource: user.departmentSource,
+      program: user.program?.id ?? null,
+      programSource: user.programSource,
+    };
+
+    if (dto.departmentId && dto.programId) {
+      const program = await this.em.findOneOrFail(
+        Program,
+        { id: dto.programId },
+        {
+          populate: ['department'],
+          failHandler: () => new NotFoundException('Program not found'),
+        },
+      );
+      if (program.department?.id !== dto.departmentId) {
+        throw new BadRequestException(
+          'Program does not belong to the specified department',
+        );
+      }
+    }
+
+    if (dto.departmentId === null) {
+      this.em.assign(user, { department: null });
+      user.departmentSource = InstitutionalRoleSource.AUTO as string;
+    } else if (dto.departmentId !== undefined) {
+      const department = await this.em.findOneOrFail(
+        Department,
+        { id: dto.departmentId },
+        { failHandler: () => new NotFoundException('Department not found') },
+      );
+      user.department = department;
+      user.departmentSource = InstitutionalRoleSource.MANUAL as string;
+    }
+
+    if (dto.programId === null) {
+      this.em.assign(user, { program: null });
+      user.programSource = InstitutionalRoleSource.AUTO as string;
+    } else if (dto.programId !== undefined) {
+      const program = await this.em.findOneOrFail(
+        Program,
+        { id: dto.programId },
+        { failHandler: () => new NotFoundException('Program not found') },
+      );
+      user.program = program;
+      user.programSource = InstitutionalRoleSource.MANUAL as string;
+    }
+
+    const after = {
+      department: user.department?.id ?? null,
+      departmentSource: user.departmentSource,
+      program: user.program?.id ?? null,
+      programSource: user.programSource,
+    };
+
+    const changedFields: ScopeFieldName[] = SCOPE_FIELD_NAMES.filter(
+      (name) => before[name] !== after[name],
+    );
+
+    await this.em.flush();
+
+    try {
+      const actor = this.currentUserService.get();
+      await this.auditService.Emit({
+        action: AuditAction.ADMIN_USER_SCOPE_UPDATE,
+        actorId: actor?.id,
+        actorUsername: actor?.userName,
+        resourceType: 'User',
+        resourceId: user.id,
+        metadata: { before, after, changedFields },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Audit emit failed for scope update: ${(err as Error).message}`,
+      );
+    }
+
+    return AdminUserScopeAssignmentResponseDto.Map(user);
+  }
+
   async AssignInstitutionalRole(dto: AssignInstitutionalRoleDto) {
     const user = await this.em.findOneOrFail(
       User,
@@ -98,6 +215,14 @@ export class AdminService {
       { moodleCategoryId: dto.moodleCategoryId },
       { failHandler: () => new NotFoundException('Moodle category not found') },
     );
+
+    if (
+      ![UserRole.DEAN, UserRole.CHAIRPERSON, UserRole.CAMPUS_HEAD].includes(
+        dto.role,
+      )
+    ) {
+      throw new BadRequestException('Unsupported institutional role');
+    }
 
     // DEAN must be assigned at the department level (depth 3).
     // If a program-level category (depth 4) is provided, auto-resolve to its parent department.
@@ -116,6 +241,16 @@ export class AdminService {
       if (moodleCategory.depth !== 3) {
         throw new BadRequestException(
           `DEAN role must be assigned to a department-level category (depth 3), got depth ${moodleCategory.depth}`,
+        );
+      }
+    }
+
+    // CAMPUS_HEAD must be assigned at the campus level (depth 1).
+    // Unlike DEAN, there is no auto-resolution — depth 1 has no parent.
+    if (dto.role === UserRole.CAMPUS_HEAD) {
+      if (moodleCategory.depth !== 1) {
+        throw new BadRequestException(
+          `CAMPUS_HEAD role must be assigned to a campus-level category (depth 1), got depth ${moodleCategory.depth}`,
         );
       }
     }
@@ -237,6 +372,37 @@ export class AdminService {
     return [...candidates.values()]
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((cat) => DeanEligibleCategoryResponseDto.Map(cat));
+  }
+
+  async GetCampusHeadEligibleCategories(
+    userId: string,
+  ): Promise<CampusHeadEligibleCategoryResponseDto[]> {
+    await this.em.findOneOrFail(
+      User,
+      { id: userId },
+      { failHandler: () => new NotFoundException('User not found') },
+    );
+
+    const existing = await this.em.find(
+      UserInstitutionalRole,
+      { user: userId, role: UserRole.CAMPUS_HEAD as string },
+      { populate: ['moodleCategory'] },
+    );
+    const assignedCategoryIds = new Set(
+      existing
+        .map((ir) => ir.moodleCategory?.moodleCategoryId)
+        .filter((id): id is number => id != null),
+    );
+
+    const depthOneCategories = await this.em.find(
+      MoodleCategory,
+      { depth: 1 },
+      { orderBy: { name: 'ASC' } },
+    );
+
+    return depthOneCategories
+      .filter((cat) => !assignedCategoryIds.has(cat.moodleCategoryId))
+      .map((cat) => CampusHeadEligibleCategoryResponseDto.Map(cat));
   }
 
   private async refreshUserRoles(user: User) {

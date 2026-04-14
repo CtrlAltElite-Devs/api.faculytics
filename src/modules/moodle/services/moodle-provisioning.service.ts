@@ -622,6 +622,11 @@ export class MoodleProvisioningService {
             input.campus,
             input.role,
           );
+          // FAC-131a — Moodle-side seed usernames must not collide with
+          // the reserved "local-" namespace used for Faculytics-local accounts.
+          if (candidate.username.toLowerCase().startsWith('local-')) {
+            continue;
+          }
           if (!usernameSet.has(candidate.username)) {
             usernameSet.add(candidate.username);
             user = candidate;

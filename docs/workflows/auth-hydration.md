@@ -123,3 +123,15 @@ Manual roles (`source=manual`) are never modified by the hydration process. They
 ### Global Role Propagation
 
 After institutional role resolution, the user's `roles` array is derived from both enrollment roles (via `MoodleRoleMapping`) and institutional roles. A user can have multiple roles (e.g., `[FACULTY, DEAN]` or `[FACULTY, CHAIRPERSON]`).
+
+Manually-granted `SUPER_ADMIN` and `ADMIN` roles are **never** dropped by hydration or by the batch role-derivation phase in institutional sync. `User.updateRolesFromEnrollments()` snapshots them before recomputing and merges them back in — hydration can promote a user (add FACULTY/CHAIRPERSON) but cannot revoke out-of-band admin roles. See [Institutional Sync — Phase 5](./institutional-sync.md#phase-5-user-role-derivation).
+
+## User Scope Derivation
+
+After institutional role resolution, hydration derives `user.program` and `user.department` from the user's freshly-fetched Moodle enrollments by calling the shared pure helper `deriveUserScopes()` from `scope-derivation.helper.ts`. The bulk Moodle sync (`EnrollmentSyncService.backfillUserScopes`) calls the same helper, so the cron path and the login path always converge on the same `(primaryProgram, primaryDepartment)` for a given enrollment set.
+
+**Atomic source guard:** if EITHER `user.departmentSource = 'manual'` OR `user.programSource = 'manual'`, the hydration step skips derivation entirely. Manual assignments (admin UI, FAC-127) survive Moodle re-syncs. Reverting either field to `'auto'` re-enables derivation on the next login.
+
+**Campus is not touched here.** `user.campus` is set only by `UserRepository.UpsertFromMoodle` from the username prefix at login time. There is no `campusSource` column.
+
+`MeResponse` exposes `campus`, `program`, and `department` from these derived/manual values.

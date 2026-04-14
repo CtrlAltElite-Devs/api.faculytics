@@ -1,18 +1,22 @@
 import { EntityManager } from '@mikro-orm/core';
 import { Injectable, Logger } from '@nestjs/common';
 import pLimit from 'p-limit';
+import { Campus } from 'src/entities/campus.entity';
 import { Course } from 'src/entities/course.entity';
 import { Section } from 'src/entities/section.entity';
-import { Campus } from 'src/entities/campus.entity';
-import { Program } from 'src/entities/program.entity';
 import { env } from 'src/configurations/env';
 import { Enrollment } from 'src/entities/enrollment.entity';
+import { Program } from 'src/entities/program.entity';
 import { User } from 'src/entities/user.entity';
-import { UserInstitutionalRole } from 'src/entities/user-institutional-role.entity';
+import {
+  InstitutionalRoleSource,
+  UserInstitutionalRole,
+} from 'src/entities/user-institutional-role.entity';
 import { MoodleEnrolledUser } from '../lib/moodle.types';
 import { MoodleService } from '../moodle.service';
 import UnitOfWork from 'src/modules/common/unit-of-work';
 import { SyncPhaseResult } from '../lib/sync-result.types';
+import { deriveUserScopes } from './scope-derivation.helper';
 
 @Injectable()
 export class EnrollmentSyncService {
@@ -85,7 +89,7 @@ export class EnrollmentSyncService {
       }
     }
 
-    // Phase 4: Backfill campus, program, department on users
+    // Phase 4: Backfill user.department / user.program from enrollment majority
     try {
       await this.backfillUserScopes(fetched);
     } catch (error: unknown) {
@@ -130,6 +134,16 @@ export class EnrollmentSyncService {
           );
           continue;
         }
+        // FAC-131a — reject Moodle users whose username collides with the
+        // reserved "local-" namespace for Faculytics-local accounts. Without
+        // this guard, the user_user_name_unique constraint would throw if a
+        // Moodle sysadmin ever created a local-* account.
+        if (user.username.toLowerCase().startsWith('local-')) {
+          this.logger.warn(
+            `Skipping Moodle user with reserved "local-" username prefix: moodleUserId=${user.id}, username=${user.username}`,
+          );
+          continue;
+        }
         uniqueUsers.set(user.id, user);
       }
     }
@@ -150,6 +164,9 @@ export class EnrollmentSyncService {
             lastLoginAt: new Date(),
             isActive: true,
             roles: [],
+            departmentSource: InstitutionalRoleSource.AUTO,
+            programSource: InstitutionalRoleSource.AUTO,
+            campusSource: InstitutionalRoleSource.AUTO,
           },
           { managed: false },
         ),
@@ -336,112 +353,136 @@ export class EnrollmentSyncService {
   private async backfillUserScopes(
     fetched: { course: Course; remoteUsers: MoodleEnrolledUser[] }[],
   ) {
-    // 1. Build user → program mapping (most course enrollments wins)
-    const userProgramCounts = new Map<number, Map<string, number>>();
+    const fork = this.em.fork();
 
+    // 1. Build per-user program-id list from the in-memory snapshot.
+    //    course.program is a reference proxy; .id is safe without populate.
+    const programIdsByMoodleUser = new Map<number, string[]>();
+    const allProgramIds = new Set<string>();
     for (const { course, remoteUsers } of fetched) {
-      const programRef = course.program;
-      if (!programRef) continue;
-      const programId =
-        typeof programRef === 'object' ? programRef.id : String(programRef);
-
+      if (!course.program) continue;
+      const programId = course.program.id;
+      allProgramIds.add(programId);
       for (const remote of remoteUsers) {
         if (remote.id == null || !remote.username) continue;
-        if (!userProgramCounts.has(remote.id)) {
-          userProgramCounts.set(remote.id, new Map());
+        let list = programIdsByMoodleUser.get(remote.id);
+        if (!list) {
+          list = [];
+          programIdsByMoodleUser.set(remote.id, list);
         }
-        const counts = userProgramCounts.get(remote.id)!;
-        counts.set(programId, (counts.get(programId) ?? 0) + 1);
+        list.push(programId);
       }
     }
 
-    // 2. Resolve primary program per user (most enrollments, alphabetical ID tiebreaker)
-    const userPrimaryProgram = new Map<number, string>();
-    for (const [moodleUserId, counts] of userProgramCounts) {
-      let maxCount = 0;
-      let primaryProgramId = '';
-      for (const [programId, count] of counts) {
-        if (
-          count > maxCount ||
-          (count === maxCount && programId < primaryProgramId)
-        ) {
-          maxCount = count;
-          primaryProgramId = programId;
-        }
-      }
-      if (primaryProgramId) {
-        userPrimaryProgram.set(moodleUserId, primaryProgramId);
-      }
-    }
+    if (programIdsByMoodleUser.size === 0) return;
 
-    if (userPrimaryProgram.size === 0) return;
-
-    // 3. Load programs with department → semester → campus chain
-    const programIds = [...new Set(userPrimaryProgram.values())];
-    const fork = this.em.fork();
+    // 2. Load programs with department populated in this fork
     const programs = await fork.find(
       Program,
-      { id: { $in: programIds } },
-      {
-        populate: [
-          'department',
-          'department.semester',
-          'department.semester.campus',
-        ],
-      },
+      { id: { $in: [...allProgramIds] } },
+      { populate: ['department'] },
     );
-    const programMap = new Map(programs.map((p) => [p.id, p]));
+    const programById = new Map(programs.map((p) => [p.id, p]));
 
-    // 4. Load all campuses for username prefix lookup
-    const campuses = await fork.find(Campus, {});
-    const campusByCode = new Map(campuses.map((c) => [c.code, c]));
+    // 3. Materialize enrollment lists referencing the fork-managed programs
+    const enrollmentsByMoodleId = new Map<
+      number,
+      Array<{ program: Program }>
+    >();
+    for (const [moodleId, pids] of programIdsByMoodleUser) {
+      enrollmentsByMoodleId.set(
+        moodleId,
+        pids
+          .map((pid) => ({ program: programById.get(pid) }))
+          .filter((e): e is { program: Program } => !!e.program),
+      );
+    }
 
-    // 5. Load users and update scope fields
-    const moodleUserIds = [...userPrimaryProgram.keys()];
-    const users = await fork.find(User, {
-      moodleUserId: { $in: moodleUserIds },
-    });
+    // 4. Load users with current source flags + program/department/campus populated
+    const users = await fork.find(
+      User,
+      { moodleUserId: { $in: [...programIdsByMoodleUser.keys()] } },
+      { populate: ['program', 'department', 'campus'] },
+    );
 
-    let updated = 0;
+    // 5. Derive + apply with atomic source guard + equality guard
+    const counters = {
+      auto_derived: 0,
+      manual_skipped: 0,
+      null: 0,
+      campus_assigned: 0,
+    };
     for (const user of users) {
-      if (!user.moodleUserId) continue;
-
-      const programId = userPrimaryProgram.get(user.moodleUserId);
-      if (!programId) continue;
-
-      const program = programMap.get(programId);
-      if (!program) continue;
-
-      const changed =
-        user.program?.id !== program.id ||
-        user.department?.id !== program.department?.id;
-
-      user.program = program;
-
-      if (program.department) {
-        user.department = program.department;
+      if (
+        user.departmentSource === (InstitutionalRoleSource.MANUAL as string) ||
+        user.programSource === (InstitutionalRoleSource.MANUAL as string)
+      ) {
+        counters.manual_skipped++;
+        continue;
       }
 
-      // Campus: username prefix first, fallback to category hierarchy
-      const parts = user.userName.split('-');
-      const campusCode = parts.length > 1 ? parts[0].toUpperCase() : null;
-      const campus = campusCode ? campusByCode.get(campusCode) : undefined;
-      const resolvedCampus = campus ?? program.department?.semester?.campus;
-      const campusChanged = user.campus?.id !== resolvedCampus?.id;
+      const result = deriveUserScopes({
+        enrollments: enrollmentsByMoodleId.get(user.moodleUserId!) ?? [],
+      });
 
-      if (resolvedCampus) {
-        user.campus = resolvedCampus;
+      if (!result.primaryProgram) {
+        counters.null++;
+        continue;
       }
 
-      if (changed || campusChanged) {
-        updated++;
+      const programChanged = user.program?.id !== result.primaryProgram.id;
+      const departmentChanged =
+        user.department?.id !== result.primaryDepartment?.id;
+
+      if (programChanged || departmentChanged) {
+        user.program = result.primaryProgram;
+        user.department = result.primaryDepartment ?? undefined;
+        user.programSource = InstitutionalRoleSource.AUTO;
+        user.departmentSource = InstitutionalRoleSource.AUTO;
+        counters.auto_derived++;
       }
     }
 
-    if (updated > 0) {
+    // 6. Campus backfill: fill-if-null only. Username convention is
+    //    "<campus_code>-<id>" (e.g. "ucmn-262141935"). Mirrors the lookup
+    //    UserRepository.UpsertFromMoodle does at login, so cron-discovered
+    //    users get a campus before they ever log in. Manual reassignments
+    //    survive because we never overwrite a non-null campus.
+    const usersNeedingCampus = users.filter((u) => !u.campus);
+    if (usersNeedingCampus.length > 0) {
+      const codesNeeded = new Set<string>();
+      for (const user of usersNeedingCampus) {
+        const prefix = user.userName.split('-')[0];
+        if (prefix && prefix !== user.userName) {
+          codesNeeded.add(prefix.toUpperCase());
+        }
+      }
+
+      if (codesNeeded.size > 0) {
+        const campuses = await fork.find(Campus, {
+          code: { $in: [...codesNeeded] },
+        });
+        const campusByCode = new Map(campuses.map((c) => [c.code, c]));
+
+        for (const user of usersNeedingCampus) {
+          const prefix = user.userName.split('-')[0];
+          if (!prefix || prefix === user.userName) continue;
+          const campus = campusByCode.get(prefix.toUpperCase());
+          if (campus) {
+            user.campus = campus;
+            counters.campus_assigned++;
+          }
+        }
+      }
+    }
+
+    if (counters.auto_derived > 0 || counters.campus_assigned > 0) {
       await fork.flush();
-      this.logger.log(`Backfilled scope fields for ${updated} users`);
     }
+
+    this.logger.log(
+      `Scope backfill: ${counters.auto_derived} derived, ${counters.manual_skipped} manual skipped, ${counters.null} no enrollments, ${counters.campus_assigned} campus assigned`,
+    );
   }
 
   private async deriveUserRoles(

@@ -4,10 +4,12 @@ import {
   Logger,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { UniqueConstraintViolationException } from '@mikro-orm/core';
 import { v4 } from 'uuid';
 import { env } from 'src/configurations/env';
 import { QueueName } from 'src/configurations/common/queue-names';
@@ -27,6 +29,7 @@ import { Program } from 'src/entities/program.entity';
 import { Campus } from 'src/entities/campus.entity';
 import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
+import { UserRole } from 'src/modules/auth/roles.enum';
 import { PipelineStatus, RunStatus } from '../enums';
 import { SENTIMENT_GATE, COVERAGE_WARNINGS } from '../constants';
 import { buildSubmissionScope } from '../lib/build-submission-scope';
@@ -34,6 +37,10 @@ import {
   CreatePipelineInput,
   createPipelineSchema,
 } from '../dto/create-pipeline.dto';
+import {
+  ListPipelinesQueryInput,
+  listPipelinesQuerySchema,
+} from '../dto/list-pipelines.dto';
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { batchAnalysisJobSchema } from '../dto/batch-analysis-job-message.dto';
 import { PipelineStatusResponse } from '../dto/pipeline-status.dto';
@@ -44,6 +51,8 @@ import {
 import { RecommendationsResponseDto } from '../dto/responses/recommendations.response.dto';
 import { AnalysisService } from '../analysis.service';
 import { TopicLabelService } from './topic-label.service';
+import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 
 interface CoverageStats {
   totalEnrolled: number;
@@ -69,6 +78,20 @@ const TERMINAL_STATUSES = [
   PipelineStatus.CANCELLED,
 ];
 
+// Populate list for endpoints that return a PipelineSummary to the
+// frontend. Covers every scope FK + the faculty name used in the summary
+// DTO. Keeping this centralized prevents drift between Create/Confirm/
+// Cancel and ListPipelines.
+const SUMMARY_POPULATE = [
+  'semester',
+  'faculty',
+  'questionnaireVersion',
+  'department',
+  'program',
+  'campus',
+  'course',
+] as const;
+
 @Injectable()
 export class PipelineOrchestratorService {
   private readonly logger = new Logger(PipelineOrchestratorService.name);
@@ -77,6 +100,8 @@ export class PipelineOrchestratorService {
     private readonly em: EntityManager,
     private readonly analysisService: AnalysisService,
     private readonly topicLabelService: TopicLabelService,
+    private readonly scopeResolver: ScopeResolverService,
+    private readonly currentUserService: CurrentUserService,
     @InjectQueue(QueueName.SENTIMENT) private readonly sentimentQueue: Queue,
     @InjectQueue(QueueName.TOPIC_MODEL) private readonly topicModelQueue: Queue,
     @InjectQueue(QueueName.RECOMMENDATIONS)
@@ -89,7 +114,15 @@ export class PipelineOrchestratorService {
     dto: CreatePipelineInput,
     triggeredById: string,
   ): Promise<AnalysisPipeline> {
-    const input = createPipelineSchema.parse(dto);
+    const parsed = createPipelineSchema.parse(dto);
+
+    // Belt-and-braces service-layer scope check. The controller-level
+    // @UseJwtGuard + RolesGuard blocks STUDENT/FACULTY before reaching here,
+    // but this guards against future guard misconfiguration (see AC-2a).
+    // Returns input augmented with auto-filled scope when the caller has
+    // exactly one assigned scope and didn't specify one explicitly.
+    const input = await this.assertCanCreatePipeline(parsed);
+
     const fork = this.em.fork();
 
     // Check for active duplicate
@@ -97,21 +130,27 @@ export class PipelineOrchestratorService {
       (s) => !TERMINAL_STATUSES.includes(s),
     );
 
+    // Every scope field is bound exactly — non-provided fields become
+    // `null`. This matches the partial unique index's COALESCE-to-sentinel
+    // behavior (TD-8). Without the explicit nulls, a too-loose `findOne`
+    // can match a superset-scoped pipeline (e.g. a DEAN asking for
+    // `{sem, dept}` would match a pipeline `{sem, dept, faculty, program}`),
+    // returning a mis-scoped pipeline and bypassing the index intent.
     const existingFilter: Record<string, unknown> = {
       semester: input.semesterId,
       status: { $in: activeStatuses },
+      faculty: input.facultyId ?? null,
+      department: input.departmentId ?? null,
+      program: input.programId ?? null,
+      campus: input.campusId ?? null,
+      course: input.courseId ?? null,
+      questionnaireVersion: input.questionnaireVersionId ?? null,
     };
-    if (input.facultyId) existingFilter['faculty'] = input.facultyId;
-    if (input.departmentId) existingFilter['department'] = input.departmentId;
-    if (input.programId) existingFilter['program'] = input.programId;
-    if (input.campusId) existingFilter['campus'] = input.campusId;
-    if (input.courseId) existingFilter['course'] = input.courseId;
-    if (input.questionnaireVersionId)
-      existingFilter['questionnaireVersion'] = input.questionnaireVersionId;
 
     const existingPipeline = await fork.findOne(
       AnalysisPipeline,
       existingFilter,
+      { populate: SUMMARY_POPULATE },
     );
     if (existingPipeline) {
       return existingPipeline;
@@ -128,34 +167,7 @@ export class PipelineOrchestratorService {
     if (input.courseId) scope.course = input.courseId;
 
     const coverage = await this.ComputeCoverageStats(fork, scope);
-
-    // Generate warnings
-    const warnings: string[] = [];
-    if (coverage.responseRate < COVERAGE_WARNINGS.MIN_RESPONSE_RATE) {
-      warnings.push(
-        `Response rate is ${(coverage.responseRate * 100).toFixed(1)}% (below ${COVERAGE_WARNINGS.MIN_RESPONSE_RATE * 100}% threshold).`,
-      );
-    }
-    if (coverage.submissionCount < COVERAGE_WARNINGS.MIN_SUBMISSIONS) {
-      warnings.push(
-        `Only ${coverage.submissionCount} submissions (minimum recommended: ${COVERAGE_WARNINGS.MIN_SUBMISSIONS}).`,
-      );
-    }
-    if (coverage.commentCount < COVERAGE_WARNINGS.MIN_COMMENTS) {
-      warnings.push(
-        `Only ${coverage.commentCount} qualitative comments (minimum recommended: ${COVERAGE_WARNINGS.MIN_COMMENTS}).`,
-      );
-    }
-    if (coverage.lastEnrollmentSyncAt) {
-      const hoursSinceSync =
-        (Date.now() - coverage.lastEnrollmentSyncAt.getTime()) / 3_600_000;
-      if (hoursSinceSync > COVERAGE_WARNINGS.STALE_SYNC_HOURS) {
-        const daysStale = Math.floor(hoursSinceSync / 24);
-        warnings.push(
-          `Enrollment data may be stale (last synced ${daysStale} day${daysStale !== 1 ? 's' : ''} ago).`,
-        );
-      }
-    }
+    const warnings = this.BuildCoverageWarnings(coverage);
 
     const pipeline = fork.create(AnalysisPipeline, {
       semester: fork.getReference(Semester, input.semesterId),
@@ -186,21 +198,89 @@ export class PipelineOrchestratorService {
       status: PipelineStatus.AWAITING_CONFIRMATION,
     });
 
-    await fork.flush();
+    // TD-8: partial unique index enforces one-canonical-pipeline-per-scope at
+    // the DB. A concurrent insert that lost the race throws
+    // UniqueConstraintViolationException — re-fetch the winner so both
+    // requests see the same pipeline id (idempotent).
+    try {
+      await fork.flush();
+    } catch (err) {
+      if (err instanceof UniqueConstraintViolationException) {
+        const winner = await fork.findOne(AnalysisPipeline, existingFilter, {
+          populate: SUMMARY_POPULATE,
+        });
+        if (winner) {
+          this.logger.log(
+            `CreatePipeline race resolved: returning existing ${winner.id} for semester ${input.semesterId}`,
+          );
+          return winner;
+        }
+      }
+      throw err;
+    }
 
     this.logger.log(
       `Created pipeline ${pipeline.id} for semester ${input.semesterId}`,
     );
+    // Populate references before returning so controller can map to the
+    // full PipelineSummary shape (frontend relies on scope codes/names).
+    await fork.populate(pipeline, SUMMARY_POPULATE);
     return pipeline;
+  }
+
+  async ListPipelines(
+    query: ListPipelinesQueryInput,
+  ): Promise<AnalysisPipeline[]> {
+    const parsed = listPipelinesQuerySchema.parse(query);
+    const filled = await this.fillAndAssertListScope(parsed);
+
+    const fork = this.em.fork();
+    const filter: Record<string, unknown> = {
+      semester: filled.semesterId,
+    };
+    if (filled.facultyId) filter['faculty'] = filled.facultyId;
+    if (filled.questionnaireVersionId)
+      filter['questionnaireVersion'] = filled.questionnaireVersionId;
+    if (filled.courseId) filter['course'] = filled.courseId;
+    if (filled.programId) filter['program'] = filled.programId;
+    if (filled.campusId) filter['campus'] = filled.campusId;
+
+    // Default-filled departmentIds come through as string[] (via $in), a
+    // client-provided scalar departmentId still works.
+    if (filled.departmentIdSet) {
+      filter['department'] = { $in: filled.departmentIdSet };
+    } else if (filled.departmentId) {
+      filter['department'] = filled.departmentId;
+    }
+    if (filled.programIdSet) {
+      filter['program'] = { $in: filled.programIdSet };
+    }
+    if (filled.campusIdSet) {
+      filter['campus'] = { $in: filled.campusIdSet };
+    }
+
+    return fork.find(AnalysisPipeline, filter, {
+      populate: SUMMARY_POPULATE,
+      orderBy: { createdAt: 'DESC' },
+      limit: 10,
+    });
   }
 
   async ConfirmPipeline(pipelineId: string): Promise<AnalysisPipeline> {
     const fork = this.em.fork();
-    const pipeline = await fork.findOne(AnalysisPipeline, pipelineId);
+    const pipeline = await fork.findOne(AnalysisPipeline, pipelineId, {
+      populate: SUMMARY_POPULATE,
+    });
 
     if (!pipeline) {
       throw new NotFoundException(`Pipeline ${pipelineId} not found`);
     }
+
+    // Scope check MUST precede every flush / status write / enqueue below —
+    // a foreign user must never cause side effects even when the worker URL
+    // is misconfigured (the SENTIMENT_WORKER_URL check used to flip status
+    // to FAILED on any caller).
+    await this.assertCanAccessPipeline(pipeline);
 
     if (pipeline.status !== PipelineStatus.AWAITING_CONFIRMATION) {
       throw new BadRequestException(
@@ -453,6 +533,8 @@ export class PipelineOrchestratorService {
       throw new NotFoundException(`Pipeline ${pipelineId} not found`);
     }
 
+    await this.assertCanAccessPipeline(pipeline);
+
     // Get latest runs
     const sentimentRun = await fork.findOne(
       SentimentRun,
@@ -478,30 +560,63 @@ export class PipelineOrchestratorService {
       });
     }
 
-    // Compute lastEnrollmentSyncAt by scoping through courses in submission scope
-    const scope = buildSubmissionScope(pipeline);
+    // Coverage stats are cached on the pipeline entity at creation time. For
+    // pipelines still awaiting confirmation, recompute on every status fetch
+    // so the user sees the latest submission/enrollment counts before they
+    // lock in the snapshot. After confirmation, the stored values represent
+    // what was actually analyzed and must not drift.
+    const scope = this.BuildScopeFromPipeline(pipeline);
+    let totalEnrolled = pipeline.totalEnrolled;
+    let submissionCount = pipeline.submissionCount;
+    let commentCount = pipeline.commentCount;
+    let responseRate = Number(pipeline.responseRate);
+    let warnings = pipeline.warnings;
     let lastEnrollmentSyncAt: Date | null = null;
-    const scopedSubs = await fork.find(
-      QuestionnaireSubmission,
-      {
-        ...scope,
-        qualitativeComment: { $ne: null },
-      },
-      { fields: ['course'] },
-    );
-    const courseIds = [
-      ...new Set(
-        scopedSubs.map((s) => s.course?.id).filter((id): id is string => !!id),
-      ),
-    ];
-    if (courseIds.length > 0) {
-      const latestEnrollment = await fork.findOne(
-        Enrollment,
-        { isActive: true, course: { $in: courseIds } },
-        { orderBy: { updatedAt: 'DESC' } },
+
+    if (pipeline.status === PipelineStatus.AWAITING_CONFIRMATION) {
+      const freshCoverage = await this.ComputeCoverageStats(fork, scope);
+      totalEnrolled = freshCoverage.totalEnrolled;
+      submissionCount = freshCoverage.submissionCount;
+      commentCount = freshCoverage.commentCount;
+      responseRate = freshCoverage.responseRate;
+      lastEnrollmentSyncAt = freshCoverage.lastEnrollmentSyncAt;
+      warnings = this.BuildCoverageWarnings(freshCoverage);
+
+      // Persist refreshed snapshot so the values shown here match what will
+      // be locked in at confirmation time.
+      pipeline.totalEnrolled = freshCoverage.totalEnrolled;
+      pipeline.submissionCount = freshCoverage.submissionCount;
+      pipeline.commentCount = freshCoverage.commentCount;
+      pipeline.responseRate = freshCoverage.responseRate;
+      pipeline.warnings = warnings;
+      await fork.flush();
+    } else {
+      // For confirmed/terminal pipelines, derive lastEnrollmentSyncAt from
+      // courses in the original submission scope (snapshot view).
+      const scopedSubs = await fork.find(
+        QuestionnaireSubmission,
+        {
+          ...scope,
+          qualitativeComment: { $ne: null },
+        },
+        { fields: ['course'] },
       );
-      if (latestEnrollment) {
-        lastEnrollmentSyncAt = latestEnrollment.updatedAt;
+      const courseIds = [
+        ...new Set(
+          scopedSubs
+            .map((s) => s.course?.id)
+            .filter((id): id is string => !!id),
+        ),
+      ];
+      if (courseIds.length > 0) {
+        const latestEnrollment = await fork.findOne(
+          Enrollment,
+          { isActive: true, course: { $in: courseIds } },
+          { orderBy: { updatedAt: 'DESC' } },
+        );
+        if (latestEnrollment) {
+          lastEnrollmentSyncAt = latestEnrollment.updatedAt;
+        }
       }
     }
 
@@ -545,19 +660,25 @@ export class PipelineOrchestratorService {
       id: pipeline.id,
       status: pipeline.status,
       scope: {
-        semester: pipeline.semester?.code || pipeline.semester?.id || '',
-        department: pipeline.department?.code || null,
-        faculty: pipeline.faculty?.fullName || null,
-        questionnaireVersion: pipeline.questionnaireVersion?.id || null,
-        program: pipeline.program?.code || null,
-        campus: pipeline.campus?.code || null,
-        course: pipeline.course?.shortname || null,
+        semesterId: pipeline.semester?.id ?? '',
+        semesterCode: pipeline.semester?.code ?? '',
+        departmentId: pipeline.department?.id ?? null,
+        departmentCode: pipeline.department?.code ?? null,
+        facultyId: pipeline.faculty?.id ?? null,
+        facultyName: pipeline.faculty?.fullName ?? null,
+        programId: pipeline.program?.id ?? null,
+        programCode: pipeline.program?.code ?? null,
+        campusId: pipeline.campus?.id ?? null,
+        campusCode: pipeline.campus?.code ?? null,
+        courseId: pipeline.course?.id ?? null,
+        courseShortname: pipeline.course?.shortname ?? null,
+        questionnaireVersionId: pipeline.questionnaireVersion?.id ?? null,
       },
       coverage: {
-        totalEnrolled: pipeline.totalEnrolled,
-        submissionCount: pipeline.submissionCount,
-        commentCount: pipeline.commentCount,
-        responseRate: Number(pipeline.responseRate),
+        totalEnrolled,
+        submissionCount,
+        commentCount,
+        responseRate,
         lastEnrollmentSyncAt: lastEnrollmentSyncAt?.toISOString() || null,
       },
       stages: {
@@ -585,7 +706,7 @@ export class PipelineOrchestratorService {
           recommendationRun,
         ),
       },
-      warnings: pipeline.warnings,
+      warnings,
       errorMessage: pipeline.errorMessage ?? null,
       // Intent signal for future error categorization — currently equivalent to status === FAILED
       retryable: pipeline.status === PipelineStatus.FAILED,
@@ -598,11 +719,17 @@ export class PipelineOrchestratorService {
 
   async CancelPipeline(pipelineId: string): Promise<AnalysisPipeline> {
     const fork = this.em.fork();
-    const pipeline = await fork.findOne(AnalysisPipeline, pipelineId);
+    const pipeline = await fork.findOne(AnalysisPipeline, pipelineId, {
+      populate: SUMMARY_POPULATE,
+    });
 
     if (!pipeline) {
       throw new NotFoundException(`Pipeline ${pipelineId} not found`);
     }
+
+    // Scope check BEFORE setting CANCELLED / flushing — foreign callers must
+    // not mutate pipeline state.
+    await this.assertCanAccessPipeline(pipeline);
 
     if (TERMINAL_STATUSES.includes(pipeline.status)) {
       throw new BadRequestException(
@@ -634,7 +761,321 @@ export class PipelineOrchestratorService {
     this.logger.error(`Pipeline ${pipelineId} failed at ${stage}: ${error}`);
   }
 
+  // --- Scope Authorization (FAC-132) ---
+
+  private async assertCanCreatePipeline(
+    input: CreatePipelineInput,
+  ): Promise<CreatePipelineInput> {
+    const user = this.currentUserService.getOrFail();
+
+    if (user.roles.includes(UserRole.SUPER_ADMIN)) {
+      return input;
+    }
+
+    // Roles are not mutually exclusive — a Moodle user provisioned as
+    // DEAN is typically also FACULTY. Try the scoped roles in order of
+    // precedence; the catch-all `throw` at the bottom rejects users who
+    // have ONLY FACULTY/STUDENT (or no recognized role).
+    //
+    // Auto-fill rule: if the caller has exactly ONE assigned scope on
+    // their axis and didn't specify one explicitly, fill it in. This
+    // closes the UX gap where the dashboard's PipelineTriggerCard only
+    // knows {semesterId}. Multi-scope users still get 400 — they need to
+    // pick (future picker UI).
+
+    if (user.roles.includes(UserRole.DEAN)) {
+      let departmentId = input.departmentId;
+      const allowed = await this.scopeResolver.ResolveDepartmentIds(
+        input.semesterId,
+      );
+      if (!departmentId) {
+        if (allowed === null) {
+          return input; // SUPER_ADMIN-equivalent, won't normally hit
+        }
+        if (allowed.length === 0) {
+          throw new ForbiddenException(
+            'No departments assigned to your account for this semester',
+          );
+        }
+        if (allowed.length === 1) {
+          departmentId = allowed[0];
+        } else {
+          throw new BadRequestException(
+            'Multiple departments assigned — please specify departmentId',
+          );
+        }
+      } else if (allowed !== null && !allowed.includes(departmentId)) {
+        throw new ForbiddenException('scope not in your assigned access');
+      }
+      return { ...input, departmentId };
+    }
+
+    if (user.roles.includes(UserRole.CHAIRPERSON)) {
+      let programId = input.programId;
+      const allowed = await this.scopeResolver.ResolveProgramIds(
+        input.semesterId,
+      );
+      if (!programId) {
+        if (allowed === null) {
+          return input;
+        }
+        if (allowed.length === 0) {
+          throw new ForbiddenException(
+            'No programs assigned to your account for this semester',
+          );
+        }
+        if (allowed.length === 1) {
+          programId = allowed[0];
+        } else {
+          throw new BadRequestException(
+            'Multiple programs assigned — please specify programId',
+          );
+        }
+      } else if (allowed !== null && !allowed.includes(programId)) {
+        throw new ForbiddenException('scope not in your assigned access');
+      }
+      return { ...input, programId };
+    }
+
+    if (user.roles.includes(UserRole.CAMPUS_HEAD)) {
+      let campusId = input.campusId;
+      const departmentId = input.departmentId;
+      const allowedCampuses = await this.scopeResolver.ResolveCampusIds(
+        input.semesterId,
+      );
+      if (!campusId && !departmentId) {
+        if (allowedCampuses === null) {
+          return input;
+        }
+        if (allowedCampuses.length === 0) {
+          throw new ForbiddenException(
+            'No campuses assigned to your account for this semester',
+          );
+        }
+        if (allowedCampuses.length === 1) {
+          campusId = allowedCampuses[0];
+        } else {
+          throw new BadRequestException(
+            'Multiple campuses assigned — please specify campusId or departmentId',
+          );
+        }
+      } else {
+        if (
+          campusId &&
+          allowedCampuses !== null &&
+          !allowedCampuses.includes(campusId)
+        ) {
+          throw new ForbiddenException('scope not in your assigned access');
+        }
+        if (departmentId) {
+          const allowedDepts = await this.scopeResolver.ResolveDepartmentIds(
+            input.semesterId,
+          );
+          if (allowedDepts !== null && !allowedDepts.includes(departmentId)) {
+            throw new ForbiddenException('scope not in your assigned access');
+          }
+        }
+      }
+      return { ...input, campusId };
+    }
+
+    throw new ForbiddenException('scope not in your assigned access');
+  }
+
+  private async fillAndAssertListScope(query: ListPipelinesQueryInput): Promise<
+    ListPipelinesQueryInput & {
+      departmentIdSet?: string[];
+      programIdSet?: string[];
+      campusIdSet?: string[];
+    }
+  > {
+    const user = this.currentUserService.getOrFail();
+
+    if (user.roles.includes(UserRole.SUPER_ADMIN)) {
+      return { ...query };
+    }
+
+    // Try scoped roles BEFORE the FACULTY auto-override — a Moodle DEAN
+    // is typically also FACULTY, and the more-permissive DEAN behavior
+    // must win.
+
+    if (user.roles.includes(UserRole.DEAN)) {
+      const allowed = await this.scopeResolver.ResolveDepartmentIds(
+        query.semesterId,
+      );
+      if (allowed === null) return { ...query };
+      if (query.departmentId) {
+        if (!allowed.includes(query.departmentId)) {
+          throw new ForbiddenException('scope not in your assigned access');
+        }
+        return { ...query };
+      }
+      return { ...query, departmentIdSet: allowed };
+    }
+
+    if (user.roles.includes(UserRole.CHAIRPERSON)) {
+      const allowed = await this.scopeResolver.ResolveProgramIds(
+        query.semesterId,
+      );
+      if (allowed === null) return { ...query };
+      if (query.programId) {
+        if (!allowed.includes(query.programId)) {
+          throw new ForbiddenException('scope not in your assigned access');
+        }
+        return { ...query };
+      }
+      return { ...query, programIdSet: allowed };
+    }
+
+    if (user.roles.includes(UserRole.CAMPUS_HEAD)) {
+      const allowed = await this.scopeResolver.ResolveCampusIds(
+        query.semesterId,
+      );
+      if (allowed === null) return { ...query };
+      if (query.campusId) {
+        if (!allowed.includes(query.campusId)) {
+          throw new ForbiddenException('scope not in your assigned access');
+        }
+        return { ...query };
+      }
+      return { ...query, campusIdSet: allowed };
+    }
+
+    if (user.roles.includes(UserRole.FACULTY)) {
+      // Silently override any facultyId in the query to the caller's own
+      // user id. Rationale: prevents enumeration of other faculty's
+      // pipelines via the list endpoint — a FACULTY querying
+      // `{ facultyId: 'other' }` must see their own list, not a 403
+      // (which would leak the existence of the foreign faculty's pipeline).
+      return { ...query, facultyId: user.id };
+    }
+
+    if (user.roles.includes(UserRole.STUDENT)) {
+      throw new ForbiddenException('STUDENT cannot list analysis pipelines.');
+    }
+
+    throw new ForbiddenException('scope not in your assigned access');
+  }
+
+  private async assertCanAccessPipeline(
+    pipeline: AnalysisPipeline,
+  ): Promise<void> {
+    const user = this.currentUserService.getOrFail();
+
+    if (user.roles.includes(UserRole.SUPER_ADMIN)) {
+      return;
+    }
+
+    // Roles are not mutually exclusive (e.g. DEAN+FACULTY). Try EACH role
+    // the user holds; if ANY grants access the pipeline is readable. Only
+    // throw if none qualifies. The Resolve*Ids resolvers throw on roles
+    // they don't recognize, so each branch is gated by an explicit role
+    // membership check before invoking.
+
+    // DEAN: pipeline must have a non-null department in the user's
+    // resolved set. Null department = no filter on that axis = broader
+    // than DEAN scope = SUPER_ADMIN only.
+    if (user.roles.includes(UserRole.DEAN) && pipeline.department) {
+      const allowed = await this.scopeResolver.ResolveDepartmentIds(
+        pipeline.semester.id,
+      );
+      if (allowed === null || allowed.includes(pipeline.department.id)) {
+        return;
+      }
+    }
+
+    if (user.roles.includes(UserRole.CHAIRPERSON) && pipeline.program) {
+      const allowed = await this.scopeResolver.ResolveProgramIds(
+        pipeline.semester.id,
+      );
+      if (allowed === null || allowed.includes(pipeline.program.id)) {
+        return;
+      }
+    }
+
+    if (
+      user.roles.includes(UserRole.CAMPUS_HEAD) &&
+      (pipeline.campus || pipeline.department)
+    ) {
+      let campusOk = !pipeline.campus;
+      let deptOk = !pipeline.department;
+      if (pipeline.campus) {
+        const allowedCampuses = await this.scopeResolver.ResolveCampusIds(
+          pipeline.semester.id,
+        );
+        campusOk =
+          allowedCampuses === null ||
+          allowedCampuses.includes(pipeline.campus.id);
+      }
+      if (pipeline.department) {
+        const allowedDepts = await this.scopeResolver.ResolveDepartmentIds(
+          pipeline.semester.id,
+        );
+        deptOk =
+          allowedDepts === null ||
+          allowedDepts.includes(pipeline.department.id);
+      }
+      // Every non-null axis must be in scope.
+      if (campusOk && deptOk) {
+        return;
+      }
+    }
+
+    // FACULTY: ownership only — the pipeline's faculty FK must match.
+    if (
+      user.roles.includes(UserRole.FACULTY) &&
+      pipeline.faculty &&
+      pipeline.faculty.id === user.id
+    ) {
+      return;
+    }
+
+    throw new ForbiddenException('scope not in your assigned access');
+  }
+
   // --- Private Helpers ---
+
+  private BuildScopeFromPipeline(pipeline: AnalysisPipeline): ScopeFilter {
+    const scope: ScopeFilter = { semester: pipeline.semester.id };
+    if (pipeline.faculty) scope.faculty = pipeline.faculty.id;
+    if (pipeline.questionnaireVersion)
+      scope.questionnaireVersion = pipeline.questionnaireVersion.id;
+    if (pipeline.department) scope.department = pipeline.department.id;
+    if (pipeline.program) scope.program = pipeline.program.id;
+    if (pipeline.campus) scope.campus = pipeline.campus.id;
+    if (pipeline.course) scope.course = pipeline.course.id;
+    return scope;
+  }
+
+  private BuildCoverageWarnings(coverage: CoverageStats): string[] {
+    const warnings: string[] = [];
+    if (coverage.responseRate < COVERAGE_WARNINGS.MIN_RESPONSE_RATE) {
+      warnings.push(
+        `Response rate is ${(coverage.responseRate * 100).toFixed(1)}% (below ${COVERAGE_WARNINGS.MIN_RESPONSE_RATE * 100}% threshold).`,
+      );
+    }
+    if (coverage.submissionCount < COVERAGE_WARNINGS.MIN_SUBMISSIONS) {
+      warnings.push(
+        `Only ${coverage.submissionCount} submissions (minimum recommended: ${COVERAGE_WARNINGS.MIN_SUBMISSIONS}).`,
+      );
+    }
+    if (coverage.commentCount < COVERAGE_WARNINGS.MIN_COMMENTS) {
+      warnings.push(
+        `Only ${coverage.commentCount} qualitative comments (minimum recommended: ${COVERAGE_WARNINGS.MIN_COMMENTS}).`,
+      );
+    }
+    if (coverage.lastEnrollmentSyncAt) {
+      const hoursSinceSync =
+        (Date.now() - coverage.lastEnrollmentSyncAt.getTime()) / 3_600_000;
+      if (hoursSinceSync > COVERAGE_WARNINGS.STALE_SYNC_HOURS) {
+        const daysStale = Math.floor(hoursSinceSync / 24);
+        warnings.push(
+          `Enrollment data may be stale (last synced ${daysStale} day${daysStale !== 1 ? 's' : ''} ago).`,
+        );
+      }
+    }
+    return warnings;
+  }
 
   private async ComputeCoverageStats(
     em: EntityManager,
@@ -890,11 +1331,18 @@ export class PipelineOrchestratorService {
     pipelineId: string,
   ): Promise<RecommendationsResponseDto> {
     const fork = this.em.fork();
-    const pipeline = await fork.findOne(AnalysisPipeline, pipelineId);
+    const pipeline = await fork.findOne(AnalysisPipeline, pipelineId, {
+      populate: ['faculty', 'department', 'program', 'campus'],
+    });
 
     if (!pipeline) {
       throw new NotFoundException(`Pipeline ${pipelineId} not found`);
     }
+
+    // Populate faculty above is load-bearing for assertCanAccessPipeline's
+    // ownership check — reading pipeline.faculty?.id through a reference
+    // proxy without populate is fragile.
+    await this.assertCanAccessPipeline(pipeline);
 
     const run = await fork.findOne(
       RecommendationRun,

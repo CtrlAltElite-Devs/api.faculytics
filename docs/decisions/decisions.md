@@ -293,6 +293,55 @@ Batch report generation creates individual `ReportJob` entities per faculty, lin
 - **Atomic batch enqueue:** `Queue.addBulk()` ensures all jobs in a batch are enqueued atomically. On failure, all `ReportJob` entities are cleaned up — no orphans.
 - **Trade-off:** Batch status polling requires aggregation over N rows (bounded by `REPORT_BATCH_MAX_SIZE`=100). SQL `GROUP BY` keeps this efficient.
 
+## 41. LLM-Backed Worker Dispatch-Set Pinning
+
+Sentiment analysis is LLM-backed and can produce response items whose `submissionId` doesn't correspond to anything the API dispatched — either a fabricated UUID or one borrowed from an adjacent batch. The previous behavior tried to persist these as `SentimentResult` rows, triggering PostgreSQL FK violations (`23503`) that aborted the transaction and lost the valid results from the same batch.
+
+`SentimentProcessor.Persist()` now pins responses to a dispatch set:
+
+1. Build `dispatchedIds = new Set(job.data.items.map(i => i.submissionId))` before any DB work.
+2. Drop every result whose `submissionId` is not in `dispatchedIds`, logging a `warn` with the drop count when it's non-zero.
+3. If **all** results are dropped, call `orchestrator.OnStageFailed(pipelineId, 'sentiment_analysis', ...)` — the stage is terminal, not retried.
+
+- **Worker outputs from LLM-backed workers are untrusted input.** Unlike BERTopic (deterministic Python), the sentiment worker wraps an LLM. Zod validates response shape but cannot validate key-space membership — only the API knows what it actually dispatched.
+- **Failure-mode classification.** 100% hallucination is an infrastructure-looking error with domain-like retry semantics — retrying the LLM is likely to produce more hallucinations, not fewer. `OnStageFailed` (no retry) is chosen deliberately over throwing (retry) despite the general "infrastructure errors retry, domain errors fail" rule in the project's CLAUDE.md.
+- **Observability.** The `warn` log line `"Dropped X of Y sentiment results for run {runId} (unknown submissionIds)"` is the only signal of partial-batch LLM drift — dashboards should track it over time as a model-health indicator.
+- **Scope.** Any future processor under `BaseAnalysisProcessor` that wraps an LLM must implement dispatch-set pinning. Deterministic workers (topic model on BERTopic) do not need it.
+
+See [AI Inference Pipeline — Dispatch-Set Pinning](../architecture/ai-inference-pipeline.md#dispatch-set-pinning-llm-workers) and [Analysis Job Processing — Resilience](../workflows/analysis-job-processing.md#resilience).
+
+## 42. Pipeline-Scoped Topic Evidence Counts
+
+`Topic` is a shared entity: a single topic row may accumulate assignments from many pipelines across different faculty (the topic-modeling worker runs corpus-wide, not per-pipeline). `Topic.docCount` is a global counter over all of those assignments.
+
+Recommendation generation originally used `Topic.docCount` directly for `TopicSource.commentCount` in `supportingEvidence`. This leaked across faculty boundaries — a recommendation for Faculty A could report a comment count of 50 when only 2 of Faculty A's submissions actually mentioned that topic, and sample quotes could be drawn from Faculty B's corpus.
+
+The fix narrows the `TopicAssignment` query from `{ topic: { $in: topicIds } }` to `{ topic: { $in: topicIds }, submission: { $in: submissionIds } }`, and derives `commentCount` from the scoped count. `confidenceLevel` thresholds (`LOW < 5`, `MEDIUM ≥ 5`, `HIGH ≥ 10 with ≥ 70% sentiment agreement`) now reflect the current pipeline's evidence rather than the topic's global activity.
+
+- **Rule:** any future consumer of topic-derived evidence inside a pipeline must scope its query by `submissionIds`. `Topic.docCount` is a **global** counter and is never a per-pipeline metric.
+- **Trade-off:** adds a slightly narrower index-hittable query. Acceptable — the alternative is privacy-violating cross-pipeline leakage.
+
+## 43. BullMQ Queue Prefix Isolation
+
+Before FAC-108, `BullModule.forRoot()` ran without a `prefix` option. Environments sharing a single Redis instance (dev machines pointing at a shared dev Redis, or staging/prod collocated) collided on the default `bull:*` keyspace — jobs from one environment could be picked up by workers from another. The fix adds `prefix: \`${env.REDIS_KEY_PREFIX}bull\``, where `REDIS_KEY_PREFIX`(default`'faculytics:'`) is the same env var the cache layer already uses.
+
+- **Operational constraint:** `REDIS_KEY_PREFIX` is now load-bearing for BullMQ. Changing it between deploys of the **same environment** orphans every in-flight job under the old prefix — there is no migration path. The prefix must stay stable across deploys of a given environment.
+- **Cross-environment isolation:** environments sharing a Redis instance must use **different** prefixes.
+- **Trade-off:** a deliberate operational constraint on `REDIS_KEY_PREFIX` in exchange for guaranteed queue isolation. Acceptable because the env var was already stable (cache keys depended on it) and multi-environment Redis sharing is common in dev/staging setups.
+
+## 44. Audit Query — Separate List vs Detail DTOs with `search` OR'd on top of AND'd Filters
+
+The audit query endpoints (`GET /audit-logs`, `GET /audit-logs/:id`, introduced in FAC-118) ship with two DTOs — `AuditLogItemResponseDto` and `AuditLogDetailResponseDto` — that currently have the same shape. They're kept separate on purpose: the list view may later strip heavy fields (`metadata`, `ipAddress`) for bandwidth or privacy without breaking the single-record contract.
+
+The filter set deliberately separates exact-match filters (AND'd together) from a free-text `search` parameter (OR'd across `actorUsername`, `action`, `resourceType`). An operator can combine `search=login` with `from/to` dates to ask "logins in January" without losing the explicit time-range filter.
+
+- **LIKE-pattern escaping is mandatory.** Superadmin is trusted, but usernames can legitimately contain `%` or `_`, which would otherwise silently widen the match. `EscapeLikePattern` backslash-escapes `%`, `_`, and `\` before interpolation.
+- **Pagination tiebreaker on `id`.** Ordering is `occurredAt DESC, id DESC`. Audit writes land at sub-millisecond precision, so `occurredAt` alone yields non-deterministic page boundaries during bursty activity (sync kickoffs, login storms).
+- **`softDelete: false` filter bypass.** The audit entity doesn't extend `CustomBaseEntity` and cannot be soft-deleted today — the explicit filter is a belt-and-suspenders guard against the global MikroORM filter.
+- **Trade-off:** a slightly larger surface area to maintain than a single DTO. Justified by the expected evolution toward differentiated list/detail responses.
+
+See [Audit Trail — Query API](../architecture/audit-trail.md#query-api).
+
 ## 30. Semester Code Parsing for Display Labels
 
 The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.

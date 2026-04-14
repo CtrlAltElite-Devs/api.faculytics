@@ -4,6 +4,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { User } from 'src/entities/user.entity';
 import { UserRole } from 'src/modules/auth/roles.enum';
+import { AuditService } from 'src/modules/audit/audit.service';
+import { AuditAction } from 'src/modules/audit/audit-action.enum';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { AdminService } from './admin.service';
 
 describe('AdminService', () => {
@@ -17,6 +20,8 @@ describe('AdminService', () => {
     flush: jest.Mock;
     assign: jest.Mock;
   };
+  let auditService: { Emit: jest.Mock };
+  let currentUserService: { get: jest.Mock };
 
   beforeEach(async () => {
     em = {
@@ -28,16 +33,23 @@ describe('AdminService', () => {
       upsert: jest.fn(),
       find: jest.fn().mockResolvedValue([]),
       flush: jest.fn(),
-      assign: jest.fn(),
+      assign: jest.fn().mockImplementation((entity: object, patch: object) => {
+        Object.assign(entity, patch);
+        return entity;
+      }),
+    };
+
+    auditService = { Emit: jest.fn().mockResolvedValue(undefined) };
+    currentUserService = {
+      get: jest.fn().mockReturnValue({ id: 'actor-1', userName: 'admin' }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminService,
-        {
-          provide: EntityManager,
-          useValue: em,
-        },
+        { provide: EntityManager, useValue: em },
+        { provide: AuditService, useValue: auditService },
+        { provide: CurrentUserService, useValue: currentUserService },
       ],
     }).compile();
 
@@ -445,6 +457,139 @@ describe('AdminService', () => {
         expect.anything(),
       );
     });
+
+    it('should accept CAMPUS_HEAD at depth 1', async () => {
+      const campusCategory = {
+        moodleCategoryId: 101,
+        name: 'UCMN',
+        depth: 1,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(campusCategory);
+
+      await service.AssignInstitutionalRole({
+        userId: 'user-1',
+        role: UserRole.CAMPUS_HEAD,
+        moodleCategoryId: 101,
+      });
+
+      expect(em.create).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ moodleCategory: campusCategory }),
+        expect.anything(),
+      );
+    });
+
+    it('should reject CAMPUS_HEAD at depth 3 with a clear message', async () => {
+      const deptCategory = { moodleCategoryId: 8, name: 'CCS', depth: 3 };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(deptCategory);
+
+      await expect(
+        service.AssignInstitutionalRole({
+          userId: 'user-1',
+          role: UserRole.CAMPUS_HEAD,
+          moodleCategoryId: 8,
+        }),
+      ).rejects.toThrow(/depth 1/);
+    });
+
+    it('should reject CAMPUS_HEAD at depth 2', async () => {
+      const semesterCategory = {
+        moodleCategoryId: 6,
+        name: 'S22526',
+        depth: 2,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(semesterCategory);
+
+      await expect(
+        service.AssignInstitutionalRole({
+          userId: 'user-1',
+          role: UserRole.CAMPUS_HEAD,
+          moodleCategoryId: 6,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject unsupported institutional role with "Unsupported institutional role"', async () => {
+      const campusCategory = {
+        moodleCategoryId: 101,
+        name: 'UCMN',
+        depth: 1,
+      };
+
+      em.findOneOrFail
+        .mockResolvedValueOnce(mockUser)
+        .mockResolvedValueOnce(campusCategory);
+
+      await expect(
+        service.AssignInstitutionalRole({
+          userId: 'user-1',
+          role: UserRole.FACULTY,
+          moodleCategoryId: 101,
+        }),
+      ).rejects.toThrow('Unsupported institutional role');
+    });
+  });
+
+  describe('GetCampusHeadEligibleCategories', () => {
+    const mockUser = { id: 'user-1' } as User;
+
+    it('returns all depth-1 categories when the user has no CAMPUS_HEAD rows', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([]) // existing CAMPUS_HEAD roles
+        .mockResolvedValueOnce([
+          { id: 'uuid-ucmn', moodleCategoryId: 101, name: 'UCMN', depth: 1 },
+          { id: 'uuid-ucb', moodleCategoryId: 202, name: 'UCB', depth: 1 },
+        ]);
+
+      const result = await service.GetCampusHeadEligibleCategories('user-1');
+
+      expect(result).toEqual([
+        { id: 'uuid-ucmn', moodleCategoryId: 101, name: 'UCMN', depth: 1 },
+        { id: 'uuid-ucb', moodleCategoryId: 202, name: 'UCB', depth: 1 },
+      ]);
+    });
+
+    it('excludes depth-1 categories where the user is already a CAMPUS_HEAD', async () => {
+      em.findOneOrFail.mockResolvedValueOnce(mockUser);
+      em.find
+        .mockResolvedValueOnce([{ moodleCategory: { moodleCategoryId: 101 } }])
+        .mockResolvedValueOnce([
+          { id: 'uuid-ucmn', moodleCategoryId: 101, name: 'UCMN', depth: 1 },
+          { id: 'uuid-ucb', moodleCategoryId: 202, name: 'UCB', depth: 1 },
+        ]);
+
+      const result = await service.GetCampusHeadEligibleCategories('user-1');
+
+      expect(result).toEqual([
+        { id: 'uuid-ucb', moodleCategoryId: 202, name: 'UCB', depth: 1 },
+      ]);
+    });
+
+    it('throws NotFoundException when the user does not exist', async () => {
+      em.findOneOrFail.mockImplementationOnce(
+        (
+          _entity: unknown,
+          _filter: unknown,
+          opts: { failHandler: () => Error },
+        ) => {
+          throw opts.failHandler();
+        },
+      );
+
+      await expect(
+        service.GetCampusHeadEligibleCategories('nonexistent'),
+      ).rejects.toThrow(NotFoundException);
+    });
   });
 
   describe('GetDeanEligibleCategories', () => {
@@ -610,6 +755,330 @@ describe('AdminService', () => {
         { moodleCategoryId: 8, name: 'CCS' },
         { moodleCategoryId: 12, name: 'COE' },
       ]);
+    });
+  });
+
+  describe('UpdateUserScopeAssignment', () => {
+    type ScopeUser = {
+      id: string;
+      department: { id: string; code: string; name?: string } | null;
+      program: { id: string; code: string; name?: string } | null;
+      departmentSource: string;
+      programSource: string;
+    };
+
+    type EmitArg = {
+      action: string;
+      actorId?: string;
+      actorUsername?: string;
+      resourceType?: string;
+      resourceId?: string;
+      metadata: {
+        before: Record<string, string | null>;
+        after: Record<string, string | null>;
+        changedFields: string[];
+      };
+    };
+
+    function lastEmit(): EmitArg {
+      const calls = auditService.Emit.mock.calls as unknown as EmitArg[][];
+      return calls[calls.length - 1][0];
+    }
+
+    function makeUser(overrides: Partial<ScopeUser> = {}): ScopeUser {
+      return {
+        id: 'user-1',
+        department: {
+          id: 'old-dept-uuid',
+          code: 'CCS',
+          name: 'Computer Studies',
+        },
+        program: {
+          id: 'old-prog-uuid',
+          code: 'BSCS',
+          name: 'Computer Science',
+        },
+        departmentSource: 'auto',
+        programSource: 'auto',
+        ...overrides,
+      };
+    }
+
+    it('happy path — set department only', async () => {
+      const user = makeUser();
+      const newDept = { id: 'new-dept-uuid', code: 'COE', name: 'Engineering' };
+      em.findOneOrFail
+        .mockResolvedValueOnce(user) // user
+        .mockResolvedValueOnce(newDept); // department
+
+      const result = await service.UpdateUserScopeAssignment('user-1', {
+        departmentId: 'new-dept-uuid',
+      });
+
+      expect(em.flush).toHaveBeenCalledTimes(1);
+      expect(user.department).toBe(newDept);
+      expect(user.departmentSource).toBe('manual');
+      expect(user.program?.id).toBe('old-prog-uuid');
+      expect(user.programSource).toBe('auto');
+      const emit = lastEmit();
+      expect(emit.action).toBe(AuditAction.ADMIN_USER_SCOPE_UPDATE);
+      expect(emit.actorId).toBe('actor-1');
+      expect(emit.actorUsername).toBe('admin');
+      expect(emit.resourceType).toBe('User');
+      expect(emit.resourceId).toBe('user-1');
+      expect(emit.metadata.changedFields).toEqual([
+        'department',
+        'departmentSource',
+      ]);
+      expect(emit.metadata.before.department).toBe('old-dept-uuid');
+      expect(emit.metadata.before.departmentSource).toBe('auto');
+      expect(emit.metadata.after.department).toBe('new-dept-uuid');
+      expect(emit.metadata.after.departmentSource).toBe('manual');
+      expect(result.id).toBe('user-1');
+    });
+
+    it('happy path — set program only', async () => {
+      const user = makeUser();
+      const newProg = { id: 'new-prog-uuid', code: 'BSIT', name: 'IT' };
+      em.findOneOrFail
+        .mockResolvedValueOnce(user)
+        .mockResolvedValueOnce(newProg);
+
+      await service.UpdateUserScopeAssignment('user-1', {
+        programId: 'new-prog-uuid',
+      });
+
+      expect(user.program).toBe(newProg);
+      expect(user.programSource).toBe('manual');
+      expect(user.department?.id).toBe('old-dept-uuid');
+      expect(user.departmentSource).toBe('auto');
+      expect(lastEmit().metadata.changedFields).toEqual([
+        'program',
+        'programSource',
+      ]);
+    });
+
+    it('happy path — set both matching dept and program', async () => {
+      const user = makeUser();
+      const programWithDept = {
+        id: 'new-prog-uuid',
+        code: 'BSIT',
+        department: { id: 'new-dept-uuid' },
+      };
+      const newDept = { id: 'new-dept-uuid', code: 'COE' };
+      const newProg = { id: 'new-prog-uuid', code: 'BSIT' };
+      em.findOneOrFail
+        .mockResolvedValueOnce(user) // user
+        .mockResolvedValueOnce(programWithDept) // consistency-guard program lookup
+        .mockResolvedValueOnce(newDept) // dept apply
+        .mockResolvedValueOnce(newProg); // program apply
+
+      await service.UpdateUserScopeAssignment('user-1', {
+        departmentId: 'new-dept-uuid',
+        programId: 'new-prog-uuid',
+      });
+
+      expect(user.departmentSource).toBe('manual');
+      expect(user.programSource).toBe('manual');
+      expect(lastEmit().metadata.changedFields).toEqual([
+        'department',
+        'departmentSource',
+        'program',
+        'programSource',
+      ]);
+    });
+
+    it('rejects mismatched dept and program', async () => {
+      const user = makeUser();
+      const programWithOtherDept = {
+        id: 'prog-x',
+        department: { id: 'other-dept-uuid' },
+      };
+      em.findOneOrFail
+        .mockResolvedValueOnce(user)
+        .mockResolvedValueOnce(programWithOtherDept);
+
+      await expect(
+        service.UpdateUserScopeAssignment('user-1', {
+          departmentId: 'new-dept-uuid',
+          programId: 'prog-x',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(em.flush).not.toHaveBeenCalled();
+      expect(auditService.Emit).not.toHaveBeenCalled();
+    });
+
+    it('reset department to auto — program unchanged', async () => {
+      // Decision #16: post-reset divergence is intentional.
+      const user = makeUser({ departmentSource: 'manual' });
+      em.findOneOrFail.mockResolvedValueOnce(user);
+
+      await service.UpdateUserScopeAssignment('user-1', { departmentId: null });
+
+      expect(em.assign).toHaveBeenCalledWith(user, { department: null });
+      expect(user.department).toBeNull();
+      expect(user.departmentSource).toBe('auto');
+      expect(user.program?.id).toBe('old-prog-uuid');
+      expect(user.programSource).toBe('auto');
+      expect(lastEmit().metadata.changedFields).toEqual([
+        'department',
+        'departmentSource',
+      ]);
+    });
+
+    it('reset both fields to auto', async () => {
+      const user = makeUser({
+        departmentSource: 'manual',
+        programSource: 'manual',
+      });
+      em.findOneOrFail.mockResolvedValueOnce(user);
+
+      await service.UpdateUserScopeAssignment('user-1', {
+        departmentId: null,
+        programId: null,
+      });
+
+      expect(em.assign).toHaveBeenCalledWith(user, { department: null });
+      expect(em.assign).toHaveBeenCalledWith(user, { program: null });
+      expect(user.departmentSource).toBe('auto');
+      expect(user.programSource).toBe('auto');
+      expect(lastEmit().metadata.changedFields).toEqual([
+        'department',
+        'departmentSource',
+        'program',
+        'programSource',
+      ]);
+    });
+
+    it('throws NotFoundException when user is missing', async () => {
+      em.findOneOrFail.mockImplementationOnce(
+        (
+          _entity: unknown,
+          _filter: unknown,
+          opts: { failHandler: () => Error },
+        ) => {
+          throw opts.failHandler();
+        },
+      );
+
+      await expect(
+        service.UpdateUserScopeAssignment('missing', {
+          departmentId: 'd1',
+        }),
+      ).rejects.toThrow(NotFoundException);
+      expect(em.flush).not.toHaveBeenCalled();
+      expect(auditService.Emit).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when department is missing', async () => {
+      const user = makeUser();
+      em.findOneOrFail
+        .mockResolvedValueOnce(user)
+        .mockImplementationOnce(
+          (
+            _entity: unknown,
+            _filter: unknown,
+            opts: { failHandler: () => Error },
+          ) => {
+            throw opts.failHandler();
+          },
+        );
+
+      await expect(
+        service.UpdateUserScopeAssignment('user-1', {
+          departmentId: 'no-such-dept',
+        }),
+      ).rejects.toThrow(/Department not found/);
+      expect(em.flush).not.toHaveBeenCalled();
+      expect(auditService.Emit).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when program is missing', async () => {
+      const user = makeUser();
+      em.findOneOrFail
+        .mockResolvedValueOnce(user)
+        .mockImplementationOnce(
+          (
+            _entity: unknown,
+            _filter: unknown,
+            opts: { failHandler: () => Error },
+          ) => {
+            throw opts.failHandler();
+          },
+        );
+
+      await expect(
+        service.UpdateUserScopeAssignment('user-1', {
+          programId: 'no-such-prog',
+        }),
+      ).rejects.toThrow(/Program not found/);
+      expect(em.flush).not.toHaveBeenCalled();
+      expect(auditService.Emit).not.toHaveBeenCalled();
+    });
+
+    it('audit emit forward-compat: rejects from Emit do not break the request', async () => {
+      // Defensive against future Emit signature changes — Emit currently
+      // swallows queue failures internally, but we test the rejection path
+      // anyway to lock in forward-compat.
+      const user = makeUser();
+      const newDept = { id: 'new-dept-uuid', code: 'COE' };
+      em.findOneOrFail
+        .mockResolvedValueOnce(user)
+        .mockResolvedValueOnce(newDept);
+      auditService.Emit.mockRejectedValueOnce(new Error('queue down'));
+
+      const serviceWithLogger = service as unknown as {
+        logger: { warn: (...args: unknown[]) => void };
+      };
+      const warnSpy = jest
+        .spyOn(serviceWithLogger.logger, 'warn')
+        .mockImplementation(() => undefined);
+
+      const result = await service.UpdateUserScopeAssignment('user-1', {
+        departmentId: 'new-dept-uuid',
+      });
+
+      expect(result.id).toBe('user-1');
+      expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it('returns minimal response shape (no enrollments, no roles)', async () => {
+      const user = makeUser();
+      const newDept = { id: 'new-dept-uuid', code: 'COE', name: 'Engineering' };
+      em.findOneOrFail
+        .mockResolvedValueOnce(user)
+        .mockResolvedValueOnce(newDept);
+
+      const result = await service.UpdateUserScopeAssignment('user-1', {
+        departmentId: 'new-dept-uuid',
+      });
+
+      expect(Object.keys(result).sort()).toEqual(
+        [
+          'department',
+          'departmentSource',
+          'id',
+          'program',
+          'programSource',
+        ].sort(),
+      );
+    });
+
+    it('actor missing — emits with undefined actorId/actorUsername', async () => {
+      currentUserService.get.mockReturnValueOnce(null);
+      const user = makeUser();
+      const newDept = { id: 'new-dept-uuid', code: 'COE' };
+      em.findOneOrFail
+        .mockResolvedValueOnce(user)
+        .mockResolvedValueOnce(newDept);
+
+      await service.UpdateUserScopeAssignment('user-1', {
+        departmentId: 'new-dept-uuid',
+      });
+
+      const emit = lastEmit();
+      expect(emit.actorId).toBeUndefined();
+      expect(emit.actorUsername).toBeUndefined();
     });
   });
 });

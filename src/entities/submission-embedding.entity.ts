@@ -4,6 +4,11 @@ import { CustomBaseEntity } from './base.entity';
 import { QuestionnaireSubmission } from './questionnaire-submission.entity';
 import { SubmissionEmbeddingRepository } from '../repositories/submission-embedding.repository';
 
+@Index({
+  name: 'submission_embedding_submission_id_unique',
+  expression:
+    'create unique index "submission_embedding_submission_id_unique" on "submission_embedding" ("submission_id") where "deleted_at" is null',
+})
 @Entity({ repository: () => SubmissionEmbeddingRepository })
 @Index({ properties: ['submission'] })
 export class SubmissionEmbedding extends CustomBaseEntity {

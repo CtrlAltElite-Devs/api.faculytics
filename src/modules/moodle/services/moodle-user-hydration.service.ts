@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { User } from 'src/entities/user.entity';
 import { Program } from 'src/entities/program.entity';
-import { Campus } from 'src/entities/campus.entity';
 import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { Section } from 'src/entities/section.entity';
@@ -20,6 +19,7 @@ import {
   MoodleCourseUserGroupsResponse,
 } from '../lib/moodle.types';
 import { UserRole } from 'src/modules/auth/roles.enum';
+import { deriveUserScopes } from './scope-derivation.helper';
 
 @Injectable()
 export class MoodleUserHydrationService {
@@ -242,6 +242,36 @@ export class MoodleUserHydrationService {
         moodleToken,
       );
 
+      // 4. Derive department/program from enrollment majority (atomic source guard)
+      if (
+        user.departmentSource !== (InstitutionalRoleSource.MANUAL as string) &&
+        user.programSource !== (InstitutionalRoleSource.MANUAL as string)
+      ) {
+        const userEnrollments = remoteCourses
+          .map((rc) => ({ program: programCache.get(rc.category) }))
+          .filter((e): e is { program: Program } => !!e.program);
+
+        const allPrograms = [...new Set(userEnrollments.map((e) => e.program))];
+        if (allPrograms.length > 0) {
+          await tx.populate(allPrograms, ['department']);
+        }
+
+        const result = deriveUserScopes({ enrollments: userEnrollments });
+
+        if (result.primaryProgram) {
+          const programChanged = user.program?.id !== result.primaryProgram.id;
+          const departmentChanged =
+            user.department?.id !== result.primaryDepartment?.id;
+
+          if (programChanged || departmentChanged) {
+            user.program = result.primaryProgram;
+            user.department = result.primaryDepartment ?? undefined;
+            user.programSource = InstitutionalRoleSource.AUTO;
+            user.departmentSource = InstitutionalRoleSource.AUTO;
+          }
+        }
+      }
+
       // Derive user roles from active enrollments and institutional roles
       const activeEnrollments = await tx.find(Enrollment, {
         user,
@@ -251,9 +281,6 @@ export class MoodleUserHydrationService {
 
       user.updateRolesFromEnrollments(activeEnrollments, institutionalRoles);
 
-      // Derive scope fields: program, department, campus
-      await this.deriveUserScopes(user, programCache, remoteCourses, tx);
-
       tx.persist(user);
     });
 
@@ -261,69 +288,6 @@ export class MoodleUserHydrationService {
     this.logger.log(
       `Finished hydrating courses for Moodle user ${moodleUserId} in ${duration}ms`,
     );
-  }
-
-  private async deriveUserScopes(
-    user: User,
-    programCache: Map<number, Program>,
-    remoteCourses: MoodleCourse[],
-    tx: EntityManager,
-  ) {
-    // Pick primary program: most course enrollments
-    const programCounts = new Map<
-      string,
-      { program: Program; count: number }
-    >();
-    for (const rc of remoteCourses) {
-      const program = programCache.get(rc.category);
-      if (!program) continue;
-      const entry = programCounts.get(program.id);
-      if (entry) {
-        entry.count++;
-      } else {
-        programCounts.set(program.id, { program, count: 1 });
-      }
-    }
-
-    let primaryProgram: Program | undefined;
-    let maxCount = 0;
-    for (const { program, count } of programCounts.values()) {
-      if (
-        count > maxCount ||
-        (count === maxCount &&
-          (!primaryProgram || program.id < primaryProgram.id))
-      ) {
-        maxCount = count;
-        primaryProgram = program;
-      }
-    }
-
-    if (!primaryProgram) return;
-
-    // Populate department → semester → campus chain
-    await tx.populate(primaryProgram, [
-      'department',
-      'department.semester',
-      'department.semester.campus',
-    ]);
-
-    user.program = primaryProgram;
-
-    if (primaryProgram.department) {
-      user.department = primaryProgram.department;
-    }
-
-    // Campus: username prefix first, fallback to category hierarchy
-    const parts = user.userName.split('-');
-    const campusCode = parts.length > 1 ? parts[0].toUpperCase() : null;
-    const campus = campusCode
-      ? await tx.findOne(Campus, { code: campusCode })
-      : null;
-    if (campus) {
-      user.campus = campus;
-    } else if (primaryProgram.department?.semester?.campus) {
-      user.campus = primaryProgram.department.semester.campus;
-    }
   }
 
   private async resolveInstitutionalRoles(

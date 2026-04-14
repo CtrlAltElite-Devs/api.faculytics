@@ -13,7 +13,12 @@ import { CourseListResponseDto } from './dto/responses/course-list.response.dto'
 
 @ApiTags('Curriculum')
 @Controller('curriculum')
-@UseJwtGuard(UserRole.SUPER_ADMIN, UserRole.DEAN, UserRole.CHAIRPERSON)
+@UseJwtGuard(
+  UserRole.SUPER_ADMIN,
+  UserRole.DEAN,
+  UserRole.CHAIRPERSON,
+  UserRole.CAMPUS_HEAD,
+)
 @UseInterceptors(CurrentUserInterceptor)
 export class CurriculumController {
   constructor(private readonly curriculumService: CurriculumService) {}

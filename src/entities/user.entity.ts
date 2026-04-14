@@ -69,6 +69,9 @@ export class User extends CustomBaseEntity {
   @Property({ default: 'auto' })
   programSource!: string;
 
+  @Property({ default: 'auto' })
+  campusSource!: string;
+
   @OneToMany(() => MoodleToken, (token) => token.user)
   moodleTokens = new Collection<MoodleToken>(this);
 
@@ -99,6 +102,7 @@ export class User extends CustomBaseEntity {
     user.isActive = true;
     user.departmentSource = 'auto';
     user.programSource = 'auto';
+    user.campusSource = 'auto';
 
     return user;
   }

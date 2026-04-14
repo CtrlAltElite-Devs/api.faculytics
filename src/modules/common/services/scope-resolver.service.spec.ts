@@ -8,7 +8,7 @@ import { User } from 'src/entities/user.entity';
 
 describe('ScopeResolverService', () => {
   let service: ScopeResolverService;
-  let em: { find: jest.Mock };
+  let em: { find: jest.Mock; findOne: jest.Mock };
   let currentUserService: { getOrFail: jest.Mock };
 
   const semesterId = 'semester-1';
@@ -17,7 +17,7 @@ describe('ScopeResolverService', () => {
     ({ id, roles }) as unknown as User;
 
   beforeEach(async () => {
-    em = { find: jest.fn() };
+    em = { find: jest.fn(), findOne: jest.fn() };
     currentUserService = {
       getOrFail: jest.fn(),
     };
@@ -264,6 +264,130 @@ describe('ScopeResolverService', () => {
       const result = await service.ResolveProgramIds(semesterId);
 
       expect(result).toEqual(['prog-uuid-1']);
+    });
+  });
+
+  // ─── Campus Head branch ──────────────────────────────────────────
+
+  describe('Campus Head scope resolution', () => {
+    it('returns departments for the semester when Campus Head owns that campus', async () => {
+      const user = createUser([UserRole.CAMPUS_HEAD]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find.mockResolvedValueOnce([
+        { moodleCategory: { moodleCategoryId: 101 } },
+      ]);
+      em.findOne.mockResolvedValueOnce({
+        id: semesterId,
+        campus: { moodleCategoryId: 101 },
+      });
+      em.find.mockResolvedValueOnce([
+        { id: 'dept-1' },
+        { id: 'dept-2' },
+        { id: 'dept-3' },
+      ]);
+
+      const result = await service.ResolveDepartmentIds(semesterId);
+
+      expect(result).toEqual(['dept-1', 'dept-2', 'dept-3']);
+    });
+
+    it('returns [] when the semester belongs to a different campus than the Campus Head owns', async () => {
+      const user = createUser([UserRole.CAMPUS_HEAD]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find.mockResolvedValueOnce([
+        { moodleCategory: { moodleCategoryId: 101 } },
+      ]);
+      em.findOne.mockResolvedValueOnce({
+        id: semesterId,
+        campus: { moodleCategoryId: 202 },
+      });
+
+      const result = await service.ResolveDepartmentIds(semesterId);
+
+      expect(result).toEqual([]);
+    });
+
+    it('returns [] when Campus Head has no institutional role rows', async () => {
+      const user = createUser([UserRole.CAMPUS_HEAD]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find.mockResolvedValueOnce([]);
+
+      const result = await service.ResolveDepartmentIds(semesterId);
+
+      expect(result).toEqual([]);
+    });
+
+    it('returns [] when the semester cannot be resolved to a campus', async () => {
+      const user = createUser([UserRole.CAMPUS_HEAD]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find.mockResolvedValueOnce([
+        { moodleCategory: { moodleCategoryId: 101 } },
+      ]);
+      em.findOne.mockResolvedValueOnce(null);
+
+      const result = await service.ResolveDepartmentIds(semesterId);
+
+      expect(result).toEqual([]);
+    });
+
+    it('handles a multi-campus Campus Head by filtering to the semester-owning campus', async () => {
+      const user = createUser([UserRole.CAMPUS_HEAD]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find.mockResolvedValueOnce([
+        { moodleCategory: { moodleCategoryId: 101 } },
+        { moodleCategory: { moodleCategoryId: 202 } },
+      ]);
+      em.findOne.mockResolvedValueOnce({
+        id: semesterId,
+        campus: { moodleCategoryId: 202 },
+      });
+      em.find.mockResolvedValueOnce([
+        { id: 'dept-ucb-1' },
+        { id: 'dept-ucb-2' },
+      ]);
+
+      const result = await service.ResolveDepartmentIds(semesterId);
+
+      expect(result).toEqual(['dept-ucb-1', 'dept-ucb-2']);
+    });
+
+    it('prefers the Dean branch when user has both Dean and Campus Head roles', async () => {
+      const user = createUser([UserRole.DEAN, UserRole.CAMPUS_HEAD]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      em.find
+        .mockResolvedValueOnce([{ moodleCategory: { name: 'CCS', depth: 3 } }])
+        .mockResolvedValueOnce([{ id: 'dept-dean' }]);
+
+      const result = await service.ResolveDepartmentIds(semesterId);
+
+      expect(result).toEqual(['dept-dean']);
+      expect(em.findOne).not.toHaveBeenCalled();
+    });
+
+    it('ResolveProgramIds returns null for Campus Head (unrestricted at program level)', async () => {
+      const user = createUser([UserRole.CAMPUS_HEAD]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      const result = await service.ResolveProgramIds(semesterId);
+
+      expect(result).toBeNull();
+      expect(em.find).not.toHaveBeenCalled();
+    });
+
+    it('ResolveProgramCodes returns null for Campus Head (unrestricted at program-code level)', async () => {
+      const user = createUser([UserRole.CAMPUS_HEAD]);
+      currentUserService.getOrFail.mockReturnValue(user);
+
+      const result = await service.ResolveProgramCodes(semesterId);
+
+      expect(result).toBeNull();
+      expect(em.find).not.toHaveBeenCalled();
     });
   });
 });

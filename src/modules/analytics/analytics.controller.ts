@@ -26,7 +26,12 @@ import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report
 
 @ApiTags('Analytics')
 @Controller('analytics')
-@UseJwtGuard(UserRole.DEAN, UserRole.CHAIRPERSON, UserRole.SUPER_ADMIN)
+@UseJwtGuard(
+  UserRole.DEAN,
+  UserRole.CHAIRPERSON,
+  UserRole.CAMPUS_HEAD,
+  UserRole.SUPER_ADMIN,
+)
 @UseInterceptors(CurrentUserInterceptor)
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}

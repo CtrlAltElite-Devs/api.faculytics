@@ -20,17 +20,23 @@ import {
 } from '@nestjs/swagger';
 import { UseJwtGuard } from 'src/security/decorators';
 import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-user.interceptor';
+import { MetaDataInterceptor } from 'src/modules/common/interceptors/metadata.interceptor';
 import { UserRole } from '../auth/roles.enum';
 import { AdminService } from './services/admin.service';
+import { AdminUserService } from './services/admin-user.service';
 import { AssignInstitutionalRoleDto } from './dto/requests/assign-institutional-role.request.dto';
 import { RemoveInstitutionalRoleDto } from './dto/requests/remove-institutional-role.request.dto';
 import { ListUsersQueryDto } from './dto/requests/list-users-query.dto';
 import { DeanEligibleCategoriesQueryDto } from './dto/requests/dean-eligible-categories-query.dto';
+import { CampusHeadEligibleCategoriesQueryDto } from './dto/requests/campus-head-eligible-categories-query.dto';
 import { UpdateScopeAssignmentDto } from './dto/requests/update-scope-assignment.request.dto';
+import { CreateLocalUserRequestDto } from './dto/requests/create-user.request.dto';
 import { AdminUserDetailResponseDto } from './dto/responses/admin-user-detail.response.dto';
 import { AdminUserListResponseDto } from './dto/responses/admin-user-list.response.dto';
 import { AdminUserScopeAssignmentResponseDto } from './dto/responses/admin-user-scope-assignment.response.dto';
 import { DeanEligibleCategoryResponseDto } from './dto/responses/dean-eligible-category.response.dto';
+import { CampusHeadEligibleCategoryResponseDto } from './dto/responses/campus-head-eligible-category.response.dto';
+import { CreateLocalUserResponseDto } from './dto/responses/create-user.response.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -38,7 +44,28 @@ import { DeanEligibleCategoryResponseDto } from './dto/responses/dean-eligible-c
 @UseInterceptors(CurrentUserInterceptor)
 @ApiBearerAuth()
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly adminUserService: AdminUserService,
+  ) {}
+
+  @Post('users')
+  @UseInterceptors(MetaDataInterceptor)
+  @ApiOperation({
+    summary:
+      'Create a Faculytics-local user (non-Moodle, bcrypt-authenticated)',
+  })
+  @ApiResponse({ status: 201, type: CreateLocalUserResponseDto })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid username, password, or campusId',
+  })
+  @ApiResponse({ status: 409, description: 'Username already exists' })
+  async CreateLocalUser(
+    @Body() dto: CreateLocalUserRequestDto,
+  ): Promise<CreateLocalUserResponseDto> {
+    return this.adminUserService.CreateLocalUser(dto);
+  }
 
   @Get('users')
   @ApiOperation({ summary: 'List users for the admin console' })
@@ -158,9 +185,32 @@ export class AdminController {
     return this.adminService.GetDeanEligibleCategories(query.userId);
   }
 
+  @Get('institutional-roles/campus-head-eligible-categories')
+  @ApiOperation({
+    summary:
+      'List depth-1 Moodle categories a user can be promoted to as Campus Head',
+  })
+  @ApiQuery({
+    name: 'userId',
+    required: true,
+    type: String,
+    description: 'UUID of the user to check eligibility for',
+  })
+  @ApiResponse({
+    status: 200,
+    type: [CampusHeadEligibleCategoryResponseDto],
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async GetCampusHeadEligibleCategories(
+    @Query() query: CampusHeadEligibleCategoriesQueryDto,
+  ): Promise<CampusHeadEligibleCategoryResponseDto[]> {
+    return this.adminService.GetCampusHeadEligibleCategories(query.userId);
+  }
+
   @Post('institutional-roles')
   @ApiOperation({
-    summary: 'Assign an institutional role (DEAN/CHAIRPERSON) to a user',
+    summary:
+      'Assign an institutional role (DEAN/CHAIRPERSON/CAMPUS_HEAD) to a user',
   })
   @ApiResponse({ status: 200, description: 'Role assigned successfully' })
   @ApiResponse({ status: 404, description: 'User or category not found' })

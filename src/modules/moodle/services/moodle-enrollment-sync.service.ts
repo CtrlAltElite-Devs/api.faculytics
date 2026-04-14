@@ -134,6 +134,16 @@ export class EnrollmentSyncService {
           );
           continue;
         }
+        // FAC-131a — reject Moodle users whose username collides with the
+        // reserved "local-" namespace for Faculytics-local accounts. Without
+        // this guard, the user_user_name_unique constraint would throw if a
+        // Moodle sysadmin ever created a local-* account.
+        if (user.username.toLowerCase().startsWith('local-')) {
+          this.logger.warn(
+            `Skipping Moodle user with reserved "local-" username prefix: moodleUserId=${user.id}, username=${user.username}`,
+          );
+          continue;
+        }
         uniqueUsers.set(user.id, user);
       }
     }
@@ -156,6 +166,7 @@ export class EnrollmentSyncService {
             roles: [],
             departmentSource: InstitutionalRoleSource.AUTO,
             programSource: InstitutionalRoleSource.AUTO,
+            campusSource: InstitutionalRoleSource.AUTO,
           },
           { managed: false },
         ),

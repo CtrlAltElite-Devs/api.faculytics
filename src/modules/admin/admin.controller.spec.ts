@@ -3,10 +3,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from 'src/security/guards/roles.guard';
 import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-user.interceptor';
+import { MetaDataInterceptor } from 'src/modules/common/interceptors/metadata.interceptor';
 import { AdminController } from './admin.controller';
 import { AdminService } from './services/admin.service';
+import { AdminUserService } from './services/admin-user.service';
 import { ListUsersQueryDto } from './dto/requests/list-users-query.dto';
 import { UpdateScopeAssignmentDto } from './dto/requests/update-scope-assignment.request.dto';
+import { CreateLocalUserRequestDto } from './dto/requests/create-user.request.dto';
 
 describe('AdminController', () => {
   let controller: AdminController;
@@ -14,7 +17,9 @@ describe('AdminController', () => {
     ListUsers: jest.Mock;
     GetUserDetail: jest.Mock;
     UpdateUserScopeAssignment: jest.Mock;
+    GetCampusHeadEligibleCategories: jest.Mock;
   };
+  let adminUserService: { CreateLocalUser: jest.Mock };
 
   async function buildModule(
     overrides: {
@@ -29,6 +34,10 @@ describe('AdminController', () => {
           provide: AdminService,
           useValue: adminService,
         },
+        {
+          provide: AdminUserService,
+          useValue: adminUserService,
+        },
       ],
     })
       .overrideGuard(AuthGuard('jwt'))
@@ -40,6 +49,11 @@ describe('AdminController', () => {
         canActivate: overrides.rolesGuardCanActivate ?? (() => true),
       })
       .overrideInterceptor(CurrentUserInterceptor)
+      .useValue({
+        intercept: (_ctx: unknown, next: { handle: () => unknown }) =>
+          next.handle(),
+      })
+      .overrideInterceptor(MetaDataInterceptor)
       .useValue({
         intercept: (_ctx: unknown, next: { handle: () => unknown }) =>
           next.handle(),
@@ -66,6 +80,19 @@ describe('AdminController', () => {
         program: null,
         departmentSource: 'auto',
         programSource: 'auto',
+      }),
+      GetCampusHeadEligibleCategories: jest.fn().mockResolvedValue([]),
+    };
+    adminUserService = {
+      CreateLocalUser: jest.fn().mockResolvedValue({
+        id: 'user-1',
+        username: 'local-kmartinez',
+        firstName: 'K',
+        lastName: 'Martinez',
+        fullName: 'K Martinez',
+        campus: null,
+        defaultPasswordAssigned: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
       }),
     };
 
@@ -101,6 +128,33 @@ describe('AdminController', () => {
     expect(adminService.UpdateUserScopeAssignment).toHaveBeenCalledWith(
       'user-1',
       dto,
+    );
+  });
+
+  it('should delegate POST /admin/users to the admin-user service', async () => {
+    const dto: CreateLocalUserRequestDto = {
+      username: 'local-kmartinez',
+      firstName: 'K',
+      lastName: 'Martinez',
+      password: 'TempPass1',
+    };
+
+    const result = await controller.CreateLocalUser(dto);
+
+    expect(adminUserService.CreateLocalUser).toHaveBeenCalledWith(dto);
+    expect(result).toMatchObject({
+      id: 'user-1',
+      username: 'local-kmartinez',
+      fullName: 'K Martinez',
+      defaultPasswordAssigned: false,
+    });
+  });
+
+  it('should delegate campus-head eligible categories lookup to the admin service', async () => {
+    await controller.GetCampusHeadEligibleCategories({ userId: 'user-1' });
+
+    expect(adminService.GetCampusHeadEligibleCategories).toHaveBeenCalledWith(
+      'user-1',
     );
   });
 

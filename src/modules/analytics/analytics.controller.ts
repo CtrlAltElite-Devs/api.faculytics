@@ -17,12 +17,14 @@ import {
   FacultyTrendsQueryDto,
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
+  QualitativeSummaryQueryDto,
 } from './dto/analytics-query.dto';
 import { DepartmentOverviewResponseDto } from './dto/responses/department-overview.response.dto';
 import { AttentionListResponseDto } from './dto/responses/attention-list.response.dto';
 import { FacultyTrendsResponseDto } from './dto/responses/faculty-trends.response.dto';
 import { FacultyReportResponseDto } from './dto/responses/faculty-report.response.dto';
 import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report-comments.response.dto';
+import { QualitativeSummaryResponseDto } from './dto/responses/qualitative-summary.response.dto';
 
 @ApiTags('Analytics')
 @Controller('analytics')
@@ -96,11 +98,35 @@ export class AnalyticsController {
   @ApiQuery({ name: 'courseId', required: false, type: String })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({
+    name: 'sentiment',
+    required: false,
+    enum: ['positive', 'neutral', 'negative'],
+  })
+  @ApiQuery({ name: 'themeId', required: false, type: String })
   @ApiResponse({ status: 200, type: FacultyReportCommentsResponseDto })
   async GetFacultyReportComments(
     @Param('facultyId', ParseUUIDPipe) facultyId: string,
     @Query() query: FacultyReportCommentsQueryDto,
   ): Promise<FacultyReportCommentsResponseDto> {
     return this.analyticsService.GetFacultyReportComments(facultyId, query);
+  }
+
+  @Get('faculty/:facultyId/qualitative-summary')
+  @ApiOperation({
+    summary:
+      'Get aggregated qualitative summary (sentiment distribution + themes) for faculty',
+  })
+  @ApiQuery({ name: 'semesterId', required: true, type: String })
+  @ApiQuery({ name: 'questionnaireTypeCode', required: true, type: String })
+  @ApiQuery({ name: 'courseId', required: false, type: String })
+  @ApiResponse({ status: 200, type: QualitativeSummaryResponseDto })
+  @ApiResponse({ status: 403, description: 'Out of scope for requesting user' })
+  @ApiResponse({ status: 404, description: 'Faculty not found' })
+  async GetQualitativeSummary(
+    @Param('facultyId', ParseUUIDPipe) facultyId: string,
+    @Query() query: QualitativeSummaryQueryDto,
+  ): Promise<QualitativeSummaryResponseDto> {
+    return this.analyticsService.GetQualitativeSummary(facultyId, query);
   }
 }

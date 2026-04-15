@@ -123,6 +123,21 @@ export class PipelineOrchestratorService {
     // exactly one assigned scope and didn't specify one explicitly.
     const input = await this.assertCanCreatePipeline(parsed);
 
+    // Resolve questionnaireTypeCode → latest ACTIVE version. Pipelines
+    // store a concrete `questionnaireVersionId` (submissions are bound to
+    // a version), so we commit the type code to a version at trigger time.
+    if (!input.questionnaireVersionId && input.questionnaireTypeCode) {
+      const resolvedVersionId = await this.resolveLatestActiveVersionId(
+        input.questionnaireTypeCode,
+      );
+      if (!resolvedVersionId) {
+        throw new BadRequestException(
+          `No ACTIVE questionnaire version exists for type "${input.questionnaireTypeCode}"`,
+        );
+      }
+      input.questionnaireVersionId = resolvedVersionId;
+    }
+
     const fork = this.em.fork();
 
     // Check for active duplicate
@@ -235,28 +250,60 @@ export class PipelineOrchestratorService {
     const filled = await this.fillAndAssertListScope(parsed);
 
     const fork = this.em.fork();
+    // Two filter modes:
+    //  1. Faculty-level query (facultyId present): match on {semester,
+    //     faculty, qV, course} only. Dept/program/campus are metadata
+    //     about the triggering caller, NOT match criteria — so a
+    //     DEAN-triggered pipeline stays visible to a CAMPUS_HEAD viewing
+    //     the same faculty.
+    //  2. Aggregate query (no facultyId): bind every scope key explicitly
+    //     (null by default) so narrower-scope pipelines don't leak.
+    //     Matches CreatePipeline's `existingFilter` shape.
     const filter: Record<string, unknown> = {
       semester: filled.semesterId,
+      course: filled.courseId ?? null,
     };
-    if (filled.facultyId) filter['faculty'] = filled.facultyId;
-    if (filled.questionnaireVersionId)
-      filter['questionnaireVersion'] = filled.questionnaireVersionId;
-    if (filled.courseId) filter['course'] = filled.courseId;
-    if (filled.programId) filter['program'] = filled.programId;
-    if (filled.campusId) filter['campus'] = filled.campusId;
 
-    // Default-filled departmentIds come through as string[] (via $in), a
-    // client-provided scalar departmentId still works.
-    if (filled.departmentIdSet) {
-      filter['department'] = { $in: filled.departmentIdSet };
-    } else if (filled.departmentId) {
-      filter['department'] = filled.departmentId;
+    if (filled.questionnaireVersionId) {
+      filter['questionnaireVersion'] = filled.questionnaireVersionId;
+    } else if (filled.questionnaireTypeCode) {
+      filter['questionnaireVersion'] = {
+        questionnaire: { type: { code: filled.questionnaireTypeCode } },
+      };
+    } else {
+      filter['questionnaireVersion'] = null;
     }
-    if (filled.programIdSet) {
-      filter['program'] = { $in: filled.programIdSet };
-    }
-    if (filled.campusIdSet) {
-      filter['campus'] = { $in: filled.campusIdSet };
+
+    if (filled.facultyId) {
+      filter['faculty'] = filled.facultyId;
+      // Faculty-level query: intentionally leave dept/program/campus
+      // unbound. See comment above.
+    } else {
+      filter['faculty'] = null;
+
+      if (filled.departmentId) {
+        filter['department'] = filled.departmentId;
+      } else if (filled.departmentIdSet) {
+        filter['department'] = { $in: filled.departmentIdSet };
+      } else {
+        filter['department'] = null;
+      }
+
+      if (filled.programId) {
+        filter['program'] = filled.programId;
+      } else if (filled.programIdSet) {
+        filter['program'] = { $in: filled.programIdSet };
+      } else {
+        filter['program'] = null;
+      }
+
+      if (filled.campusId) {
+        filter['campus'] = filled.campusId;
+      } else if (filled.campusIdSet) {
+        filter['campus'] = { $in: filled.campusIdSet };
+      } else {
+        filter['campus'] = null;
+      }
     }
 
     return fork.find(AnalysisPipeline, filter, {
@@ -899,6 +946,21 @@ export class PipelineOrchestratorService {
     // is typically also FACULTY, and the more-permissive DEAN behavior
     // must win.
 
+    // Faculty-level queries (query.facultyId set) short-circuit the set
+    // filters for scoped roles. Rationale: a faculty-level pipeline is
+    // "the pipeline for faculty F" regardless of which scoped role
+    // triggered it — its department/program/campus fields are metadata
+    // about origin, not match criteria. We still enforce authorization
+    // via the faculty's home department ∈ caller's resolved depts.
+    const isScopedRole =
+      user.roles.includes(UserRole.DEAN) ||
+      user.roles.includes(UserRole.CHAIRPERSON) ||
+      user.roles.includes(UserRole.CAMPUS_HEAD);
+    if (query.facultyId && isScopedRole) {
+      await this.assertFacultyInScope(query.facultyId, query.semesterId);
+      return { ...query };
+    }
+
     if (user.roles.includes(UserRole.DEAN)) {
       const allowed = await this.scopeResolver.ResolveDepartmentIds(
         query.semesterId,
@@ -1034,6 +1096,51 @@ export class PipelineOrchestratorService {
   }
 
   // --- Private Helpers ---
+
+  private async assertFacultyInScope(
+    facultyId: string,
+    semesterId: string,
+  ): Promise<void> {
+    const allowedDepts =
+      await this.scopeResolver.ResolveDepartmentIds(semesterId);
+    if (allowedDepts === null) return; // unrestricted (SUPER_ADMIN-equivalent)
+
+    const fork = this.em.fork();
+    const rows: { department_id: string | null }[] = await fork
+      .getConnection()
+      .execute(
+        'SELECT u.department_id FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+        [facultyId],
+      );
+    if (rows.length === 0) {
+      throw new NotFoundException('Faculty not found');
+    }
+    const facultyDeptId = rows[0].department_id;
+    if (!facultyDeptId || !allowedDepts.includes(facultyDeptId)) {
+      throw new ForbiddenException('scope not in your assigned access');
+    }
+  }
+
+  private async resolveLatestActiveVersionId(
+    typeCode: string,
+  ): Promise<string | null> {
+    const fork = this.em.fork();
+    const rows: { id: string }[] = await fork.getConnection().execute(
+      `SELECT qv.id
+           FROM questionnaire_version qv
+           JOIN questionnaire q ON q.id = qv.questionnaire_id
+           JOIN questionnaire_type qt ON qt.id = q.type_id
+          WHERE qt.code = ?
+            AND qv.status = 'ACTIVE'
+            AND qv.deleted_at IS NULL
+            AND q.deleted_at IS NULL
+            AND qt.deleted_at IS NULL
+          ORDER BY qv.version_number DESC
+          LIMIT 1`,
+      [typeCode],
+    );
+    return rows[0]?.id ?? null;
+  }
 
   private BuildScopeFromPipeline(pipeline: AnalysisPipeline): ScopeFilter {
     const scope: ScopeFilter = { semester: pipeline.semester.id };

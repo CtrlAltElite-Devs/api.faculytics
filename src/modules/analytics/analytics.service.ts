@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
+import { UserRole } from 'src/modules/auth/roles.enum';
 import {
   QuestionnaireSchemaSnapshot,
   SectionNode,
@@ -36,6 +38,10 @@ import {
 } from './dto/responses/faculty-trends.response.dto';
 import { FacultyReportResponseDto } from './dto/responses/faculty-report.response.dto';
 import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report-comments.response.dto';
+import {
+  FacultyQuestionnaireTypeOptionDto,
+  FacultyQuestionnaireTypesResponseDto,
+} from './dto/responses/faculty-questionnaire-types.response.dto';
 import {
   QualitativeSummaryResponseDto,
   QualitativeThemeDto,
@@ -102,6 +108,7 @@ export class AnalyticsService {
   constructor(
     private readonly em: EntityManager,
     private readonly scopeResolver: ScopeResolverService,
+    private readonly currentUserService: CurrentUserService,
   ) {}
 
   async GetDepartmentOverview(
@@ -1270,6 +1277,38 @@ export class AnalyticsService {
     facultyId: string,
     semesterId: string,
   ): Promise<{ first_name: string; last_name: string } | null> {
+    // Faculty self-view: controller-level assertFacultySelfScope already
+    // confirmed user.id === facultyId. Skip the elevated-role department
+    // check (which would throw for FACULTY) and just hydrate name fields.
+    const currentUser = this.currentUserService.get();
+    const isFacultySelf =
+      currentUser != null &&
+      currentUser.id === facultyId &&
+      currentUser.roles.includes(UserRole.FACULTY) &&
+      !currentUser.roles.some((r) =>
+        [
+          UserRole.SUPER_ADMIN,
+          UserRole.DEAN,
+          UserRole.CHAIRPERSON,
+          UserRole.CAMPUS_HEAD,
+        ].includes(r),
+      );
+
+    if (isFacultySelf) {
+      const selfRows: { first_name: string; last_name: string }[] =
+        await this.em.execute(
+          'SELECT u.first_name, u.last_name FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+          [facultyId],
+        );
+      if (selfRows.length === 0) {
+        throw new NotFoundException('Faculty not found');
+      }
+      return {
+        first_name: selfRows[0].first_name,
+        last_name: selfRows[0].last_name,
+      };
+    }
+
     const deptIds = await this.scopeResolver.ResolveDepartmentIds(semesterId);
 
     if (deptIds === null) {
@@ -1415,6 +1454,40 @@ export class AnalyticsService {
       await this.scopeResolver.ResolveProgramCodes(semesterId);
     if (allowedCodes === null) return true;
     return allowedCodes.includes(programCode);
+  }
+
+  async GetAvailableFacultyQuestionnaireTypes(
+    facultyId: string,
+    semesterId: string,
+  ): Promise<FacultyQuestionnaireTypesResponseDto> {
+    await this.validateFacultyScope(facultyId, semesterId);
+
+    const rows: { code: string; name: string; submission_count: string }[] =
+      await this.em.execute(
+        `SELECT qt.code, qt.name, COUNT(qs.id)::text AS submission_count
+         FROM questionnaire_submission qs
+         JOIN questionnaire_version qv ON qv.id = qs.questionnaire_version_id
+         JOIN questionnaire q ON q.id = qv.questionnaire_id
+         JOIN questionnaire_type qt ON qt.id = q.type_id
+         WHERE qs.faculty_id = ?
+           AND qs.semester_id = ?
+           AND qs.deleted_at IS NULL
+           AND qv.deleted_at IS NULL
+           AND q.deleted_at IS NULL
+           AND qt.deleted_at IS NULL
+         GROUP BY qt.code, qt.name
+         HAVING COUNT(qs.id) > 0
+         ORDER BY COUNT(qs.id) DESC, qt.code ASC`,
+        [facultyId, semesterId],
+      );
+
+    const items: FacultyQuestionnaireTypeOptionDto[] = rows.map((r) => ({
+      code: r.code,
+      name: r.name,
+      submissionCount: Number(r.submission_count),
+    }));
+
+    return { items };
   }
 
   private async ResolveDepartmentCodes(

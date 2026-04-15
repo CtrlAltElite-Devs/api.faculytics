@@ -3,6 +3,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { AnalyticsService } from './analytics.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { QuestionnaireSchemaSnapshot } from 'src/modules/questionnaires/lib/questionnaire.types';
 
 describe('AnalyticsService', () => {
@@ -32,11 +33,22 @@ describe('AnalyticsService', () => {
       ResolveProgramCodes: jest.fn().mockResolvedValue(null),
     };
 
+    // FACULTY-self short-circuit checks `currentUserService.get()`. Default
+    // returns null so existing tests fall through to the department-scope
+    // path; FACULTY-self tests can override per-test.
+    const mockCurrentUserService = {
+      get: jest.fn().mockReturnValue(null),
+      getOrFail: jest.fn(),
+      getUserId: jest.fn(),
+      set: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
         { provide: EntityManager, useValue: mockEm },
         { provide: ScopeResolverService, useValue: mockScopeResolver },
+        { provide: CurrentUserService, useValue: mockCurrentUserService },
       ],
     }).compile();
 

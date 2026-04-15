@@ -5,7 +5,7 @@ import type { ScopeType } from '../dto/facet.dto';
 import {
   TIERED_SCHEDULER_CRON_EXPRS,
   TIERED_SCHEDULER_CRON_NAMES,
-} from 'src/crons/jobs/analysis-jobs/tiered-pipeline-scheduler.job';
+} from 'src/crons/jobs/analysis-jobs/tiered-scheduler.constants';
 
 const logger = new Logger('NextScheduledRun');
 

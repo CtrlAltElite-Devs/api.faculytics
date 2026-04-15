@@ -13,23 +13,16 @@ import {
   PipelineOrchestratorService,
 } from 'src/modules/analysis/services/pipeline-orchestrator.service';
 import type { ScopeType } from 'src/modules/analysis/dto/facet.dto';
+import {
+  TIERED_SCHEDULER_CRON_EXPRS,
+  TIERED_SCHEDULER_CRON_NAMES,
+} from './tiered-scheduler.constants';
 
-// Cron names — exposed so B5 can resolve them via SchedulerRegistry to
-// compute `nextScheduledRunAt` for the matching scope tier.
-export const TIERED_SCHEDULER_CRON_NAMES = {
-  FACULTY: 'TieredPipelineSchedulerJob.RunFacultyTier',
-  DEPARTMENT: 'TieredPipelineSchedulerJob.RunDepartmentTier',
-  CAMPUS: 'TieredPipelineSchedulerJob.RunCampusTier',
-} as const;
-
-// Cron expressions — exported so the status-response fallback (B5/AC38)
-// can compute next-fire from raw expression when SchedulerRegistry's
-// own nextDate lookup is unavailable.
-export const TIERED_SCHEDULER_CRON_EXPRS: Record<ScopeType, string> = {
-  FACULTY: '0 1 * * 0', // Sunday 01:00 UTC
-  DEPARTMENT: '0 2 * * 0', // Sunday 02:00 UTC
-  CAMPUS: '0 3 * * 0', // Sunday 03:00 UTC
-};
+// Re-exported for back-compat with imports that referenced the job module.
+export {
+  TIERED_SCHEDULER_CRON_EXPRS,
+  TIERED_SCHEDULER_CRON_NAMES,
+} from './tiered-scheduler.constants';
 
 @Injectable()
 export class TieredPipelineSchedulerJob extends BaseJob {

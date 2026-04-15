@@ -8,6 +8,8 @@ import { QuestionnaireSchemaSnapshot } from 'src/modules/questionnaires/lib/ques
 describe('AnalyticsService', () => {
   let service: AnalyticsService;
   let mockExecute: jest.Mock;
+  let mockFindOne: jest.Mock;
+  let mockFind: jest.Mock;
   let mockScopeResolver: {
     ResolveDepartmentIds: jest.Mock;
     ResolveProgramCodes: jest.Mock;
@@ -15,9 +17,13 @@ describe('AnalyticsService', () => {
 
   beforeEach(async () => {
     mockExecute = jest.fn().mockResolvedValue([]);
+    mockFindOne = jest.fn().mockResolvedValue(null);
+    mockFind = jest.fn().mockResolvedValue([]);
 
     const mockEm = {
       execute: mockExecute,
+      findOne: mockFindOne,
+      find: mockFind,
       getConnection: jest.fn().mockReturnValue({ execute: mockExecute }),
     };
 
@@ -1249,6 +1255,444 @@ describe('AnalyticsService', () => {
       // Verify courseId was passed in SQL params
       const countCall = mockExecute.mock.calls[2] as [string, unknown[]];
       expect(countCall[1]).toContain(courseId);
+    });
+
+    describe('filters (sentiment + themeId)', () => {
+      const sentimentRunId = 'sr-run-1';
+      const topicModelRunId = 'tm-run-1';
+      const pipelineId = 'pipe-1';
+      const themeId = '550e8400-e29b-41d4-a716-446655440050';
+
+      const mockPipelineResolved = () => {
+        // findLatestCompletedPipelineByScope, resolvePipelineRuns(sentiment + topic)
+        mockFindOne
+          .mockResolvedValueOnce({ id: pipelineId })
+          .mockResolvedValueOnce({ id: sentimentRunId })
+          .mockResolvedValueOnce({ id: topicModelRunId });
+      };
+
+      it('returns empty when sentiment filter requested but no pipeline found', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ]);
+        // findOne returns null by default (no pipeline)
+
+        const result = await service.GetFacultyReportComments(facultyId, {
+          ...baseQuery,
+          sentiment: 'negative',
+        });
+
+        expect(result.items).toHaveLength(0);
+        expect(result.meta.totalItems).toBe(0);
+      });
+
+      it('applies sentiment filter in SQL params when pipeline exists', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ])
+          .mockResolvedValueOnce([{ total: '1' }])
+          .mockResolvedValueOnce([
+            {
+              text: 'A negative comment',
+              submitted_at: '2026-03-20T10:00:00.000Z',
+              sentiment: 'negative',
+              theme_ids: [themeId],
+            },
+          ]);
+        mockPipelineResolved();
+
+        const result = await service.GetFacultyReportComments(facultyId, {
+          ...baseQuery,
+          sentiment: 'negative',
+        });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].sentiment).toBe('negative');
+        expect(result.items[0].themeIds).toEqual([themeId]);
+
+        // Verify sentiment/run ids were included in count SQL params
+        const countCall = mockExecute.mock.calls[2] as [string, unknown[]];
+        expect(countCall[1]).toContain(sentimentRunId);
+        expect(countCall[1]).toContain('negative');
+      });
+
+      it('applies themeId filter via topic_assignment join', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ])
+          .mockResolvedValueOnce([{ total: '3' }])
+          .mockResolvedValueOnce([
+            {
+              text: 'Theme comment',
+              submitted_at: '2026-03-20T10:00:00.000Z',
+              sentiment: 'positive',
+              theme_ids: [themeId],
+            },
+          ]);
+        mockPipelineResolved();
+
+        const result = await service.GetFacultyReportComments(facultyId, {
+          ...baseQuery,
+          themeId,
+        });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.meta.totalItems).toBe(3);
+        const countCall = mockExecute.mock.calls[2] as [string, unknown[]];
+        expect(countCall[1]).toContain(themeId);
+        expect(countCall[1]).toContain(topicModelRunId);
+      });
+
+      it('composes both filters with AND semantics', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ])
+          .mockResolvedValueOnce([{ total: '1' }])
+          .mockResolvedValueOnce([
+            {
+              text: 'Neg+theme',
+              submitted_at: '2026-03-20T10:00:00.000Z',
+              sentiment: 'negative',
+              theme_ids: [themeId],
+            },
+          ]);
+        mockPipelineResolved();
+
+        const result = await service.GetFacultyReportComments(facultyId, {
+          ...baseQuery,
+          sentiment: 'negative',
+          themeId,
+        });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.meta.totalItems).toBe(1);
+        const countSql = (mockExecute.mock.calls[2] as [string, unknown[]])[0];
+        expect(countSql).toContain('sentiment_result');
+        expect(countSql).toContain('topic_assignment');
+        expect(countSql).toContain('is_dominant = true');
+      });
+
+      it('populates per-row annotations unconditionally when pipeline exists', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ])
+          .mockResolvedValueOnce([{ total: '1' }])
+          .mockResolvedValueOnce([
+            {
+              text: 'Annotated',
+              submitted_at: '2026-03-20T10:00:00.000Z',
+              sentiment: 'positive',
+              theme_ids: [themeId],
+            },
+          ]);
+        mockPipelineResolved();
+
+        const result = await service.GetFacultyReportComments(
+          facultyId,
+          baseQuery,
+        );
+
+        expect(result.items[0].sentiment).toBe('positive');
+        expect(result.items[0].themeIds).toEqual([themeId]);
+      });
+    });
+  });
+
+  describe('GetQualitativeSummary', () => {
+    const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+    const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+    const baseQuery = {
+      semesterId,
+      questionnaireTypeCode: 'STUDENT_EVAL',
+    };
+
+    it('returns empty DTO when no completed pipeline exists', async () => {
+      // findOne returns null by default
+      const result = await service.GetQualitativeSummary(facultyId, baseQuery);
+
+      expect(result.sentimentDistribution).toEqual({
+        positive: 0,
+        neutral: 0,
+        negative: 0,
+      });
+      expect(result.themes).toEqual([]);
+    });
+
+    it('throws ForbiddenException when scope validation fails', async () => {
+      mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([
+        'dept-allowed',
+      ]);
+      mockExecute.mockResolvedValueOnce([
+        {
+          id: facultyId,
+          department_id: 'dept-other',
+          first_name: 'John',
+          last_name: 'Doe',
+        },
+      ]);
+
+      await expect(
+        service.GetQualitativeSummary(facultyId, baseQuery),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('aggregates sentiment distribution and themes sorted by descending count', async () => {
+      const pipelineId = 'pipe-x';
+      const sentimentRunId = 'sr-x';
+      const topicModelRunId = 'tm-x';
+
+      mockFindOne
+        .mockResolvedValueOnce({ id: pipelineId }) // pipeline
+        .mockResolvedValueOnce({ id: sentimentRunId }) // sentiment run
+        .mockResolvedValueOnce({ id: topicModelRunId }); // topic model run
+
+      mockFind
+        // sentiment results
+        .mockResolvedValueOnce([
+          {
+            label: 'positive',
+            positiveScore: 0.9,
+            negativeScore: 0.05,
+            submission: { id: 's1' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.8,
+            submission: { id: 's2' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.15,
+            negativeScore: 0.75,
+            submission: { id: 's3' },
+          },
+        ])
+        // topics (sorted desc docCount — returned in DB order)
+        .mockResolvedValueOnce([
+          {
+            id: 't-pacing',
+            label: 'Pacing',
+            rawLabel: 'Pacing',
+            docCount: 2,
+          },
+          {
+            id: 't-content',
+            label: null,
+            rawLabel: 'Content Quality',
+            docCount: 1,
+          },
+        ])
+        // topic assignments (dominant-only)
+        .mockResolvedValueOnce([
+          {
+            topic: { id: 't-pacing' },
+            submission: { id: 's2' },
+            isDominant: true,
+          },
+          {
+            topic: { id: 't-pacing' },
+            submission: { id: 's3' },
+            isDominant: true,
+          },
+          {
+            topic: { id: 't-content' },
+            submission: { id: 's1' },
+            isDominant: true,
+          },
+        ])
+        // quote submissions
+        .mockResolvedValueOnce([
+          { id: 's1', cleanedComment: 'Great teacher John Smith here' },
+          { id: 's2', cleanedComment: 'Pacing was off' },
+          { id: 's3', cleanedComment: 'Too fast to follow' },
+        ]);
+
+      const result = await service.GetQualitativeSummary(facultyId, baseQuery);
+
+      expect(result.sentimentDistribution).toEqual({
+        positive: 1,
+        neutral: 0,
+        negative: 2,
+      });
+      expect(result.themes).toHaveLength(2);
+      expect(result.themes[0].label).toBe('Pacing');
+      expect(result.themes[0].count).toBe(2);
+      expect(result.themes[0].sentimentSplit).toEqual({
+        positive: 0,
+        neutral: 0,
+        negative: 2,
+      });
+      expect(result.themes[1].label).toBe('Content Quality');
+      expect(result.themes[1].count).toBe(1);
+      // PII scrub: "John Smith" -> "[name]"
+      expect(result.themes[1].sampleQuotes?.[0]).toContain('[name]');
+    });
+
+    it('caps sample quotes at 3 per theme and applies length truncation', async () => {
+      const longText = 'x'.repeat(500);
+      mockFindOne
+        .mockResolvedValueOnce({ id: 'p' })
+        .mockResolvedValueOnce({ id: 'sr' })
+        .mockResolvedValueOnce({ id: 'tm' });
+      mockFind
+        // sentiment for 5 submissions
+        .mockResolvedValueOnce([
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.8,
+            submission: { id: 'a' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.85,
+            submission: { id: 'b' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.9,
+            submission: { id: 'c' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.92,
+            submission: { id: 'd' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.95,
+            submission: { id: 'e' },
+          },
+        ])
+        // one topic
+        .mockResolvedValueOnce([
+          { id: 't1', label: 'Topic1', rawLabel: 'Topic1', docCount: 5 },
+        ])
+        // assignments
+        .mockResolvedValueOnce([
+          { topic: { id: 't1' }, submission: { id: 'a' }, isDominant: true },
+          { topic: { id: 't1' }, submission: { id: 'b' }, isDominant: true },
+          { topic: { id: 't1' }, submission: { id: 'c' }, isDominant: true },
+          { topic: { id: 't1' }, submission: { id: 'd' }, isDominant: true },
+          { topic: { id: 't1' }, submission: { id: 'e' }, isDominant: true },
+        ])
+        // quote submissions (3 picked: top 3 strongest-signal = e, d, c)
+        .mockResolvedValueOnce([
+          { id: 'c', cleanedComment: longText },
+          { id: 'd', cleanedComment: 'short' },
+          { id: 'e', cleanedComment: 'another short one' },
+        ]);
+
+      const result = await service.GetQualitativeSummary(facultyId, baseQuery);
+
+      expect(result.themes[0].sampleQuotes).toHaveLength(3);
+      const truncated = result.themes[0].sampleQuotes!.find((q) =>
+        q.endsWith('…'),
+      );
+      expect(truncated).toBeDefined();
+      expect(truncated!.length).toBeLessThanOrEqual(281);
+    });
+
+    it('returns partial response when topic model run missing (sentiment only)', async () => {
+      mockFindOne
+        .mockResolvedValueOnce({ id: 'p' })
+        .mockResolvedValueOnce({ id: 'sr' })
+        .mockResolvedValueOnce(null); // no topic model run
+      mockFind.mockResolvedValueOnce([
+        {
+          label: 'positive',
+          positiveScore: 0.9,
+          negativeScore: 0.05,
+          submission: { id: 's1' },
+        },
+      ]);
+
+      const result = await service.GetQualitativeSummary(facultyId, baseQuery);
+
+      expect(result.sentimentDistribution.positive).toBe(1);
+      expect(result.themes).toEqual([]);
+    });
+  });
+
+  describe('findLatestCompletedPipelineByScope', () => {
+    it('is invoked via GetQualitativeSummary with correct filter', async () => {
+      const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+      const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+      const courseId = '550e8400-e29b-41d4-a716-446655440022';
+
+      await service.GetQualitativeSummary(facultyId, {
+        semesterId,
+        questionnaireTypeCode: 'STUDENT_EVAL',
+        courseId,
+      });
+
+      expect(mockFindOne).toHaveBeenCalled();
+      const call = mockFindOne.mock.calls[0] as unknown as [
+        unknown,
+        Record<string, unknown>,
+        Record<string, unknown>,
+      ];
+      const filter = call[1];
+      expect(filter.status).toBe('COMPLETED');
+      expect(filter.faculty).toBe(facultyId);
+      expect(filter.semester).toBe(semesterId);
+      expect(filter.course).toBe(courseId);
+      const qv = filter.questionnaireVersion as Record<string, unknown>;
+      expect(qv).toBeDefined();
+      const opts = call[2];
+      expect(opts.orderBy).toEqual({ createdAt: 'DESC' });
+    });
+
+    it('uses course=null in filter when courseId not provided', async () => {
+      const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+      const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+
+      await service.GetQualitativeSummary(facultyId, {
+        semesterId,
+        questionnaireTypeCode: 'STUDENT_EVAL',
+      });
+
+      const call = mockFindOne.mock.calls[0] as unknown as [
+        unknown,
+        Record<string, unknown>,
+      ];
+      const filter = call[1];
+      expect(filter.course).toBeNull();
     });
   });
 });

@@ -72,6 +72,11 @@ export const pipelineStatusSchema = z.object({
   updatedAt: z.string().datetime(),
   confirmedAt: z.string().datetime().nullable(),
   completedAt: z.string().datetime().nullable(),
+  // FAC-135 Phase B: ISO timestamp of the next scheduled refresh from the
+  // tiered scheduler for the pipeline's scope tier. Optional / nullable so
+  // the frontend falls back to generic copy if the registry lookup fails
+  // (R3 mitigation — see AC38).
+  nextScheduledRunAt: z.string().datetime().nullable().optional(),
 });
 
 export type PipelineStatusResponse = z.infer<typeof pipelineStatusSchema>;

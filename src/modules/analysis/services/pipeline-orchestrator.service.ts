@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { UniqueConstraintViolationException } from '@mikro-orm/core';
 import { v4 } from 'uuid';
@@ -28,8 +29,9 @@ import { Department } from 'src/entities/department.entity';
 import { Campus } from 'src/entities/campus.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { UserRole } from 'src/modules/auth/roles.enum';
-import { PipelineStatus, RunStatus } from '../enums';
+import { PipelineStatus, PipelineTrigger, RunStatus } from '../enums';
 import { SENTIMENT_GATE, COVERAGE_WARNINGS } from '../constants';
+import type { ScopeType } from '../dto/facet.dto';
 import { buildSubmissionScope } from '../lib/build-submission-scope';
 import {
   CreatePipelineInput,
@@ -47,6 +49,10 @@ import {
   deriveScopeLabel,
   type VoiceBreakdownDto,
 } from '../dto/responses/pipeline-summary.response.dto';
+import {
+  getNextScheduledRunAt,
+  tierFromPipelineScope,
+} from '../lib/next-scheduled-run';
 
 // Internal legacy-field shape used by the authorization and duplicate-check
 // logic inside this service. The external DTO is now {scopeType, scopeId}
@@ -58,6 +64,14 @@ interface InternalCreateInput {
   departmentId?: string;
   campusId?: string;
   questionnaireVersionId?: string;
+}
+
+// Phase B scheduler: one work item per (scope, semester) tuple per tier.
+export interface ActiveScopeForTier {
+  scopeType: ScopeType;
+  scopeId: string;
+  semesterId: string;
+  lastPipelineCompletedAt: Date | null;
 }
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { batchAnalysisJobSchema } from '../dto/batch-analysis-job-message.dto';
@@ -122,6 +136,7 @@ export class PipelineOrchestratorService {
     private readonly accessService: AnalysisAccessService,
     private readonly scopeResolver: ScopeResolverService,
     private readonly currentUserService: CurrentUserService,
+    private readonly schedulerRegistry: SchedulerRegistry,
     @InjectQueue(QueueName.SENTIMENT) private readonly sentimentQueue: Queue,
     @InjectQueue(QueueName.TOPIC_MODEL) private readonly topicModelQueue: Queue,
     @InjectQueue(QueueName.RECOMMENDATIONS)
@@ -133,6 +148,7 @@ export class PipelineOrchestratorService {
   async CreatePipeline(
     dto: CreatePipelineInput,
     triggeredById: string,
+    options?: { trigger?: PipelineTrigger },
   ): Promise<AnalysisPipeline> {
     const parsed = createPipelineSchema.parse(dto);
 
@@ -211,6 +227,7 @@ export class PipelineOrchestratorService {
         ? fork.getReference(Campus, input.campusId)
         : undefined,
       triggeredBy: fork.getReference(User, triggeredById),
+      trigger: options?.trigger ?? PipelineTrigger.USER,
       totalEnrolled: coverage.totalEnrolled,
       submissionCount: coverage.submissionCount,
       commentCount: coverage.commentCount,
@@ -747,6 +764,10 @@ export class PipelineOrchestratorService {
       updatedAt: pipeline.updatedAt.toISOString(),
       confirmedAt: pipeline.confirmedAt?.toISOString() || null,
       completedAt: pipeline.completedAt?.toISOString() || null,
+      nextScheduledRunAt: getNextScheduledRunAt(
+        this.schedulerRegistry,
+        tierFromPipelineScope(pipeline),
+      ),
     };
   }
 
@@ -775,6 +796,167 @@ export class PipelineOrchestratorService {
 
     this.logger.log(`Pipeline ${pipelineId} cancelled`);
     return pipeline;
+  }
+
+  // --- Scheduler-driven flow (FAC-135 Phase B) ---
+
+  /**
+   * Enumerates work items for a given tier across ALL active semesters.
+   *
+   * "Active semester" is intentionally fuzzy in this codebase — the
+   * `Semester` entity carries no `status` column, so the scheduler defines
+   * activity as "any submission posted in the last 30 days." Multi-semester
+   * handling is required because semester transition weeks have overlapping
+   * activity (old final submissions + new early submissions); single-
+   * semester assumption would skip one for ~14 days.
+   *
+   * For each active semester × tier, we enumerate distinct scope ids that
+   * have at least one submission, plus the most recent COMPLETED pipeline's
+   * `completedAt` for the (scope, semester) tuple — used by the scheduler's
+   * skip-check.
+   */
+  async FindActiveScopesForTier(
+    tier: ScopeType,
+  ): Promise<ActiveScopeForTier[]> {
+    const fork = this.em.fork();
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const tierColumn =
+      tier === 'FACULTY'
+        ? 'faculty_id'
+        : tier === 'DEPARTMENT'
+          ? 'facultyDepartment_id'
+          : 'campus_id';
+
+    // One query: distinct (scope_id, semester_id) tuples among "active"
+    // semesters (any submission ≤ 30 days old), LEFT JOINing the most
+    // recent COMPLETED pipeline for that exact (scope, semester) tuple.
+    const sql = `
+      WITH active_semesters AS (
+        SELECT DISTINCT semester_id
+          FROM questionnaire_submission
+         WHERE deleted_at IS NULL
+           AND created_at >= ?
+      ),
+      scopes AS (
+        SELECT DISTINCT qs.${tierColumn} AS scope_id, qs.semester_id
+          FROM questionnaire_submission qs
+          JOIN active_semesters a ON a.semester_id = qs.semester_id
+         WHERE qs.deleted_at IS NULL
+           AND qs.${tierColumn} IS NOT NULL
+      )
+      SELECT s.scope_id::text AS scope_id,
+             s.semester_id::text AS semester_id,
+             (
+               SELECT MAX(ap.completed_at)
+                 FROM analysis_pipeline ap
+                WHERE ap.deleted_at IS NULL
+                  AND ap.status = 'COMPLETED'
+                  AND ap.semester_id = s.semester_id
+                  AND ap.${this.tierColumnOnPipeline(tier)} = s.scope_id
+             ) AS last_completed_at
+        FROM scopes s
+    `;
+
+    const rows: {
+      scope_id: string;
+      semester_id: string;
+      last_completed_at: Date | string | null;
+    }[] = await fork.getConnection().execute(sql, [cutoff]);
+
+    return rows.map((r) => ({
+      scopeType: tier,
+      scopeId: r.scope_id,
+      semesterId: r.semester_id,
+      lastPipelineCompletedAt: r.last_completed_at
+        ? new Date(r.last_completed_at)
+        : null,
+    }));
+  }
+
+  private tierColumnOnPipeline(tier: ScopeType): string {
+    switch (tier) {
+      case 'FACULTY':
+        return 'faculty_id';
+      case 'DEPARTMENT':
+        return 'department_id';
+      case 'CAMPUS':
+        return 'campus_id';
+    }
+  }
+
+  /**
+   * Scheduler entry point. Bypasses the AWAITING_CONFIRMATION human gate —
+   * there is no human in the loop. If the scope has no qualitative comments
+   * at schedule time, the pipeline is persisted in COMPLETED state with
+   * `warnings: ['insufficient_coverage_at_schedule_time']` so the next
+   * Dean / Campus Head viewing pipeline history sees the no-op explicitly
+   * (rather than the row being silently absent or stuck).
+   *
+   * The skip-check (createdAt > lastCompletedAt) belongs in the scheduler,
+   * NOT here — manual `POST /analysis/pipelines` must always create a fresh
+   * pipeline regardless of last-run timestamp.
+   */
+  async CreateAndConfirmPipeline(input: {
+    scopeType: ScopeType;
+    scopeId: string;
+    semesterId: string;
+    triggeredById: string;
+    questionnaireVersionId?: string;
+  }): Promise<AnalysisPipeline> {
+    // Build a CreatePipelineInput-shaped payload + run through the canonical
+    // create path with `trigger: SCHEDULER`. The duplicate-check inside
+    // CreatePipeline returns the existing active pipeline if one exists, so
+    // schedulers firing on top of an in-flight pipeline are idempotent.
+    const dtoLike: CreatePipelineInput = {
+      semesterId: input.semesterId,
+      scopeType: input.scopeType,
+      scopeId: input.scopeId,
+      questionnaireVersionId: input.questionnaireVersionId,
+    };
+
+    // Bypass user-scope authorization — scheduler is system-trusted. We
+    // re-use the create flow by side-loading a minimal "system" current-user
+    // context via the SUPER_ADMIN role. assertCanCreatePipeline gates on
+    // SUPER_ADMIN with no further auto-fill.
+    const pipeline = await this.currentUserService.runAs(
+      {
+        id: input.triggeredById,
+        roles: [UserRole.SUPER_ADMIN],
+      },
+      () =>
+        this.CreatePipeline(dtoLike, input.triggeredById, {
+          trigger: PipelineTrigger.SCHEDULER,
+        }),
+    );
+
+    // If the freshly created pipeline already advanced past
+    // AWAITING_CONFIRMATION (the duplicate-check returned an existing row),
+    // leave it alone — concurrent confirmation will run.
+    if (pipeline.status !== PipelineStatus.AWAITING_CONFIRMATION) {
+      return pipeline;
+    }
+
+    // Coverage gate: no comments → no analysis is possible. Auto-complete
+    // with a structured warning so the row appears in history with intent.
+    if (pipeline.commentCount === 0) {
+      const fork = this.em.fork();
+      const fresh = await fork.findOneOrFail(AnalysisPipeline, pipeline.id);
+      fresh.status = PipelineStatus.COMPLETED;
+      fresh.completedAt = new Date();
+      fresh.warnings = [
+        ...(fresh.warnings ?? []),
+        'insufficient_coverage_at_schedule_time',
+      ];
+      await fork.flush();
+      this.logger.log(
+        `Scheduler created pipeline ${fresh.id} as COMPLETED (no qualitative comments at schedule time)`,
+      );
+      return fresh;
+    }
+
+    // Sufficient coverage — auto-confirm, which kicks off sentiment.
+    return this.ConfirmPipeline(pipeline.id);
   }
 
   async OnStageFailed(

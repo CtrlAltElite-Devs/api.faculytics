@@ -1044,9 +1044,10 @@ export class PipelineOrchestratorService {
         input.semesterId,
       );
 
-      // Explicit faculty scope: verify the faculty's home department is in scope.
+      // Explicit faculty scope: the faculty must teach ≥1 course in the dean's
+      // departments this semester (teaching footprint, not home department).
       if (input.facultyId) {
-        await this.assertFacultyInScope(input.facultyId, input.semesterId);
+        await this.assertFacultyInUserScope(input.facultyId, input.semesterId);
         return input;
       }
 
@@ -1081,7 +1082,7 @@ export class PipelineOrchestratorService {
           'CHAIRPERSON must specify scopeType=FACULTY and scopeId',
         );
       }
-      await this.assertFacultyInScope(input.facultyId, input.semesterId);
+      await this.assertFacultyInUserScope(input.facultyId, input.semesterId);
       return input;
     }
 
@@ -1091,7 +1092,7 @@ export class PipelineOrchestratorService {
       );
 
       if (input.facultyId) {
-        await this.assertFacultyInScope(input.facultyId, input.semesterId);
+        await this.assertFacultyInUserScope(input.facultyId, input.semesterId);
         return input;
       }
 
@@ -1152,10 +1153,9 @@ export class PipelineOrchestratorService {
       user.roles.includes(UserRole.CHAIRPERSON) ||
       user.roles.includes(UserRole.CAMPUS_HEAD);
     // Faculty-level queries short-circuit the set filters for scoped roles.
-    // Authorization via the faculty's home department/program/campus ∈
-    // caller's resolved sets.
+    // Authorization via teaching footprint intersection with caller's scope.
     if (query.facultyId && isScopedRole) {
-      await this.assertFacultyInScope(query.facultyId, query.semesterId);
+      await this.assertFacultyInUserScope(query.facultyId, query.semesterId);
       return { ...query };
     }
 
@@ -1280,33 +1280,146 @@ export class PipelineOrchestratorService {
       return;
     }
 
+    // FACULTY-scoped pipeline (only pipeline.faculty is set, no department/
+    // program/campus FKs per AC1): authorize via the caller's teaching-scope
+    // intersection with the faculty. Without this, dean/chair/campus-head
+    // cannot read back FACULTY-scoped pipelines they just created.
+    const isScopedRole =
+      user.roles.includes(UserRole.DEAN) ||
+      user.roles.includes(UserRole.CHAIRPERSON) ||
+      user.roles.includes(UserRole.CAMPUS_HEAD);
+    if (
+      isScopedRole &&
+      pipeline.faculty &&
+      !pipeline.department &&
+      !pipeline.program &&
+      !pipeline.campus
+    ) {
+      try {
+        await this.assertFacultyInUserScope(
+          pipeline.faculty.id,
+          pipeline.semester.id,
+        );
+        return;
+      } catch {
+        // fall through to final throw
+      }
+    }
+
     throw new ForbiddenException('scope not in your assigned access');
   }
 
   // --- Private Helpers ---
 
-  private async assertFacultyInScope(
+  /**
+   * Authorize a FACULTY-scoped operation for the current user. Uses the
+   * faculty's teaching footprint (active `editingteacher`/`teacher`
+   * enrollments in the target semester) intersected with the caller's
+   * resolved scope per role:
+   *   - DEAN, CAMPUS_HEAD → intersect with allowed department IDs
+   *   - CHAIRPERSON       → intersect with allowed program IDs
+   * Roles are not mutually exclusive — if the user holds multiple scoped
+   * roles, access is granted if ANY role's scope contains a teaching
+   * enrollment. SUPER_ADMIN short-circuits. Throws 404 if the faculty
+   * doesn't exist, 403 otherwise.
+   */
+  private async assertFacultyInUserScope(
     facultyId: string,
     semesterId: string,
   ): Promise<void> {
-    const allowedDepts =
-      await this.scopeResolver.ResolveDepartmentIds(semesterId);
-    if (allowedDepts === null) return; // unrestricted (SUPER_ADMIN-equivalent)
+    const user = this.currentUserService.getOrFail();
 
     const fork = this.em.fork();
-    const rows: { department_id: string | null }[] = await fork
+    const existsRows: { id: string }[] = await fork
       .getConnection()
       .execute(
-        'SELECT u.department_id FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+        'SELECT u.id FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
         [facultyId],
       );
-    if (rows.length === 0) {
+    if (existsRows.length === 0) {
       throw new NotFoundException('Faculty not found');
     }
-    const facultyDeptId = rows[0].department_id;
-    if (!facultyDeptId || !allowedDepts.includes(facultyDeptId)) {
+
+    if (user.roles.includes(UserRole.SUPER_ADMIN)) return;
+
+    const checks: Array<
+      | { axis: 'department'; ids: string[] | null }
+      | { axis: 'program'; ids: string[] | null }
+    > = [];
+    if (
+      user.roles.includes(UserRole.DEAN) ||
+      user.roles.includes(UserRole.CAMPUS_HEAD)
+    ) {
+      checks.push({
+        axis: 'department',
+        ids: await this.scopeResolver.ResolveDepartmentIds(semesterId),
+      });
+    }
+    if (user.roles.includes(UserRole.CHAIRPERSON)) {
+      checks.push({
+        axis: 'program',
+        ids: await this.scopeResolver.ResolveProgramIds(semesterId),
+      });
+    }
+
+    if (checks.length === 0) {
       throw new ForbiddenException('scope not in your assigned access');
     }
+
+    for (const check of checks) {
+      if (
+        await this.facultyTeachesInScope(
+          facultyId,
+          semesterId,
+          check.axis,
+          check.ids,
+        )
+      ) {
+        return;
+      }
+    }
+
+    throw new ForbiddenException('scope not in your assigned access');
+  }
+
+  /**
+   * Returns true if the faculty has any active teaching enrollment in
+   * `semesterId` whose course's owning department/program is in `allowedIds`.
+   * `allowedIds === null` means unrestricted on that axis (super-admin-
+   * equivalent) — always true. Empty array = no access.
+   */
+  private async facultyTeachesInScope(
+    facultyId: string,
+    semesterId: string,
+    axis: 'department' | 'program',
+    allowedIds: string[] | null,
+  ): Promise<boolean> {
+    if (allowedIds === null) return true;
+    if (allowedIds.length === 0) return false;
+
+    const column = axis === 'department' ? 'd.id' : 'p.id';
+    const placeholders = allowedIds.map(() => '?').join(', ');
+    const fork = this.em.fork();
+    const rows: { hit: number }[] = await fork.getConnection().execute(
+      `SELECT 1 AS hit
+         FROM enrollment e
+         INNER JOIN course c ON c.id = e.course_id
+         INNER JOIN program p ON p.id = c.program_id
+         INNER JOIN department d ON d.id = p.department_id
+        WHERE e.user_id = ?
+          AND e.role IN ('editingteacher', 'teacher')
+          AND e.is_active = true
+          AND e.deleted_at IS NULL
+          AND c.is_active = true
+          AND c.deleted_at IS NULL
+          AND p.deleted_at IS NULL
+          AND d.deleted_at IS NULL
+          AND d.semester_id = ?
+          AND ${column} IN (${placeholders})
+        LIMIT 1`,
+      [facultyId, semesterId, ...allowedIds],
+    );
+    return rows.length > 0;
   }
 
   private async resolveLatestActiveVersionId(

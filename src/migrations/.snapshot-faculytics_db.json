@@ -336,25 +336,6 @@
           ],
           "mappedType": "enum"
         },
-        "trigger": {
-          "name": "trigger",
-          "type": "text",
-          "unsigned": false,
-          "autoincrement": false,
-          "primary": false,
-          "nullable": false,
-          "unique": false,
-          "length": null,
-          "precision": null,
-          "scale": null,
-          "default": "'USER'",
-          "comment": null,
-          "enumItems": [
-            "USER",
-            "SCHEDULER"
-          ],
-          "mappedType": "enum"
-        },
         "error_message": {
           "name": "error_message",
           "type": "text",
@@ -402,6 +383,22 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "datetime"
+        },
+        "trigger": {
+          "name": "trigger",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "'USER'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "text"
         }
       },
       "name": "analysis_pipeline",

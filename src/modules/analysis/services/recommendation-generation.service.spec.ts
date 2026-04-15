@@ -28,6 +28,14 @@ const createMockFork = () => ({
   findOneOrFail: jest.fn(),
   findOne: jest.fn(),
   find: jest.fn().mockResolvedValue([]),
+  // RecommendationGenerationService.Generate now joins
+  // questionnaire_submission → questionnaire_type via raw SQL through
+  // fork.getConnection().execute() to derive a submissionId → type-code
+  // map for facet derivation. Default to an empty mapping; tests that
+  // assert on facet behavior can override per-test.
+  getConnection: jest.fn().mockReturnValue({
+    execute: jest.fn().mockResolvedValue([]),
+  }),
   createQueryBuilder: jest.fn().mockReturnValue({
     select: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),

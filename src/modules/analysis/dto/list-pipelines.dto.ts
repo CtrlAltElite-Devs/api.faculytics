@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsUUID } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export const listPipelinesQuerySchema = z.object({
   semesterId: z.string().uuid(),
@@ -10,6 +10,7 @@ export const listPipelinesQuerySchema = z.object({
   campusId: z.string().uuid().optional(),
   courseId: z.string().uuid().optional(),
   questionnaireVersionId: z.string().uuid().optional(),
+  questionnaireTypeCode: z.string().min(1).optional(),
 });
 
 export type ListPipelinesQueryInput = z.infer<typeof listPipelinesQuerySchema>;
@@ -49,4 +50,12 @@ export class ListPipelinesQueryDto {
   @IsUUID()
   @IsOptional()
   questionnaireVersionId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter pipelines whose questionnaire version belongs to this type code',
+  })
+  @IsString()
+  @IsOptional()
+  questionnaireTypeCode?: string;
 }

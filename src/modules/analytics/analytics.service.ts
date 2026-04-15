@@ -17,6 +17,8 @@ import {
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
   BaseFacultyReportQueryDto,
+  QualitativeSummaryQueryDto,
+  SentimentLabel,
 } from './dto/analytics-query.dto';
 import { ReportCommentDto } from './dto/responses/faculty-report-comments.response.dto';
 import {
@@ -34,7 +36,19 @@ import {
 } from './dto/responses/faculty-trends.response.dto';
 import { FacultyReportResponseDto } from './dto/responses/faculty-report.response.dto';
 import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report-comments.response.dto';
+import {
+  QualitativeSummaryResponseDto,
+  QualitativeThemeDto,
+} from './dto/responses/qualitative-summary.response.dto';
 import { PaginationMeta } from 'src/modules/common/dto/pagination.dto';
+import { AnalysisPipeline } from 'src/entities/analysis-pipeline.entity';
+import { SentimentRun } from 'src/entities/sentiment-run.entity';
+import { SentimentResult } from 'src/entities/sentiment-result.entity';
+import { TopicModelRun } from 'src/entities/topic-model-run.entity';
+import { Topic } from 'src/entities/topic.entity';
+import { TopicAssignment } from 'src/entities/topic-assignment.entity';
+import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
+import { PipelineStatus } from 'src/modules/analysis/enums';
 
 interface QuestionMeta {
   text: string;
@@ -63,6 +77,25 @@ const ATTENTION_THRESHOLDS = {
   MIN_SEMESTERS_FOR_TREND: 3,
   MIN_R2_FOR_TREND: 0.5,
 } as const;
+
+const QUALITATIVE_SUMMARY_LIMITS = {
+  MAX_SAMPLE_QUOTES_PER_THEME: 3,
+  QUOTE_MAX_LENGTH: 280,
+} as const;
+
+const SENTIMENT_LABEL_VALUES: SentimentLabel[] = [
+  'positive',
+  'neutral',
+  'negative',
+];
+
+function scrubQuote(raw: string): string {
+  const truncated =
+    raw.length > QUALITATIVE_SUMMARY_LIMITS.QUOTE_MAX_LENGTH
+      ? `${raw.slice(0, QUALITATIVE_SUMMARY_LIMITS.QUOTE_MAX_LENGTH)}…`
+      : raw;
+  return truncated.replace(/[A-Z][a-z]+\s[A-Z][a-z]+/g, '[name]');
+}
 
 @Injectable()
 export class AnalyticsService {
@@ -585,17 +618,40 @@ export class AnalyticsService {
       query.questionnaireTypeCode,
     );
 
+    const page = query.page!;
+    const limit = query.limit!;
+
     if (versionIds.length === 0) {
-      return {
-        items: [],
-        meta: {
-          totalItems: 0,
-          itemCount: 0,
-          itemsPerPage: query.limit!,
-          totalPages: 0,
-          currentPage: query.page!,
-        } as PaginationMeta,
-      };
+      return this.emptyCommentsResponse(page, limit);
+    }
+
+    // Resolve pipeline (for per-row annotations + sentiment/theme filters).
+    const pipeline = await this.findLatestCompletedPipelineByScope(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+      query.courseId,
+    );
+
+    // If filters require a pipeline but none exists, return empty.
+    if (!pipeline && (query.sentiment || query.themeId)) {
+      return this.emptyCommentsResponse(page, limit);
+    }
+
+    let sentimentRunId: string | null = null;
+    let topicModelRunId: string | null = null;
+    if (pipeline) {
+      const runs = await this.resolvePipelineRuns(pipeline.id);
+      sentimentRunId = runs.sentimentRun?.id ?? null;
+      topicModelRunId = runs.topicModelRun?.id ?? null;
+    }
+
+    // Filters whose runs are missing → empty (cannot satisfy filter).
+    if (query.sentiment && !sentimentRunId) {
+      return this.emptyCommentsResponse(page, limit);
+    }
+    if (query.themeId && !topicModelRunId) {
+      return this.emptyCommentsResponse(page, limit);
     }
 
     const baseParams: unknown[] = [
@@ -609,29 +665,89 @@ export class AnalyticsService {
       baseParams.push(query.courseId);
     }
 
+    let sentimentFilterSql = '';
+    if (query.sentiment) {
+      sentimentFilterSql = ` AND EXISTS (
+        SELECT 1 FROM sentiment_result sr
+        WHERE sr.submission_id = qs.id
+          AND sr.run_id = ?
+          AND sr.label = ?
+          AND sr.deleted_at IS NULL
+      )`;
+      baseParams.push(sentimentRunId!, query.sentiment);
+    }
+
+    let themeFilterSql = '';
+    if (query.themeId) {
+      themeFilterSql = ` AND EXISTS (
+        SELECT 1 FROM topic_assignment ta_f
+        JOIN topic t_f ON t_f.id = ta_f.topic_id
+        WHERE ta_f.submission_id = qs.id
+          AND ta_f.topic_id = ?
+          AND ta_f.is_dominant = true
+          AND ta_f.deleted_at IS NULL
+          AND t_f.run_id = ?
+          AND t_f.deleted_at IS NULL
+      )`;
+      baseParams.push(query.themeId, topicModelRunId!);
+    }
+
     const whereClause = `
       WHERE qs.faculty_id = ?
         AND qs.semester_id = ?
         AND qs.questionnaire_version_id = ANY(?)
         AND qs.qualitative_comment IS NOT NULL
         AND TRIM(qs.qualitative_comment) != ''
-        AND qs.deleted_at IS NULL${courseFilter}
+        AND qs.deleted_at IS NULL${courseFilter}${sentimentFilterSql}${themeFilterSql}
     `;
 
     const countSql = `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`;
 
-    const page = query.page!;
-    const limit = query.limit!;
     const offset = (page - 1) * limit;
 
-    const paginatedParams = [...baseParams, limit, offset];
+    // Per-row annotation LEFT JOINs when a pipeline is resolved.
+    let annotationSelect = '';
+    let annotationJoins = '';
+    const annotationParams: unknown[] = [];
+    if (sentimentRunId) {
+      annotationSelect += `, sr_ann.label AS sentiment`;
+      annotationJoins += `
+        LEFT JOIN LATERAL (
+          SELECT sr.label FROM sentiment_result sr
+          WHERE sr.submission_id = qs.id
+            AND sr.run_id = ?
+            AND sr.deleted_at IS NULL
+          ORDER BY sr.processed_at DESC
+          LIMIT 1
+        ) sr_ann ON true`;
+      annotationParams.push(sentimentRunId);
+    }
+    if (topicModelRunId) {
+      annotationSelect += `, ta_ann.theme_ids AS theme_ids`;
+      annotationJoins += `
+        LEFT JOIN LATERAL (
+          SELECT array_agg(DISTINCT ta.topic_id) AS theme_ids
+          FROM topic_assignment ta
+          JOIN topic t ON t.id = ta.topic_id
+          WHERE ta.submission_id = qs.id
+            AND ta.is_dominant = true
+            AND ta.deleted_at IS NULL
+            AND t.run_id = ?
+            AND t.deleted_at IS NULL
+        ) ta_ann ON true`;
+      annotationParams.push(topicModelRunId);
+    }
+
     const paginatedSql = `
-      SELECT qs.qualitative_comment AS text, qs.submitted_at
+      SELECT qs.qualitative_comment AS text, qs.submitted_at${annotationSelect}
       FROM questionnaire_submission qs
+      ${annotationJoins}
       ${whereClause}
       ORDER BY qs.submitted_at DESC
       LIMIT ? OFFSET ?
     `;
+
+    const paginatedParams = [...annotationParams, ...baseParams, limit, offset];
 
     const [countRows, commentRows] = await Promise.all([
       this.em.execute(countSql, baseParams),
@@ -639,10 +755,28 @@ export class AnalyticsService {
     ]);
 
     const totalItems = Number(countRows[0]?.total ?? 0);
-    const items = commentRows.map((r) => ({
-      text: r.text as string,
-      submittedAt: new Date(r.submitted_at as string).toISOString(),
-    }));
+    const items: ReportCommentDto[] = commentRows.map((r) => {
+      const row = r as {
+        text: string;
+        submitted_at: string;
+        sentiment?: string | null;
+        theme_ids?: string[] | null;
+      };
+      const dto: ReportCommentDto = {
+        text: row.text,
+        submittedAt: new Date(row.submitted_at).toISOString(),
+      };
+      if (
+        row.sentiment &&
+        SENTIMENT_LABEL_VALUES.includes(row.sentiment as SentimentLabel)
+      ) {
+        dto.sentiment = row.sentiment as SentimentLabel;
+      }
+      if (row.theme_ids && row.theme_ids.length > 0) {
+        dto.themeIds = row.theme_ids;
+      }
+      return dto;
+    });
 
     const totalPages = Math.ceil(totalItems / limit) || 0;
 
@@ -656,6 +790,220 @@ export class AnalyticsService {
         currentPage: page,
       } as PaginationMeta,
     };
+  }
+
+  async GetQualitativeSummary(
+    facultyId: string,
+    query: QualitativeSummaryQueryDto,
+  ): Promise<QualitativeSummaryResponseDto> {
+    await this.validateFacultyScope(facultyId, query.semesterId);
+
+    const emptyResponse: QualitativeSummaryResponseDto = {
+      sentimentDistribution: { positive: 0, neutral: 0, negative: 0 },
+      themes: [],
+    };
+
+    const pipeline = await this.findLatestCompletedPipelineByScope(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+      query.courseId,
+    );
+
+    if (!pipeline) {
+      return emptyResponse;
+    }
+
+    const { sentimentRun, topicModelRun } = await this.resolvePipelineRuns(
+      pipeline.id,
+    );
+
+    // Global sentiment distribution from all SentimentResults of the run.
+    const sentimentDistribution = { positive: 0, neutral: 0, negative: 0 };
+    const sentimentBySubmission = new Map<
+      string,
+      { label: string; strength: number }
+    >();
+    if (sentimentRun) {
+      const sentimentResults = await this.em.find(
+        SentimentResult,
+        { run: sentimentRun.id },
+        { populate: ['submission'] },
+      );
+      for (const sr of sentimentResults) {
+        if (sr.label === 'positive') sentimentDistribution.positive++;
+        else if (sr.label === 'neutral') sentimentDistribution.neutral++;
+        else if (sr.label === 'negative') sentimentDistribution.negative++;
+        sentimentBySubmission.set(sr.submission.id, {
+          label: sr.label,
+          strength: Math.abs(
+            Number(sr.positiveScore) - Number(sr.negativeScore),
+          ),
+        });
+      }
+    }
+
+    if (!topicModelRun) {
+      return { sentimentDistribution, themes: [] };
+    }
+
+    const topics = await this.em.find(
+      Topic,
+      { run: topicModelRun.id },
+      { orderBy: { docCount: 'DESC' } },
+    );
+
+    if (topics.length === 0) {
+      return { sentimentDistribution, themes: [] };
+    }
+
+    const topicIds = topics.map((t) => t.id);
+    const dominantAssignments = await this.em.find(
+      TopicAssignment,
+      { topic: { $in: topicIds }, isDominant: true },
+      { populate: ['submission'] },
+    );
+
+    // Group dominant assignments by topic id.
+    const assignmentsByTopic = new Map<string, TopicAssignment[]>();
+    for (const ta of dominantAssignments) {
+      const list = assignmentsByTopic.get(ta.topic.id) ?? [];
+      list.push(ta);
+      assignmentsByTopic.set(ta.topic.id, list);
+    }
+
+    // Collect submission ids whose comments we need for sample quotes.
+    const quoteSubmissionIds = new Set<string>();
+    const selectionsByTopic = new Map<
+      string,
+      { submissionId: string; strength: number }[]
+    >();
+    for (const topic of topics) {
+      const assignments = assignmentsByTopic.get(topic.id) ?? [];
+      const ranked = assignments
+        .map((a) => {
+          const senti = sentimentBySubmission.get(a.submission.id);
+          return senti
+            ? { submissionId: a.submission.id, strength: senti.strength }
+            : null;
+        })
+        .filter(
+          (
+            x,
+          ): x is {
+            submissionId: string;
+            strength: number;
+          } => x !== null,
+        )
+        .sort((a, b) => b.strength - a.strength)
+        .slice(0, QUALITATIVE_SUMMARY_LIMITS.MAX_SAMPLE_QUOTES_PER_THEME);
+      selectionsByTopic.set(topic.id, ranked);
+      for (const r of ranked) quoteSubmissionIds.add(r.submissionId);
+    }
+
+    const submissionTextMap = new Map<string, string>();
+    if (quoteSubmissionIds.size > 0) {
+      const subs = await this.em.find(QuestionnaireSubmission, {
+        id: { $in: Array.from(quoteSubmissionIds) },
+      });
+      for (const s of subs) {
+        const text = s.cleanedComment ?? s.qualitativeComment ?? '';
+        if (text) submissionTextMap.set(s.id, text);
+      }
+    }
+
+    const themes: QualitativeThemeDto[] = topics
+      .map((topic) => {
+        const assignments = assignmentsByTopic.get(topic.id) ?? [];
+        const split = { positive: 0, neutral: 0, negative: 0 };
+        for (const ta of assignments) {
+          const senti = sentimentBySubmission.get(ta.submission.id);
+          if (!senti) continue;
+          if (senti.label === 'positive') split.positive++;
+          else if (senti.label === 'neutral') split.neutral++;
+          else if (senti.label === 'negative') split.negative++;
+        }
+
+        const selection = selectionsByTopic.get(topic.id) ?? [];
+        const sampleQuotes = selection
+          .map((s) => submissionTextMap.get(s.submissionId))
+          .filter((t): t is string => !!t)
+          .map((t) => scrubQuote(t));
+
+        return {
+          themeId: topic.id,
+          label: topic.label ?? topic.rawLabel,
+          count: assignments.length,
+          sentimentSplit: split,
+          sampleQuotes: sampleQuotes.length > 0 ? sampleQuotes : undefined,
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      sentimentDistribution,
+      themes,
+    };
+  }
+
+  private emptyCommentsResponse(
+    page: number,
+    limit: number,
+  ): FacultyReportCommentsResponseDto {
+    return {
+      items: [],
+      meta: {
+        totalItems: 0,
+        itemCount: 0,
+        itemsPerPage: limit,
+        totalPages: 0,
+        currentPage: page,
+      } as PaginationMeta,
+    };
+  }
+
+  private async findLatestCompletedPipelineByScope(
+    facultyId: string,
+    semesterId: string,
+    questionnaireTypeCode: string,
+    courseId?: string,
+  ): Promise<AnalysisPipeline | null> {
+    const filter: Record<string, unknown> = {
+      status: PipelineStatus.COMPLETED,
+      faculty: facultyId,
+      semester: semesterId,
+      questionnaireVersion: {
+        questionnaire: { type: { code: questionnaireTypeCode } },
+      },
+    };
+    if (courseId) {
+      filter.course = courseId;
+    } else {
+      filter.course = null;
+    }
+
+    return this.em.findOne(AnalysisPipeline, filter, {
+      orderBy: { createdAt: 'DESC' },
+    });
+  }
+
+  private async resolvePipelineRuns(pipelineId: string): Promise<{
+    sentimentRun: SentimentRun | null;
+    topicModelRun: TopicModelRun | null;
+  }> {
+    const [sentimentRun, topicModelRun] = await Promise.all([
+      this.em.findOne(
+        SentimentRun,
+        { pipeline: pipelineId },
+        { orderBy: { createdAt: 'DESC' } },
+      ),
+      this.em.findOne(
+        TopicModelRun,
+        { pipeline: pipelineId },
+        { orderBy: { createdAt: 'DESC' } },
+      ),
+    ]);
+    return { sentimentRun, topicModelRun };
   }
 
   private async BuildFacultyReportData(

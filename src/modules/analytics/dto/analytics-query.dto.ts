@@ -6,11 +6,15 @@ import {
   IsNotEmpty,
   IsNumber,
   IsInt,
+  IsIn,
   Min,
   Max,
   MaxLength,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+
+export const SENTIMENT_LABELS = ['positive', 'neutral', 'negative'] as const;
+export type SentimentLabel = (typeof SENTIMENT_LABELS)[number];
 
 export class DepartmentOverviewQueryDto {
   @ApiProperty({ description: 'Semester UUID to query analytics for' })
@@ -109,4 +113,21 @@ export class FacultyReportCommentsQueryDto extends BaseFacultyReportQueryDto {
   @IsOptional()
   @Type(() => Number)
   limit?: number = 10;
+
+  @ApiPropertyOptional({
+    description: 'Filter comments by sentiment label',
+    enum: SENTIMENT_LABELS,
+  })
+  @IsIn(SENTIMENT_LABELS as readonly string[])
+  @IsOptional()
+  sentiment?: SentimentLabel;
+
+  @ApiPropertyOptional({
+    description: 'Filter comments by dominant topic assignment (theme UUID)',
+  })
+  @IsUUID()
+  @IsOptional()
+  themeId?: string;
 }
+
+export class QualitativeSummaryQueryDto extends BaseFacultyReportQueryDto {}

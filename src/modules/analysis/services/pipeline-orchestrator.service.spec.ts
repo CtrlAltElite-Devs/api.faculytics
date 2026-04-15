@@ -47,6 +47,7 @@ describe('PipelineOrchestratorService', () => {
   };
 
   beforeEach(async () => {
+    const mockExecute = jest.fn().mockResolvedValue([]);
     mockFork = {
       findOne: jest.fn(),
       findOneOrFail: jest.fn(),
@@ -68,6 +69,8 @@ describe('PipelineOrchestratorService', () => {
       populate: jest.fn().mockResolvedValue(undefined),
       flush: jest.fn(),
       nativeUpdate: jest.fn(),
+      getConnection: jest.fn().mockReturnValue({ execute: mockExecute }),
+      execute: mockExecute,
     };
 
     const mockEm = {
@@ -1086,6 +1089,149 @@ describe('PipelineOrchestratorService', () => {
         await expect(service.ListPipelines({ semesterId })).rejects.toThrow(
           ForbiddenException,
         );
+      });
+
+      it('aggregate query (no facultyId): binds every unspecified scope key to null', async () => {
+        setCurrentUser('admin-1', [UserRole.SUPER_ADMIN]);
+        mockFork.find.mockResolvedValueOnce([]);
+
+        await service.ListPipelines({ semesterId });
+
+        const filter = mockFork.find.mock.calls[0][1] as Record<
+          string,
+          unknown
+        >;
+        expect(filter).toEqual({
+          semester: semesterId,
+          faculty: null,
+          course: null,
+          questionnaireVersion: null,
+          department: null,
+          program: null,
+          campus: null,
+        });
+      });
+
+      it('facultyId query: binds faculty/course/qV but leaves dept/program/campus unbound', async () => {
+        setCurrentUser('admin-1', [UserRole.SUPER_ADMIN]);
+        mockFork.find.mockResolvedValueOnce([]);
+
+        await service.ListPipelines({
+          semesterId,
+          facultyId: facultyOneId,
+        });
+
+        const filter = mockFork.find.mock.calls[0][1] as Record<
+          string,
+          unknown
+        >;
+        expect(filter.faculty).toBe(facultyOneId);
+        expect(filter.course).toBeNull();
+        expect(filter.questionnaireVersion).toBeNull();
+        // dept/program/campus unbound — a faculty pipeline stays
+        // discoverable regardless of which scoped role triggered it.
+        expect(filter).not.toHaveProperty('department');
+        expect(filter).not.toHaveProperty('program');
+        expect(filter).not.toHaveProperty('campus');
+      });
+
+      it('resolves questionnaireTypeCode to deep filter when no versionId', async () => {
+        setCurrentUser('admin-1', [UserRole.SUPER_ADMIN]);
+        mockFork.find.mockResolvedValueOnce([]);
+
+        await service.ListPipelines({
+          semesterId,
+          facultyId: facultyOneId,
+          questionnaireTypeCode: 'STUDENT_EVAL',
+        });
+
+        const filter = mockFork.find.mock.calls[0][1] as Record<
+          string,
+          unknown
+        >;
+        expect(filter.questionnaireVersion).toEqual({
+          questionnaire: { type: { code: 'STUDENT_EVAL' } },
+        });
+      });
+
+      it('questionnaireVersionId wins over questionnaireTypeCode if both passed', async () => {
+        setCurrentUser('admin-1', [UserRole.SUPER_ADMIN]);
+        mockFork.find.mockResolvedValueOnce([]);
+
+        const versionId = '550e8400-e29b-41d4-a716-446655440030';
+        await service.ListPipelines({
+          semesterId,
+          questionnaireVersionId: versionId,
+          questionnaireTypeCode: 'STUDENT_EVAL',
+        });
+
+        const filter = mockFork.find.mock.calls[0][1] as Record<
+          string,
+          unknown
+        >;
+        expect(filter.questionnaireVersion).toBe(versionId);
+      });
+
+      it('DEAN on faculty page: drops dept/program/campus filters (facultyId is more-specific scope)', async () => {
+        setCurrentUser('dean-1', [UserRole.DEAN]);
+        mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([deptA]);
+        // assertFacultyInScope looks up faculty's dept via raw SQL execute
+        mockFork.execute.mockResolvedValueOnce([{ department_id: deptA }]);
+        mockFork.find.mockResolvedValueOnce([]);
+
+        await service.ListPipelines({
+          semesterId,
+          facultyId: facultyOneId,
+          questionnaireTypeCode: 'STUDENT_EVAL',
+        });
+
+        const filter = mockFork.find.mock.calls[0][1] as Record<
+          string,
+          unknown
+        >;
+        expect(filter.faculty).toBe(facultyOneId);
+        // dept/program/campus unbound so the same faculty pipeline is
+        // discoverable across DEAN/CHAIRPERSON/CAMPUS_HEAD as long as each
+        // has faculty access.
+        expect(filter).not.toHaveProperty('department');
+        expect(filter).not.toHaveProperty('program');
+        expect(filter).not.toHaveProperty('campus');
+      });
+
+      it('DEAN on faculty page: 403 when faculty belongs to foreign dept', async () => {
+        setCurrentUser('dean-1', [UserRole.DEAN]);
+        mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([deptA]);
+        mockFork.execute.mockResolvedValueOnce([{ department_id: deptB }]);
+
+        await expect(
+          service.ListPipelines({
+            semesterId,
+            facultyId: facultyOneId,
+            questionnaireTypeCode: 'STUDENT_EVAL',
+          }),
+        ).rejects.toThrow(ForbiddenException);
+      });
+
+      it('CAMPUS_HEAD on faculty page: finds a DEAN-triggered pipeline (dept/campus unbound)', async () => {
+        setCurrentUser('ch-1', [UserRole.CAMPUS_HEAD]);
+        mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([deptA]);
+        mockFork.execute.mockResolvedValueOnce([{ department_id: deptA }]);
+        mockFork.find.mockResolvedValueOnce([]);
+
+        await service.ListPipelines({
+          semesterId,
+          facultyId: facultyOneId,
+          questionnaireTypeCode: 'STUDENT_EVAL',
+        });
+
+        const filter = mockFork.find.mock.calls[0][1] as Record<
+          string,
+          unknown
+        >;
+        expect(filter.faculty).toBe(facultyOneId);
+        expect(filter).not.toHaveProperty('campus');
+        expect(filter).not.toHaveProperty('department');
+        expect(filter).not.toHaveProperty('program');
       });
     });
 

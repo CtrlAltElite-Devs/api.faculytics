@@ -4979,6 +4979,22 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "text"
+        },
+        "facet": {
+          "name": "facet",
+          "type": "varchar(32)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 32,
+          "precision": null,
+          "scale": null,
+          "default": "'overall'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
         }
       },
       "name": "recommended_action",

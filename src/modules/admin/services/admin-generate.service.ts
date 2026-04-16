@@ -151,6 +151,12 @@ export class AdminGenerateService {
       );
     }
 
+    const availableCount = availableStudents.length;
+    const selectedStudents =
+      dto.count != null && dto.count < availableCount
+        ? this.SampleStudents(availableStudents, dto.count)
+        : availableStudents;
+
     // 9. Extract questions
     const questions = GetAllQuestionsWithSections(version.schemaSnapshot);
 
@@ -158,7 +164,7 @@ export class AdminGenerateService {
     const maxScore = version.schemaSnapshot.meta.maxScore;
 
     // 11. Generate answers
-    const answersPerStudent = availableStudents.map(() => {
+    const answersPerStudent = selectedStudents.map(() => {
       const tendency =
         1 + Math.random() * (maxScore - 1) * 0.6 + (maxScore - 1) * 0.3;
       const answers: Record<string, number> = {};
@@ -170,19 +176,20 @@ export class AdminGenerateService {
     });
 
     // 12. Generate comments (conditional)
-    let comments: (string | undefined)[] = availableStudents.map(
+    let comments: (string | undefined)[] = selectedStudents.map(
       () => undefined,
     );
     const qf = version.schemaSnapshot.qualitativeFeedback;
     if (qf?.enabled) {
       const generated = await this.commentGenerator.GenerateComments(
-        availableStudents.length,
+        selectedStudents.length,
         {
           courseName: course.fullname,
           facultyName:
             faculty.fullName ?? `${faculty.firstName} ${faculty.lastName}`,
           maxScore,
           maxLength: qf.maxLength,
+          promptTheme: dto.promptTheme,
         },
       );
       comments = generated;
@@ -190,7 +197,7 @@ export class AdminGenerateService {
 
     // 13. Build rows
     const now = Date.now();
-    const rows = availableStudents.map((enrollment, index) => ({
+    const rows = selectedStudents.map((enrollment, index) => ({
       externalId: `gen_${enrollment.user.userName}_${now}_${index}`,
       username: enrollment.user.userName,
       facultyUsername: dto.facultyUsername,
@@ -217,8 +224,8 @@ export class AdminGenerateService {
         maxScore,
         totalEnrolled: studentEnrollments.length,
         alreadySubmitted: submittedUserIds.size,
-        availableStudents: availableStudents.length,
-        generatingCount: availableStudents.length,
+        availableStudents: availableCount,
+        generatingCount: selectedStudents.length,
       },
       questions: questions.map((q) => ({
         id: q.id,
@@ -227,6 +234,16 @@ export class AdminGenerateService {
       })),
       rows,
     };
+  }
+
+  private SampleStudents<T>(pool: T[], count: number): T[] {
+    if (count >= pool.length) return pool;
+    const copy = [...pool];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy.slice(0, count);
   }
 
   async CommitSubmissions(

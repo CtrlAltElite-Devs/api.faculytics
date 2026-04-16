@@ -13,6 +13,7 @@ export const AuditAction = {
   ANALYSIS_PIPELINE_CREATE: 'analysis.pipeline.create',
   ANALYSIS_PIPELINE_CONFIRM: 'analysis.pipeline.confirm',
   ANALYSIS_PIPELINE_CANCEL: 'analysis.pipeline.cancel',
+  ANALYSIS_PIPELINE_FAIL: 'analysis.pipeline.fail',
   MOODLE_PROVISION_CATEGORIES: 'moodle.provision.categories',
   MOODLE_PROVISION_COURSES: 'moodle.provision.courses',
   MOODLE_PROVISION_QUICK_COURSE: 'moodle.provision.quick-course',

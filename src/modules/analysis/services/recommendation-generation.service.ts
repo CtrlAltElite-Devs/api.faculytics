@@ -21,12 +21,46 @@ import {
   type DimensionScoresSource,
   type RecommendedActionItem,
 } from '../dto/recommendations.dto';
+import {
+  PRIMARY_QUESTIONNAIRE_CODE_TO_FACET,
+  type Facet,
+} from '../dto/facet.dto';
+
+/**
+ * Facet-derivation dominance threshold (AC10c).
+ * An action is tagged with a primary facet only when ≥60% of its contributing
+ * submissions share that questionnaire-type code. Below threshold → `overall`.
+ * Rationale: strict majority (>50%) is too fragile for BERTopic mixed clusters;
+ * 60% balances honest attribution with usable facet signal.
+ * Tuning requires a code change, not a config flag.
+ */
+const FACET_DOMINANCE_THRESHOLD = 0.6;
 
 interface TopicData {
   topic: Topic;
   scopedCommentCount: number;
   sentimentBreakdown: { positive: number; neutral: number; negative: number };
   sampleQuotes: string[];
+  facet: Facet;
+}
+
+export function deriveFacetFromTypeCodeCounts(
+  counts: Map<string, number>,
+): Facet {
+  let total = 0;
+  let topCode: string | null = null;
+  let topCount = 0;
+  for (const [code, count] of counts) {
+    total += count;
+    if (count > topCount) {
+      topCount = count;
+      topCode = code;
+    }
+  }
+  if (total === 0 || topCode === null) return 'overall';
+  const ratio = topCount / total;
+  if (ratio < FACET_DOMINANCE_THRESHOLD) return 'overall';
+  return PRIMARY_QUESTIONNAIRE_CODE_TO_FACET[topCode] ?? 'overall';
 }
 
 @Injectable()
@@ -109,6 +143,27 @@ export class RecommendationGenerationService {
       sentimentBySubmission.set(sr.submission.id, sr);
     }
 
+    // Facet derivation (AC10, AC10b, AC10c): build a submissionId →
+    // questionnaire-type code map via a single SQL join. Used later to
+    // count primary-code dominance per topic.
+    const submissionTypeCodeMap = new Map<string, string>();
+    if (submissionIds.length > 0) {
+      const rows: { id: string; code: string }[] = await fork
+        .getConnection()
+        .execute(
+          `SELECT qs.id, qt.code
+             FROM questionnaire_submission qs
+             JOIN questionnaire_version qv ON qv.id = qs.questionnaire_version_id
+             JOIN questionnaire q ON q.id = qv.questionnaire_id
+             JOIN questionnaire_type qt ON qt.id = q.type_id
+            WHERE qs.id IN (${submissionIds.map(() => '?').join(',')})`,
+          submissionIds,
+        );
+      for (const row of rows) {
+        submissionTypeCodeMap.set(row.id, row.code);
+      }
+    }
+
     const topicDataMap = new Map<string, TopicData>();
     for (const topic of topics) {
       const assignments = allAssignments.filter((a) => a.topic.id === topic.id);
@@ -158,12 +213,23 @@ export class RecommendationGenerationService {
         .filter((c): c is string => !!c)
         .slice(0, RECOMMENDATION_THRESHOLDS.MAX_SAMPLE_QUOTES);
 
+      // Per-topic facet derivation: count contributing submissions by
+      // questionnaire-type code, apply the 60% dominance rule.
+      const typeCodeCounts = new Map<string, number>();
+      for (const subId of assignedSubmissionIds) {
+        const code = submissionTypeCodeMap.get(subId);
+        if (!code) continue;
+        typeCodeCounts.set(code, (typeCodeCounts.get(code) ?? 0) + 1);
+      }
+      const topicFacet = deriveFacetFromTypeCodeCounts(typeCodeCounts);
+
       const label = topic.label ?? topic.rawLabel;
       topicDataMap.set(label, {
         topic,
         scopedCommentCount: assignments.length,
         sentimentBreakdown: breakdown,
         sampleQuotes,
+        facet: topicFacet,
       });
     }
 
@@ -261,7 +327,7 @@ ${commentsDesc || 'No sample comments available.'}
   - description: 1-2 sentences explaining the pattern observed
   - actionPlan: 2-4 sentences with concrete steps
   - priority: HIGH, MEDIUM, or LOW
-  - topicReference: The exact topic label this relates to (optional, use exact string from topic list above)
+  - topicReference: REQUIRED. Set to the exact topic label string from the list above when this recommendation is anchored to a specific theme. Set to null only when the recommendation is purely score-driven (dimension scores only) and not tied to any single theme.
 - Frame everything around student feedback: "Students report..." or "Feedback indicates..."`;
 
     // g) Call OpenAI — F3 fix: wrap in try/catch, log, re-throw for BullMQ retry
@@ -328,12 +394,22 @@ ${commentsDesc || 'No sample comments available.'}
           submissionIds.length,
         );
 
+        // Inherit facet from the topic the action references. Actions
+        // without a topic reference fall back to `overall` — they are
+        // dimension-driven (score aggregates), which are inherently cross-
+        // facet and don't attribute to a single questionnaire type.
+        const facet: Facet =
+          rec.topicReference && topicDataMap.has(rec.topicReference)
+            ? topicDataMap.get(rec.topicReference)!.facet
+            : 'overall';
+
         return {
           category: rec.category,
           headline: rec.headline,
           description: rec.description,
           actionPlan: rec.actionPlan,
           priority: rec.priority,
+          facet,
           supportingEvidence: evidence,
         };
       },

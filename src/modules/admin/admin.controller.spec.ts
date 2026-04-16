@@ -6,6 +6,7 @@ import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-
 import { MetaDataInterceptor } from 'src/modules/common/interceptors/metadata.interceptor';
 import { AdminController } from './admin.controller';
 import { AdminService } from './services/admin.service';
+import { AdminNonSubmittersService } from './services/admin-non-submitters.service';
 import { AdminUserService } from './services/admin-user.service';
 import { ListUsersQueryDto } from './dto/requests/list-users-query.dto';
 import { UpdateScopeAssignmentDto } from './dto/requests/update-scope-assignment.request.dto';
@@ -20,6 +21,7 @@ describe('AdminController', () => {
     GetCampusHeadEligibleCategories: jest.Mock;
   };
   let adminUserService: { CreateLocalUser: jest.Mock };
+  let adminNonSubmittersService: { ListNonSubmitters: jest.Mock };
 
   async function buildModule(
     overrides: {
@@ -37,6 +39,10 @@ describe('AdminController', () => {
         {
           provide: AdminUserService,
           useValue: adminUserService,
+        },
+        {
+          provide: AdminNonSubmittersService,
+          useValue: adminNonSubmittersService,
         },
       ],
     })
@@ -93,6 +99,22 @@ describe('AdminController', () => {
         campus: null,
         defaultPasswordAssigned: false,
         createdAt: '2026-01-01T00:00:00.000Z',
+      }),
+    };
+    adminNonSubmittersService = {
+      ListNonSubmitters: jest.fn().mockResolvedValue({
+        data: [],
+        meta: {
+          totalItems: 0,
+          itemCount: 0,
+          itemsPerPage: 20,
+          totalPages: 0,
+          currentPage: 1,
+        },
+        scope: {
+          semesterId: '',
+          semesterCode: '',
+        },
       }),
     };
 

@@ -29,4 +29,18 @@ export class CurrentUserService {
   setJwtPayload(payload: { userId: string; moodleUserId: number }): void {
     this.cls.set('jwtPayload', payload);
   }
+
+  /**
+   * Executes `fn` with `user` bound as the current CLS user. Used by
+   * scheduler / system flows that have no HTTP context but need to call
+   * code that reads `currentUserService.get()`. The user object is
+   * structurally typed — partial users with only `{id, roles}` are valid
+   * for authorization-only paths.
+   */
+  runAs<T>(user: Pick<User, 'id' | 'roles'>, fn: () => Promise<T>): Promise<T> {
+    return this.cls.run(async () => {
+      this.set(user as User);
+      return fn();
+    });
+  }
 }

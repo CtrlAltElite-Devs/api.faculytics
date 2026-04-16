@@ -131,3 +131,9 @@ export class FacultyReportCommentsQueryDto extends BaseFacultyReportQueryDto {
 }
 
 export class QualitativeSummaryQueryDto extends BaseFacultyReportQueryDto {}
+
+export class FacultyQuestionnaireTypesQueryDto {
+  @ApiProperty({ description: 'Semester UUID' })
+  @IsUUID()
+  semesterId!: string;
+}

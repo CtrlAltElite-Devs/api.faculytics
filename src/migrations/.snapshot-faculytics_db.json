@@ -383,6 +383,22 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "datetime"
+        },
+        "trigger": {
+          "name": "trigger",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "'USER'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "text"
         }
       },
       "name": "analysis_pipeline",
@@ -4979,6 +4995,22 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "text"
+        },
+        "facet": {
+          "name": "facet",
+          "type": "varchar(32)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 32,
+          "precision": null,
+          "scale": null,
+          "default": "'overall'",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
         }
       },
       "name": "recommended_action",

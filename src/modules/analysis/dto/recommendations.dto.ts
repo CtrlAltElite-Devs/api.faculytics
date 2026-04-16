@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { QueueName } from 'src/configurations/common/queue-names';
+import { facetSchema } from './facet.dto';
 
 // --- Evidence Schemas ---
 
@@ -54,7 +55,7 @@ export const llmRecommendationItemSchema = z.object({
   description: z.string(),
   actionPlan: z.string(),
   priority: z.enum(['HIGH', 'MEDIUM', 'LOW']),
-  topicReference: z.string().nullable().optional(),
+  topicReference: z.string().nullable(),
 });
 
 export type LlmRecommendationItem = z.infer<typeof llmRecommendationItemSchema>;
@@ -92,6 +93,7 @@ export const recommendedActionItemSchema = z.object({
   description: z.string(),
   actionPlan: z.string(),
   priority: z.enum(['HIGH', 'MEDIUM', 'LOW']),
+  facet: facetSchema,
   supportingEvidence: supportingEvidenceSchema,
 });
 

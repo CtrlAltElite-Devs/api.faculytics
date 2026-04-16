@@ -327,7 +327,7 @@ ${commentsDesc || 'No sample comments available.'}
   - description: 1-2 sentences explaining the pattern observed
   - actionPlan: 2-4 sentences with concrete steps
   - priority: HIGH, MEDIUM, or LOW
-  - topicReference: The exact topic label this relates to (optional, use exact string from topic list above)
+  - topicReference: REQUIRED. Set to the exact topic label string from the list above when this recommendation is anchored to a specific theme. Set to null only when the recommendation is purely score-driven (dimension scores only) and not tied to any single theme.
 - Frame everything around student feedback: "Students report..." or "Feedback indicates..."`;
 
     // g) Call OpenAI — F3 fix: wrap in try/catch, log, re-throw for BullMQ retry

@@ -55,7 +55,7 @@ export const llmRecommendationItemSchema = z.object({
   description: z.string(),
   actionPlan: z.string(),
   priority: z.enum(['HIGH', 'MEDIUM', 'LOW']),
-  topicReference: z.string().nullable().optional(),
+  topicReference: z.string().nullable(),
 });
 
 export type LlmRecommendationItem = z.infer<typeof llmRecommendationItemSchema>;

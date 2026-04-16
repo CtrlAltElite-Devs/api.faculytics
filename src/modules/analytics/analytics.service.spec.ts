@@ -1662,7 +1662,7 @@ describe('AnalyticsService', () => {
   });
 
   describe('findLatestCompletedPipelineByScope', () => {
-    it('is invoked via GetQualitativeSummary with correct filter', async () => {
+    it('is invoked via GetQualitativeSummary with $or for aggregate and legacy pipelines', async () => {
       const facultyId = '550e8400-e29b-41d4-a716-446655440001';
       const semesterId = '550e8400-e29b-41d4-a716-446655440000';
       const courseId = '550e8400-e29b-41d4-a716-446655440022';
@@ -1684,8 +1684,11 @@ describe('AnalyticsService', () => {
       expect(filter.faculty).toBe(facultyId);
       expect(filter.semester).toBe(semesterId);
       expect(filter.course).toBe(courseId);
-      const qv = filter.questionnaireVersion as Record<string, unknown>;
-      expect(qv).toBeDefined();
+      // Post-FAC-135 Phase A: matches aggregate (null) OR legacy per-type.
+      const orClause = filter.$or as Record<string, unknown>[];
+      expect(orClause).toHaveLength(2);
+      expect(orClause[0]).toEqual({ questionnaireVersion: null });
+      expect(orClause[1]).toHaveProperty('questionnaireVersion');
       const opts = call[2];
       expect(opts.orderBy).toEqual({ createdAt: 'DESC' });
     });

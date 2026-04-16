@@ -979,9 +979,18 @@ export class AnalyticsService {
       status: PipelineStatus.COMPLETED,
       faculty: facultyId,
       semester: semesterId,
-      questionnaireVersion: {
-        questionnaire: { type: { code: questionnaireTypeCode } },
-      },
+      // Post-FAC-135 Phase A: aggregate-scope pipelines have
+      // questionnaireVersion = null and cover ALL questionnaire types.
+      // Legacy per-type pipelines have a specific questionnaireVersion.
+      // Match either; orderBy createdAt DESC naturally prefers the newest.
+      $or: [
+        { questionnaireVersion: null },
+        {
+          questionnaireVersion: {
+            questionnaire: { type: { code: questionnaireTypeCode } },
+          },
+        },
+      ],
     };
     if (courseId) {
       filter.course = courseId;

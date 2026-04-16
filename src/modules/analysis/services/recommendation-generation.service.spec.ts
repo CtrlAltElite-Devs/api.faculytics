@@ -6,7 +6,10 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { RecommendationGenerationService } from './recommendation-generation.service';
 import { TopicAssignment } from 'src/entities/topic-assignment.entity';
 import { RECOMMENDATION_THRESHOLDS } from '../constants';
-import type { TopicSource } from '../dto/recommendations.dto';
+import {
+  llmRecommendationItemSchema,
+  type TopicSource,
+} from '../dto/recommendations.dto';
 
 // Mock OpenAI
 const mockParse = jest.fn();
@@ -433,6 +436,7 @@ describe('RecommendationGenerationService', () => {
         description: 'Based on overall feedback.',
         actionPlan: 'Review student feedback patterns.',
         priority: 'MEDIUM' as const,
+        topicReference: null,
       },
     ];
     mockParse.mockResolvedValue(makeLlmResponse(llmRecs));
@@ -645,6 +649,7 @@ describe('RecommendationGenerationService', () => {
         description: 'D',
         actionPlan: 'P',
         priority: 'HIGH' as const,
+        topicReference: null,
       },
       {
         category: 'IMPROVEMENT' as const,
@@ -652,6 +657,7 @@ describe('RecommendationGenerationService', () => {
         description: 'D',
         actionPlan: 'P',
         priority: 'LOW' as const,
+        topicReference: null,
       },
     ];
     mockParse.mockResolvedValue(makeLlmResponse(llmRecs));
@@ -664,5 +670,79 @@ describe('RecommendationGenerationService', () => {
       );
       expect(dimSources.length).toBe(1);
     }
+  });
+
+  it('should preserve canonical topicLabel when LLM emits an exact-match topicReference', async () => {
+    const topics = makeTopics();
+    mockFork.findOneOrFail.mockResolvedValue(makePipeline());
+    mockFork.findOne
+      .mockResolvedValueOnce({ id: 'sr1' })
+      .mockResolvedValueOnce({ id: 'tmr1' });
+    mockFork.find
+      .mockResolvedValueOnce([{ id: 'sub1' }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(topics)
+      .mockResolvedValueOnce([
+        { topic: { id: 't1' }, submission: { id: 'sub1' }, isDominant: true },
+      ])
+      .mockResolvedValueOnce([]);
+    mockParse.mockResolvedValue(
+      makeLlmResponse([
+        {
+          category: 'STRENGTH' as const,
+          headline: 'Test',
+          description: 'Test',
+          actionPlan: 'Test',
+          priority: 'HIGH' as const,
+          topicReference: 'Teaching Quality',
+        },
+      ]),
+    );
+
+    const result = await service.Generate('pipeline-1');
+
+    const topicSource = result[0].supportingEvidence.sources.find(
+      (s) => s.type === 'topic',
+    );
+    expect(topicSource).toBeDefined();
+    expect((topicSource as TopicSource).topicLabel).toBe('Teaching Quality');
+  });
+});
+
+describe('llmRecommendationItemSchema (Step B schema tighten)', () => {
+  it('should fail to parse when topicReference is omitted entirely', () => {
+    const result = llmRecommendationItemSchema.safeParse({
+      category: 'STRENGTH',
+      headline: 'h',
+      description: 'd',
+      actionPlan: 'p',
+      priority: 'HIGH',
+      // topicReference omitted intentionally
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should parse successfully when topicReference is null', () => {
+    const result = llmRecommendationItemSchema.safeParse({
+      category: 'STRENGTH',
+      headline: 'h',
+      description: 'd',
+      actionPlan: 'p',
+      priority: 'HIGH',
+      topicReference: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should parse successfully when topicReference is a string', () => {
+    const result = llmRecommendationItemSchema.safeParse({
+      category: 'STRENGTH',
+      headline: 'h',
+      description: 'd',
+      actionPlan: 'p',
+      priority: 'HIGH',
+      topicReference: 'Teaching Quality',
+    });
+    expect(result.success).toBe(true);
   });
 });

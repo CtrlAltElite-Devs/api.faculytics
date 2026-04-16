@@ -31,11 +31,17 @@ export class CommentGeneratorService {
       facultyName: string;
       maxScore: number;
       maxLength?: number;
+      promptTheme?: string;
     },
   ): Promise<string[]> {
     try {
       const maxLengthInstruction = context.maxLength
         ? `Each comment must be under ${context.maxLength} characters.`
+        : '';
+
+      const theme = context.promptTheme?.trim();
+      const themeInstruction = theme
+        ? `Thematic guidance (shape tone and topic accordingly, but preserve realism and the language distribution): "${theme}".`
         : '';
 
       const response = await this.openai.chat.completions.create(
@@ -56,7 +62,7 @@ export class CommentGeneratorService {
               content:
                 `Generate exactly ${count} student feedback comments for the course "${context.courseName}" ` +
                 `taught by "${context.facultyName}". The course uses a ${context.maxScore}-point scale. ` +
-                `${maxLengthInstruction} ` +
+                `${maxLengthInstruction} ${themeInstruction} ` +
                 `Return JSON: { "comments": ["comment1", "comment2", ...] }`,
             },
           ],

@@ -21,6 +21,7 @@ import { AdminGenerateController } from './admin-generate.controller';
 import { AdminService } from './services/admin.service';
 import { AdminFiltersService } from './services/admin-filters.service';
 import { AdminGenerateService } from './services/admin-generate.service';
+import { AdminNonSubmittersService } from './services/admin-non-submitters.service';
 import { AdminUserService } from './services/admin-user.service';
 import { CommentGeneratorService } from './services/comment-generator.service';
 
@@ -53,6 +54,7 @@ import { CommentGeneratorService } from './services/comment-generator.service';
     AdminService,
     AdminFiltersService,
     AdminGenerateService,
+    AdminNonSubmittersService,
     AdminUserService,
     CommentGeneratorService,
   ],

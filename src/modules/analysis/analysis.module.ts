@@ -25,6 +25,7 @@ import { RecommendationsProcessor } from './processors/recommendations.processor
 import { PipelineOrchestratorService } from './services/pipeline-orchestrator.service';
 import { TopicLabelService } from './services/topic-label.service';
 import { RecommendationGenerationService } from './services/recommendation-generation.service';
+import { AnalysisAccessService } from './services/analysis-access.service';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { RecommendationGenerationService } from './services/recommendation-gener
     PipelineOrchestratorService,
     TopicLabelService,
     RecommendationGenerationService,
+    AnalysisAccessService,
   ],
   exports: [AnalysisService, PipelineOrchestratorService],
 })

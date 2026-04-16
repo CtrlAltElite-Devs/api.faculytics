@@ -49,6 +49,7 @@ export class RecommendationsProcessor extends WorkerHost {
         description: rec.description,
         actionPlan: rec.actionPlan,
         priority: rec.priority as ActionPriority,
+        facet: rec.facet,
         supportingEvidence: rec.supportingEvidence,
       });
     }

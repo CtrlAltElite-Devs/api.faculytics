@@ -17,9 +17,22 @@ const sentimentGateSchema = stageStatusSchema.extend({
   excluded: z.number().int().nullable(),
 });
 
+const coverageSliceSchema = z.object({
+  submissionCount: z.number().int(),
+  commentCount: z.number().int(),
+});
+
+const voiceBreakdownSchema = z.object({
+  facultyFeedback: coverageSliceSchema,
+  inClassroom: coverageSliceSchema,
+  outOfClassroom: coverageSliceSchema,
+  other: coverageSliceSchema,
+});
+
 export const pipelineStatusSchema = z.object({
   id: z.string().uuid(),
   status: z.string(),
+  scopeLabel: z.string(),
   // TD-9 (FAC-132): paired IDs + display values. Frontend uses IDs for
   // cache keys / invalidation and display values for UI rendering.
   scope: z.object({
@@ -43,6 +56,7 @@ export const pipelineStatusSchema = z.object({
     commentCount: z.number().int(),
     responseRate: z.number(),
     lastEnrollmentSyncAt: z.string().datetime().nullable(),
+    voiceBreakdown: voiceBreakdownSchema.nullable().optional(),
   }),
   stages: z.object({
     embeddings: stageStatusSchema,
@@ -58,6 +72,11 @@ export const pipelineStatusSchema = z.object({
   updatedAt: z.string().datetime(),
   confirmedAt: z.string().datetime().nullable(),
   completedAt: z.string().datetime().nullable(),
+  // FAC-135 Phase B: ISO timestamp of the next scheduled refresh from the
+  // tiered scheduler for the pipeline's scope tier. Optional / nullable so
+  // the frontend falls back to generic copy if the registry lookup fails
+  // (R3 mitigation — see AC38).
+  nextScheduledRunAt: z.string().datetime().nullable().optional(),
 });
 
 export type PipelineStatusResponse = z.infer<typeof pipelineStatusSchema>;

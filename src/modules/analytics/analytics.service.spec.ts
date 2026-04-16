@@ -3,6 +3,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { AnalyticsService } from './analytics.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { QuestionnaireSchemaSnapshot } from 'src/modules/questionnaires/lib/questionnaire.types';
 
 describe('AnalyticsService', () => {
@@ -32,11 +33,22 @@ describe('AnalyticsService', () => {
       ResolveProgramCodes: jest.fn().mockResolvedValue(null),
     };
 
+    // FACULTY-self short-circuit checks `currentUserService.get()`. Default
+    // returns null so existing tests fall through to the department-scope
+    // path; FACULTY-self tests can override per-test.
+    const mockCurrentUserService = {
+      get: jest.fn().mockReturnValue(null),
+      getOrFail: jest.fn(),
+      getUserId: jest.fn(),
+      set: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
         { provide: EntityManager, useValue: mockEm },
         { provide: ScopeResolverService, useValue: mockScopeResolver },
+        { provide: CurrentUserService, useValue: mockCurrentUserService },
       ],
     }).compile();
 
@@ -1650,7 +1662,7 @@ describe('AnalyticsService', () => {
   });
 
   describe('findLatestCompletedPipelineByScope', () => {
-    it('is invoked via GetQualitativeSummary with correct filter', async () => {
+    it('is invoked via GetQualitativeSummary with $or for aggregate and legacy pipelines', async () => {
       const facultyId = '550e8400-e29b-41d4-a716-446655440001';
       const semesterId = '550e8400-e29b-41d4-a716-446655440000';
       const courseId = '550e8400-e29b-41d4-a716-446655440022';
@@ -1672,8 +1684,11 @@ describe('AnalyticsService', () => {
       expect(filter.faculty).toBe(facultyId);
       expect(filter.semester).toBe(semesterId);
       expect(filter.course).toBe(courseId);
-      const qv = filter.questionnaireVersion as Record<string, unknown>;
-      expect(qv).toBeDefined();
+      // Post-FAC-135 Phase A: matches aggregate (null) OR legacy per-type.
+      const orClause = filter.$or as Record<string, unknown>[];
+      expect(orClause).toHaveLength(2);
+      expect(orClause[0]).toEqual({ questionnaireVersion: null });
+      expect(orClause[1]).toHaveProperty('questionnaireVersion');
       const opts = call[2];
       expect(opts.orderBy).toEqual({ createdAt: 'DESC' });
     });

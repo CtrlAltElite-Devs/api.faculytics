@@ -3,8 +3,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RecommendationRun } from 'src/entities/recommendation-run.entity';
 import { ActionCategory, ActionPriority, RunStatus } from '../../enums';
 import type { SupportingEvidence } from '../recommendations.dto';
+import { FACET_VALUES, type Facet } from '../facet.dto';
 
-class RecommendedActionResponseDto {
+export class RecommendedActionResponseDto {
   @ApiProperty()
   id: string;
 
@@ -22,6 +23,12 @@ class RecommendedActionResponseDto {
 
   @ApiProperty({ enum: ActionPriority })
   priority: ActionPriority;
+
+  @ApiProperty({
+    enum: FACET_VALUES,
+    description: 'Derived facet grouping for this action',
+  })
+  facet: Facet;
 
   @ApiProperty()
   supportingEvidence: SupportingEvidence;
@@ -71,6 +78,7 @@ export class RecommendationsResponseDto {
         description: action.description,
         actionPlan: action.actionPlan,
         priority: action.priority,
+        facet: action.facet ?? 'overall',
         supportingEvidence: action.supportingEvidence as SupportingEvidence,
         createdAt: action.createdAt.toISOString(),
       })),

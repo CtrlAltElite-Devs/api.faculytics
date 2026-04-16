@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from 'src/security/guards/roles.guard';
 import { CurrentUserInterceptor } from '../common/interceptors/current-user.interceptor';
+import { CurrentUserService } from '../common/cls/current-user.service';
 import { AnalyticsController } from './analytics.controller';
 import { AnalyticsService } from './analytics.service';
 
@@ -24,10 +25,22 @@ describe('AnalyticsController', () => {
       GetFacultyReportComments: jest.fn(),
     };
 
+    const mockCurrentUserService = {
+      // Default: a SUPER_ADMIN-equivalent stub so assertFacultySelfScope
+      // never throws in delegation tests. Faculty-specific authz tests can
+      // override per-suite.
+      getOrFail: jest.fn().mockReturnValue({
+        id: 'super-admin-id',
+        roles: ['SUPER_ADMIN'],
+      }),
+      get: jest.fn().mockReturnValue(null),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AnalyticsController],
       providers: [
         { provide: AnalyticsService, useValue: mockAnalyticsService },
+        { provide: CurrentUserService, useValue: mockCurrentUserService },
       ],
     })
       .overrideGuard(AuthGuard('jwt'))

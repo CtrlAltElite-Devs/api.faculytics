@@ -10,7 +10,7 @@ import {
 } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { AnalysisPipelineRepository } from '../repositories/analysis-pipeline.repository';
-import { PipelineStatus } from '../modules/analysis/enums';
+import { PipelineStatus, PipelineTrigger } from '../modules/analysis/enums';
 import { Semester } from './semester.entity';
 import { User } from './user.entity';
 import { QuestionnaireVersion } from './questionnaire-version.entity';
@@ -75,6 +75,12 @@ export class AnalysisPipeline extends CustomBaseEntity {
 
   @Enum(() => PipelineStatus)
   status: PipelineStatus & Opt = PipelineStatus.AWAITING_CONFIRMATION;
+
+  // FAC-135 Phase B: provenance for who started the pipeline. USER means a
+  // human triggered it via POST /analysis/pipelines (frontend); SCHEDULER
+  // means TieredPipelineSchedulerJob auto-enqueued it on its weekly cadence.
+  @Enum(() => PipelineTrigger)
+  trigger: PipelineTrigger & Opt = PipelineTrigger.USER;
 
   @Property({ type: 'text', nullable: true })
   errorMessage?: string;

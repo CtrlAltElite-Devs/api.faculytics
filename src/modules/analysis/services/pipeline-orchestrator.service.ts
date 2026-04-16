@@ -86,6 +86,8 @@ import { TopicLabelService } from './topic-label.service';
 import { AnalysisAccessService } from './analysis-access.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
 import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
+import { AuditService } from 'src/modules/audit/audit.service';
+import { AuditAction } from 'src/modules/audit/audit-action.enum';
 
 interface CoverageStats {
   totalEnrolled: number;
@@ -137,6 +139,7 @@ export class PipelineOrchestratorService {
     private readonly scopeResolver: ScopeResolverService,
     private readonly currentUserService: CurrentUserService,
     private readonly schedulerRegistry: SchedulerRegistry,
+    private readonly auditService: AuditService,
     @InjectQueue(QueueName.SENTIMENT) private readonly sentimentQueue: Queue,
     @InjectQueue(QueueName.TOPIC_MODEL) private readonly topicModelQueue: Queue,
     @InjectQueue(QueueName.RECOMMENDATIONS)
@@ -974,6 +977,8 @@ export class PipelineOrchestratorService {
     await fork.flush();
 
     this.logger.error(`Pipeline ${pipelineId} failed at ${stage}: ${error}`);
+
+    this.emitPipelineFailAudit(pipeline, stage, error);
   }
 
   // --- Scope Authorization (FAC-132, adapted for aggregate scope rework) ---
@@ -1906,6 +1911,47 @@ export class PipelineOrchestratorService {
     pipeline.errorMessage = error;
     await em.flush();
     this.logger.error(`Pipeline ${pipeline.id} failed: ${error}`);
+
+    // `failPipeline` carries a single error string without an explicit stage
+    // (unlike OnStageFailed). Parse a leading "<stage>: <message>" prefix when
+    // the caller followed that convention; otherwise flag the stage as unknown
+    // so audit analytics can still aggregate these rows.
+    const match = /^([a-z_]+):\s+(.*)$/s.exec(error);
+    const [stage, message] = match ? [match[1], match[2]] : ['unknown', error];
+    this.emitPipelineFailAudit(pipeline, stage, message);
+  }
+
+  private emitPipelineFailAudit(
+    pipeline: AnalysisPipeline,
+    stage: string,
+    errorMessage: string,
+  ): void {
+    const metadata: Record<string, unknown> = {
+      stage,
+      errorMessage,
+      trigger: pipeline.trigger,
+      totalEnrolled: pipeline.totalEnrolled,
+      submissionCount: pipeline.submissionCount,
+      commentCount: pipeline.commentCount,
+      responseRate: Number(pipeline.responseRate),
+      semesterId: pipeline.semester.id,
+    };
+    if (pipeline.faculty) metadata.facultyId = pipeline.faculty.id;
+    if (pipeline.department) metadata.departmentId = pipeline.department.id;
+    if (pipeline.program) metadata.programId = pipeline.program.id;
+    if (pipeline.campus) metadata.campusId = pipeline.campus.id;
+    if (pipeline.course) metadata.courseId = pipeline.course.id;
+    if (pipeline.questionnaireVersion) {
+      metadata.questionnaireVersionId = pipeline.questionnaireVersion.id;
+    }
+
+    void this.auditService.Emit({
+      action: AuditAction.ANALYSIS_PIPELINE_FAIL,
+      actorId: pipeline.triggeredBy?.id,
+      resourceType: 'analysis_pipeline',
+      resourceId: pipeline.id,
+      metadata,
+    });
   }
 
   private getEmbeddingStageStatus(

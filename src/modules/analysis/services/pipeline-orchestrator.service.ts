@@ -33,6 +33,7 @@ import { PipelineStatus, PipelineTrigger, RunStatus } from '../enums';
 import { SENTIMENT_GATE, COVERAGE_WARNINGS } from '../constants';
 import type { ScopeType } from '../dto/facet.dto';
 import { buildSubmissionScope } from '../lib/build-submission-scope';
+import { chunkSubmissionsForSentiment } from '../lib/chunk-submissions-for-sentiment';
 import {
   CreatePipelineInput,
   createPipelineSchema,
@@ -107,7 +108,7 @@ interface ScopeFilter {
   course?: string;
 }
 
-const TERMINAL_STATUSES = [
+export const TERMINAL_STATUSES = [
   PipelineStatus.COMPLETED,
   PipelineStatus.FAILED,
   PipelineStatus.CANCELLED,
@@ -1677,42 +1678,53 @@ export class PipelineOrchestratorService {
       return;
     }
 
+    const chunks = chunkSubmissionsForSentiment(
+      submissions,
+      env.SENTIMENT_CHUNK_SIZE,
+    );
+
+    // `run.jobId` under chunking names the BullMQ jobId *prefix* shared by all this run's chunks;
+    // per-chunk jobIds are derived as `${run.jobId}--<paddedChunkIndex>`.
     const run = em.create(SentimentRun, {
       pipeline,
       submissionCount: submissions.length,
+      expectedChunks: chunks.length,
+      completedChunks: 0,
       status: RunStatus.PROCESSING,
-    });
-    await em.flush();
-
-    const jobId = v4();
-    const envelope: BatchAnalysisJobMessage = {
-      jobId,
-      version: '1.0',
-      type: QueueName.SENTIMENT,
-      items: submissions.map((s) => ({
-        submissionId: s.id,
-        text: s.cleanedComment!,
-      })),
-      metadata: {
-        pipelineId: pipeline.id,
-        runId: run.id,
-      },
-      publishedAt: new Date().toISOString(),
-    };
-
-    batchAnalysisJobSchema.parse(envelope);
-
-    run.jobId = jobId;
-    await em.flush();
-
-    await this.sentimentQueue.add(QueueName.SENTIMENT, envelope, {
       jobId: `${pipeline.id}--sentiment`,
-      attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
-      backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
     });
+    await em.flush();
+
+    const addOps = chunks.map(async (chunkItems, chunkIndex) => {
+      const envelope: BatchAnalysisJobMessage = {
+        jobId: v4(),
+        version: '1.0',
+        type: QueueName.SENTIMENT,
+        items: chunkItems.map((s) => ({
+          submissionId: s.id,
+          text: s.cleanedComment!,
+        })),
+        metadata: {
+          pipelineId: pipeline.id,
+          runId: run.id,
+          chunkIndex,
+          chunkCount: chunks.length,
+        },
+        publishedAt: new Date().toISOString(),
+      };
+      batchAnalysisJobSchema.parse(envelope);
+
+      const paddedIndex = String(chunkIndex).padStart(4, '0');
+      await this.sentimentQueue.add(QueueName.SENTIMENT, envelope, {
+        jobId: `${run.jobId}--${paddedIndex}`,
+        attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
+        backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
+      });
+    });
+    await Promise.all(addOps);
 
     this.logger.log(
-      `Dispatched sentiment batch job for pipeline ${pipeline.id} (${submissions.length} items)`,
+      `Dispatched sentiment batch for pipeline ${pipeline.id}: ${submissions.length} items in ${chunks.length} chunk(s) of up to ${env.SENTIMENT_CHUNK_SIZE}`,
     );
   }
 

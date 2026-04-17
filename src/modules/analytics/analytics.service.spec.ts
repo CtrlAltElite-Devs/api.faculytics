@@ -642,11 +642,13 @@ describe('AnalyticsService', () => {
       schema: QuestionnaireSchemaSnapshot,
       aggRows: Record<string, unknown>[],
       countResult: number,
+      ratingRows: Record<string, unknown>[] = [],
+      dimensionRows: Record<string, unknown>[] = [],
     ) {
       // Super admin: scope returns null (no validateFacultyScope execute call)
       // 1. resolveVersionIds: phase 1 (type check), phase 2 (versions)
       // 2. BuildFacultyReportData: faculty metadata + semester metadata (parallel)
-      // 3. aggregation + submission count (parallel)
+      // 3. agg + ratingDist + count + dimensionRegistry (parallel)
       mockExecute
         // phase 1: type check
         .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
@@ -671,8 +673,12 @@ describe('AnalyticsService', () => {
         ])
         // aggregation query
         .mockResolvedValueOnce(aggRows)
+        // rating distribution query
+        .mockResolvedValueOnce(ratingRows)
         // submission count
-        .mockResolvedValueOnce([{ count: countResult }]);
+        .mockResolvedValueOnce([{ count: countResult }])
+        // dimension registry
+        .mockResolvedValueOnce(dimensionRows);
     }
 
     it('should return full report for super admin', async () => {

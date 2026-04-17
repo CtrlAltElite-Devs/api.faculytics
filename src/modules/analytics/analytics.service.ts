@@ -1086,6 +1086,7 @@ export class AnalyticsService {
         sections: [],
         overallRating: null,
         overallInterpretation: null,
+        dimensions: [],
       };
     }
 
@@ -1119,6 +1120,20 @@ export class AnalyticsService {
       GROUP BY qa.question_id, qa.section_id
     `;
 
+    const ratingDistSql = `
+      SELECT qa.question_id, qa.section_id,
+             qa.numeric_value AS rating,
+             COUNT(*) AS cnt
+      FROM questionnaire_answer qa
+      JOIN questionnaire_submission qs ON qs.id = qa.submission_id
+      WHERE qs.faculty_id = ?
+        AND qs.semester_id = ?
+        AND qs.questionnaire_version_id = ANY(?)
+        AND qs.deleted_at IS NULL
+        AND qa.deleted_at IS NULL${courseFilter}
+      GROUP BY qa.question_id, qa.section_id, qa.numeric_value
+    `;
+
     const countSql = `
       SELECT COUNT(DISTINCT qs.id) AS count
       FROM questionnaire_submission qs
@@ -1128,9 +1143,21 @@ export class AnalyticsService {
         AND qs.deleted_at IS NULL${courseFilter}
     `;
 
-    const [aggRows, countRows] = await Promise.all([
+    const dimensionRegistrySql = `
+      SELECT d.code, d.display_name
+      FROM dimension d
+      JOIN questionnaire_type qt ON qt.id = d.questionnaire_type_id
+      WHERE qt.code = ?
+        AND d.active = true
+        AND d.deleted_at IS NULL
+        AND qt.deleted_at IS NULL
+    `;
+
+    const [aggRows, ratingRows, countRows, dimensionRows] = await Promise.all([
       this.em.execute(aggSql, aggParams),
+      this.em.execute(ratingDistSql, aggParams),
       this.em.execute(countSql, aggParams),
+      this.em.execute(dimensionRegistrySql, [query.questionnaireTypeCode]),
     ]);
 
     const submissionCount = Number(countRows[0]?.count ?? 0);
@@ -1145,6 +1172,26 @@ export class AnalyticsService {
         average: Number(row.average),
         responseCount: Number(row.response_count),
       });
+    }
+
+    // Build rating distribution lookup: key = "questionId::sectionId" →
+    // ratingCounts keyed by the stringified numeric_value ("0"/"1" for
+    // YES_NO, "1".."5" for Likert).
+    const ratingCountsMap = new Map<string, Record<string, number>>();
+    for (const row of ratingRows) {
+      const key = `${row.question_id}::${row.section_id}`;
+      const ratingKey = String(Number(row.rating));
+      const existing = ratingCountsMap.get(key) ?? {};
+      existing[ratingKey] = (existing[ratingKey] ?? 0) + Number(row.cnt);
+      ratingCountsMap.set(key, existing);
+    }
+
+    const dimensionDisplayNames = new Map<string, string>();
+    for (const row of dimensionRows as {
+      code: string;
+      display_name: string;
+    }[]) {
+      dimensionDisplayNames.set(row.code, row.display_name);
     }
 
     // Assemble sections
@@ -1169,6 +1216,8 @@ export class AnalyticsService {
               average: score.average,
               responseCount: score.responseCount,
               interpretation: getInterpretation(score.average),
+              ratingCounts:
+                ratingCountsMap.get(`${questionId}::${sectionId}`) ?? {},
             };
           })
           .filter((q): q is NonNullable<typeof q> => q !== null);
@@ -1182,6 +1231,11 @@ export class AnalyticsService {
               100,
           ) / 100;
 
+        const responseCount = questions.reduce(
+          (sum, q) => sum + q.responseCount,
+          0,
+        );
+
         return {
           sectionId,
           title: meta.title,
@@ -1190,9 +1244,46 @@ export class AnalyticsService {
           questions,
           sectionAverage,
           sectionInterpretation: getInterpretation(sectionAverage),
+          responseCount,
         };
       })
       .filter((s): s is NonNullable<typeof s> => s !== null);
+
+    // Per-dimension aggregation: response-count-weighted mean of per-question
+    // averages, which is mathematically identical to AVG(numeric_value) over
+    // all answers in the dimension. Skip dimensions with 0 responses.
+    const dimensionAggregate = new Map<
+      string,
+      { weightedSum: number; responseCount: number }
+    >();
+    for (const row of aggRows) {
+      const qm = questionMap.get(row.question_id as string);
+      if (!qm || !qm.dimensionCode) continue;
+      const avg = Number(row.average);
+      const count = Number(row.response_count);
+      if (!Number.isFinite(avg) || count <= 0) continue;
+      const existing = dimensionAggregate.get(qm.dimensionCode) ?? {
+        weightedSum: 0,
+        responseCount: 0,
+      };
+      existing.weightedSum += avg * count;
+      existing.responseCount += count;
+      dimensionAggregate.set(qm.dimensionCode, existing);
+    }
+
+    const dimensions = [...dimensionAggregate.entries()]
+      .map(([code, { weightedSum, responseCount }]) => {
+        const average =
+          Math.round((weightedSum / responseCount) * 100) / 100;
+        return {
+          code,
+          displayName: dimensionDisplayNames.get(code) ?? code,
+          average,
+          responseCount,
+          interpretation: getInterpretation(average),
+        };
+      })
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
     // Overall weighted rating
     let overallRating: number | null = null;
@@ -1243,6 +1334,7 @@ export class AnalyticsService {
       sections,
       overallRating,
       overallInterpretation,
+      dimensions,
     };
   }
 

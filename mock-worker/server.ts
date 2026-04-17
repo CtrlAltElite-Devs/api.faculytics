@@ -9,21 +9,53 @@ const port = Number(process.env.PORT ?? 3001);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 app.post('/sentiment', async (c) => {
-  const body = (await c.req.json()) as unknown as { jobId?: string };
-  console.log(`[sentiment] Received job ${String(body.jobId)}`);
+  const body = (await c.req.json()) as unknown as {
+    jobId?: string;
+    items?: { submissionId: string }[];
+  };
+  console.log(
+    `[sentiment] Received job ${String(body.jobId)} with ${body.items?.length ?? 0} items`,
+  );
 
   if (delayMs > 0) await sleep(delayMs);
 
   const jobId = body.jobId ?? randomUUID();
+  const items = body.items ?? [];
+  // Rotate the score buckets deterministically so smoke tests exercise the
+  // sentiment gate's label branches instead of a uniform-positive stream.
+  const pickBucket = (s: string): 'positive' | 'neutral' | 'negative' => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    const buckets = ['positive', 'neutral', 'negative'] as const;
+    return buckets[Math.abs(h) % buckets.length];
+  };
   return c.json({
     jobId,
     version: '1.0',
     status: 'completed',
-    result: {
-      sentiment: 'positive',
-      confidence: 0.92,
-      topics: ['teaching_quality'],
-    },
+    results: items.map((item) => {
+      const bucket = pickBucket(item.submissionId);
+      if (bucket === 'positive')
+        return {
+          submissionId: item.submissionId,
+          positive: 0.85,
+          neutral: 0.1,
+          negative: 0.05,
+        };
+      if (bucket === 'neutral')
+        return {
+          submissionId: item.submissionId,
+          positive: 0.2,
+          neutral: 0.6,
+          negative: 0.2,
+        };
+      return {
+        submissionId: item.submissionId,
+        positive: 0.05,
+        neutral: 0.15,
+        negative: 0.8,
+      };
+    }),
     completedAt: new Date().toISOString(),
   });
 });

@@ -12,7 +12,7 @@ import { QuestionnaireSubmission } from './questionnaire-submission.entity';
 @Index({
   name: 'sentiment_result_run_id_submission_id_unique',
   expression:
-    'create unique index "sentiment_result_run_id_submission_id_unique" on "sentiment_result" ("run_id", "submission_id") where "deleted_at" is null',
+    'create unique index "sentiment_result_run_id_submission_id_unique" on "sentiment_result" ("run_id", "submission_id")',
 })
 @Entity({ repository: () => SentimentResultRepository })
 @Index({ properties: ['run'] })

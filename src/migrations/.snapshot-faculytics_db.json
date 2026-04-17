@@ -6283,8 +6283,7 @@
           "constraint": false,
           "keyName": "sentiment_result_run_id_submission_id_unique",
           "unique": true,
-          "primary": false,
-          "expression": "CREATE UNIQUE INDEX sentiment_result_run_id_submission_id_unique ON public.sentiment_result USING btree (run_id, submission_id) WHERE (deleted_at IS NULL)"
+          "primary": false
         },
         {
           "columnNames": [
@@ -6495,6 +6494,38 @@
           "comment": null,
           "enumItems": [],
           "mappedType": "datetime"
+        },
+        "expected_chunks": {
+          "name": "expected_chunks",
+          "type": "int4",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": 32,
+          "scale": 0,
+          "default": "0",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "integer"
+        },
+        "completed_chunks": {
+          "name": "completed_chunks",
+          "type": "int4",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": 32,
+          "scale": 0,
+          "default": "0",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "integer"
         }
       },
       "name": "sentiment_run",

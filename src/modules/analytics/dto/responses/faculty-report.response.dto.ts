@@ -6,6 +6,9 @@ export class ReportFacultyDto {
 
   @ApiProperty()
   name!: string;
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  profilePicture?: string | null;
 }
 
 export class ReportSemesterDto {

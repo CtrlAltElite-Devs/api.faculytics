@@ -1148,14 +1148,22 @@ export class AnalyticsService {
     const [facultyRow, semesterRow] = await Promise.all([
       this.em
         .execute(
-          'SELECT u.first_name, u.last_name FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+          'SELECT u.first_name, u.last_name, u.user_profile_picture FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
           [facultyId],
         )
-        .then((rows: { first_name: string; last_name: string }[]) => {
-          if (rows.length === 0)
-            throw new NotFoundException('Faculty not found');
-          return rows[0];
-        }),
+        .then(
+          (
+            rows: {
+              first_name: string;
+              last_name: string;
+              user_profile_picture: string | null;
+            }[],
+          ) => {
+            if (rows.length === 0)
+              throw new NotFoundException('Faculty not found');
+            return rows[0];
+          },
+        ),
       this.em
         .execute(
           'SELECT s.id, s.code, s.label, s.academic_year FROM semester s WHERE s.id = ? AND s.deleted_at IS NULL',
@@ -1180,6 +1188,7 @@ export class AnalyticsService {
     const facultyDto = {
       id: facultyId,
       name: `${facultyRow.first_name} ${facultyRow.last_name}`,
+      profilePicture: facultyRow.user_profile_picture || null,
     };
     const semesterDto = {
       id: semesterRow.id,

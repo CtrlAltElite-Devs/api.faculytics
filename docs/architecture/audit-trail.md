@@ -59,12 +59,16 @@ export const AuditAction = {
   AUTH_TOKEN_REFRESH: 'auth.token.refresh',
   ADMIN_SYNC_TRIGGER: 'admin.sync.trigger',
   ADMIN_SYNC_SCHEDULE_UPDATE: 'admin.sync-schedule.update',
+  ADMIN_SENTIMENT_VLLM_CONFIG_UPDATE: 'admin.sentiment-vllm-config.update',
+  ADMIN_USER_SCOPE_UPDATE: 'admin.user.scope.update',
+  ADMIN_USER_CREATE: 'admin.user.create',
   QUESTIONNAIRE_SUBMIT: 'questionnaire.submit',
   QUESTIONNAIRE_INGEST: 'questionnaire.ingest',
   QUESTIONNAIRE_SUBMISSIONS_WIPE: 'questionnaire.submissions.wipe',
   ANALYSIS_PIPELINE_CREATE: 'analysis.pipeline.create',
   ANALYSIS_PIPELINE_CONFIRM: 'analysis.pipeline.confirm',
   ANALYSIS_PIPELINE_CANCEL: 'analysis.pipeline.cancel',
+  ANALYSIS_PIPELINE_FAIL: 'analysis.pipeline.fail',
   MOODLE_PROVISION_CATEGORIES: 'moodle.provision.categories',
   MOODLE_PROVISION_COURSES: 'moodle.provision.courses',
   MOODLE_PROVISION_QUICK_COURSE: 'moodle.provision.quick-course',
@@ -74,6 +78,42 @@ export const AuditAction = {
 ```
 
 The `moodle.provision.*` actions are emitted by the Moodle seeding toolkit — see [Moodle Provisioning](../moodle/provisioning.md).
+
+### `analysis.pipeline.fail`
+
+Emitted directly from `PipelineOrchestratorService` (no `@Audited` decorator) on every terminal failure transition. Both `OnStageFailed()` and `failPipeline()` route through `emitPipelineFailAudit()`, which is guarded by `TERMINAL_STATUSES` so a race between the two paths cannot double-audit. The metadata payload captures operational context for post-mortem:
+
+| Field          | Description                                                                                                                       |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `stage`        | Failing stage (`sentiment_analysis`, `topic_modeling`, `recommendations`, etc.)                                                   |
+| `errorMessage` | Sanitized error string. `failPipeline()` parses the `"<stage>: <message>"` prefix when set.                                       |
+| `trigger`      | `USER` or `SCHEDULER` — same value as `AnalysisPipeline.trigger`                                                                  |
+| `coverage`     | `{ totalEnrolled, submissionCount, commentCount, responseRate }` snapshot at failure time                                         |
+| `semesterId`   | UUID                                                                                                                              |
+| `scope`        | FK ids snapshotted from the pipeline (`facultyId`, `departmentId`, `programId`, `campusId`, `courseId`, `questionnaireVersionId`) |
+
+`actorId` is `pipeline.triggeredBy.id`; `resourceType = 'analysis_pipeline'`; `resourceId = pipeline.id`. Failures from scheduler-driven pipelines surface as `actorId = SUPER_ADMIN.id` with `metadata.trigger = 'SCHEDULER'`.
+
+### `admin.sentiment-vllm-config.update`
+
+Emitted directly from `AdminSentimentConfigController.UpdateConfig()` (not via the interceptor) so the metadata can carry both sides of the transition:
+
+```typescript
+metadata: {
+  previous: {
+    url: string;
+    model: string;
+    enabled: boolean;
+  }
+  next: {
+    url: string;
+    model: string;
+    enabled: boolean;
+  }
+}
+```
+
+`SentimentConfigService.updateConfig()` returns `{previous, next}` from a single read so there is no TOCTOU window between an interceptor-side read and the service-side write. `resourceType = 'SystemConfig'`, `resourceId = 'SENTIMENT_VLLM_CONFIG'`. The handler does **not** apply `@Audited()` — using both paths would double-emit on every URL rotation.
 
 ## Interceptor Path Detail
 

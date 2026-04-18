@@ -342,6 +342,58 @@ The filter set deliberately separates exact-match filters (AND'd together) from 
 
 See [Audit Trail — Query API](../architecture/audit-trail.md#query-api).
 
+## 45. Pipeline Scope Collapsed to `{scopeType, scopeId}` Without Entity Schema Change
+
+The pipeline create DTO surface was collapsed from a multi-FK shape (`facultyId`/`departmentId`/`campusId`/`programId`/`courseId`/`questionnaireTypeCode`) to a canonical `{scopeType ∈ {FACULTY, DEPARTMENT, CAMPUS}, scopeId}` pair. The `AnalysisPipeline` entity still stores the legacy nullable FK columns per tier — there is no migration on the entity itself.
+
+- **Rationale:** Three tiers cover all real analytical scopes (`FACULTY`, `DEPARTMENT`, `CAMPUS`). The other FK columns were optional refinements that were never used in scheduler-driven runs and confused the API surface. A pure-DTO change keeps the entity stable across deployments — no destructive backfill, no new index churn — while the orchestrator translates the canonical pair to the appropriate FK column internally.
+- **Legacy bridge:** A `bridgeLegacyCreatePipelineInput` Zod preprocessor keeps the previous shape working for one PR cycle (Phase A → Phase C), logging `deprecated_field_used` for every translated input. PR-3 deletes the bridge and switches the schema to `.strict()`.
+- **Trade-off:** The entity is now wider than the DTO — readers must know that `pipeline.faculty/department/campus` are mutually exclusive nullable FKs whose populated tier matches `scope`. Acceptable because the alternative (renaming a column on every deployed schema) carried more operational risk than the dead-column ambiguity.
+
+## 46. Tiered Pipeline Scheduler with Per-Tier Concurrency Isolation
+
+`TieredPipelineSchedulerJob` exposes three independent `@Cron` methods (FACULTY 01:00, DEPARTMENT 02:00, CAMPUS 03:00 UTC, all Sunday) instead of a single multiplexed scheduler.
+
+- **Per-tier `running[tier]` flag:** A long-running faculty tier does not block the department or campus tier that follows. Each tier has its own concurrency guard.
+- **Skip-check by `lastPipelineCompletedAt`:** `submissionRepository.FindChangedSince(scope, lastCompletedAt)` short-circuits scopes with no new submissions — avoids re-running unchanged DEPARTMENT pipelines every Sunday at 02:00.
+- **System-user attribution:** Scheduler-driven pipelines need a non-null `triggeredBy`. The job resolves the seeded SUPER_ADMIN by `env.SUPER_ADMIN_USERNAME` rather than maintaining a synthetic system user — fewer moving parts, and audit metadata still includes `trigger=SCHEDULER` to disambiguate from a manual SUPER_ADMIN action.
+- **Trade-off:** Three cron decorators instead of one. Acceptable because each tier has distinct semantics (frequency of new data, expected coverage, who consumes the output) and folding them under a multiplexer would re-introduce a global lock.
+
+## 47. Facet Dominance Threshold for Aggregate Recommendations
+
+When a DEPARTMENT or CAMPUS pipeline aggregates submissions across multiple primary questionnaire types, each `RecommendedAction` is tagged with a `facet ∈ {overall, facultyFeedback, inClassroom, outOfClassroom}` derived by `deriveFacetFromTypeCodeCounts()`. The top contributing questionnaire-type code wins **only** when its share of the action's contributing submissions is `≥ 0.6`; otherwise the action falls back to `overall`.
+
+- **Why 60%, not >50%:** Strict majority is too fragile for BERTopic mixed clusters — a 51% lead on a 20-comment cluster is noise. 60% is a usable signal floor while still tolerating the natural blending that happens when one topic spans related questionnaires.
+- **Code constant, not env flag:** Tuning the threshold changes evidence semantics (which submissions appear under which facet) and should go through code review, not an operator runtime knob. `FACET_DOMINANCE_THRESHOLD = 0.6` in `recommendation-generation.service.ts` is the source of truth.
+- **Trade-off:** A few honest minority-facet actions get rolled into `overall` instead of being properly attributed. Acceptable because misattribution would erode trust in the tagging system more than a slightly broader `overall` bucket does.
+
+## 48. Sentiment Chunked Dispatch with Counter-Based Completion
+
+`PipelineOrchestratorService.dispatchSentiment()` splits a run into N chunks of `SENTIMENT_CHUNK_SIZE` (default 50) and enqueues one BullMQ job per chunk. `SentimentRun` carries `expectedChunks`/`completedChunks` counters; each chunk's `Persist()` inserts its rows and increments the counter atomically, then triggers `OnSentimentComplete()` when saturated.
+
+- **Why chunk:** A campus-tier pipeline with 800+ comments routinely exceeded the worker's 90s HTTP timeout in a single batch. Chunking caps each request's wall time at a predictable multiple of `SENTIMENT_CHUNK_SIZE`.
+- **Why counters, not BullMQ FlowProducer:** A simple `expectedChunks/completedChunks` pair on the run row keeps the completion logic auditable from the database alone — operators can answer "is run X stuck?" with a single SELECT, without grovelling through Redis. Atomic UPDATE in the same transaction as the insert prevents the race where the last chunk crashes between persist and counter bump.
+- **Full unique index requirement:** `sentiment_result(run_id, submission_id)` was converted from a partial index (`WHERE deleted_at IS NULL`) to a full index in migration `20260417120000` so that retried chunks land as `duplicate-swallowed` rather than re-inserting against soft-deleted siblings. The migration includes a preflight duplicate check that aborts if any duplicate pairs exist across live + soft-deleted rows.
+- **Trade-off:** More BullMQ traffic per run; counter race conditions need careful transactional design. Acceptable because the alternative (longer timeouts + retry-the-whole-batch) wasted significantly more worker GPU time on partial failures.
+
+## 49. Single-Read Update + Snapshot-Once Dispatch for vLLM Config
+
+`SentimentConfigService.updateConfig()` returns `{previous, next}` from a single read+write path; the controller emits `admin.sentiment-vllm-config.update` with both sides as audit metadata. `PipelineOrchestratorService.dispatchSentiment()` reads the config **once per run** and attaches the resolved `vllmConfig` to every chunk envelope.
+
+- **Why single-read update:** Splitting the read into two calls (controller-side for audit, service-side for the write) opens a TOCTOU window where a concurrent admin could change the value between the audit snapshot and the persisted write — the audit log would record a transition that never happened. Returning both sides from one transaction closes that window.
+- **Why snapshot-once dispatch:** A config flip mid-run could otherwise straddle chunks of the same `SentimentRun`, producing inconsistent `servedBy` provenance and silently breaking the assumption that a single run uses a single backend. One read per dispatch keeps every chunk on the same path.
+- **Why a production gate (`ALLOW_SENTIMENT_VLLM_ENABLED_IN_PROD`):** A SuperAdmin session could otherwise enable a self-hosted endpoint in production without ops being in the loop. The env var requires a deploy-time decision to flip the toggle on.
+- **Trade-off:** Mid-run config changes have to wait for the next run to take effect. Acceptable because runs are short and the alternative is provenance ambiguity in audit + result rows.
+
+## 50. FACULTY Self-View on Analytics Endpoints via Method-Level Widening
+
+`AnalyticsController` declares its class-level allowlist as `(DEAN, CHAIRPERSON, CAMPUS_HEAD, SUPER_ADMIN)`; each faculty endpoint (`report`, `report/comments`, `qualitative-summary`, `questionnaire-types`) widens with a per-method `@UseJwtGuard(..., FACULTY)` and calls `assertFacultySelfScope(currentUser, facultyId)`.
+
+- **Rationale:** FACULTY needs to see their own report data on the same surface as administrators, but the class-level allowlist is the right default for scoped roles. Widening per-method (rather than dropping FACULTY into the class allowlist) keeps the dean-side endpoints (`overview`, `attention`, `trends`) closed to FACULTY without per-method exclusions.
+- **Self-equality is the ownership check:** Faculty users do not have a separate FacultyProfile entity — `User.id` is the same id `AnalysisPipeline.faculty_id` points to. `assertFacultySelfScope` enforces `user.id === facultyId` and is a no-op for non-FACULTY roles. Future analytics surfaces that admit FACULTY must use the same helper.
+- **Verbatim redaction layered separately:** Faculty self-views still receive an extra `AnalysisAccessService.RedactIfFacultySelfView` pass on the recommendations response to strip `sampleQuotes[]`. The split keeps "who can read" and "what shape is returned" as independent concerns.
+- **Trade-off:** Two layers of FACULTY-specific code (the per-method widening + the helper). Acceptable — the alternative (a separate `/me/...` controller) would duplicate query logic and double the test surface.
+
 ## 30. Semester Code Parsing for Display Labels
 
 The Moodle category sync now parses semester codes (e.g., `S22526`) into human-readable `label` ("Semester 2") and `academicYear` ("2025-2026") fields on the `Semester` entity.

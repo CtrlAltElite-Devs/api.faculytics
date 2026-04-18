@@ -10,17 +10,16 @@ An analysis pipeline processes all qualitative feedback for a given scope (semes
 
 **Endpoint:** `POST /analysis/pipelines`
 
-The caller provides a scope:
+The caller provides a scope using the canonical `{scopeType, scopeId}` pair. Only three tiers are supported — `FACULTY`, `DEPARTMENT`, `CAMPUS`.
 
-| Parameter                | Required | Description                         |
-| ------------------------ | -------- | ----------------------------------- |
-| `semesterId`             | Yes      | Target semester                     |
-| `facultyId`              | No       | Filter to a specific faculty member |
-| `questionnaireVersionId` | No       | Filter to a specific version        |
-| `departmentId`           | No       | Filter to a department              |
-| `programId`              | No       | Filter to a program                 |
-| `campusId`               | No       | Filter to a campus                  |
-| `courseId`               | No       | Filter to a course                  |
+| Parameter                | Required      | Description                                                                                       |
+| ------------------------ | ------------- | ------------------------------------------------------------------------------------------------- |
+| `semesterId`             | Yes           | Target semester                                                                                   |
+| `scopeType`              | Auto-fillable | One of `FACULTY`, `DEPARTMENT`, `CAMPUS`. Auto-filled for callers with exactly one assigned scope |
+| `scopeId`                | Auto-fillable | UUID of the faculty/department/campus matching `scopeType`                                        |
+| `questionnaireVersionId` | No            | Optional version pin; omitted means "all active versions in scope"                                |
+
+> **Legacy bridge.** A transient preprocessor (`bridgeLegacyCreatePipelineInput`) maps the old multi-FK shape (`facultyId`/`departmentId`/`campusId`/`programId`/`courseId`/`questionnaireTypeCode`) onto the canonical pair and logs `deprecated_field_used`. PR-3 deletes this preprocessor and switches the schema to `.strict()` — clients must migrate before then.
 
 The orchestrator:
 
@@ -28,6 +27,8 @@ The orchestrator:
 2. **Computes coverage stats** — Counts submissions, comments, and enrollments within scope. Calculates response rate.
 3. **Generates warnings** — Flags low response rate (< 25%), insufficient submissions (< 30), insufficient comments (< 10), or stale enrollment data (> 24h since last sync).
 4. Returns the pipeline in `AWAITING_CONFIRMATION` status.
+
+The `AnalysisPipeline.trigger` column records how the pipeline was created — `USER` for human-initiated calls (default for any HTTP-driven create) and `SCHEDULER` for tiered-scheduler firings (see [§ Tiered Scheduler](#tiered-scheduler)).
 
 ## 2. Confirm Pipeline
 
@@ -244,3 +245,33 @@ A partial unique index (`uq_analysis_pipeline_active_scope`) enforces one active
 ### Scope drift mid-pipeline
 
 A DEAN who triggers a pipeline and is then reassigned to a different department mid-execution loses read access to their own pipeline. This mirrors `/analytics/*` behavior and is intentional — the scope check evaluates against current assignments, not historical ones.
+
+## Tiered Scheduler
+
+`TieredPipelineSchedulerJob` (`src/crons/jobs/analysis-jobs/tiered-pipeline-scheduler.job.ts`) auto-enqueues pipelines for active scopes that have new submissions since the last completed run. It runs three independent tiers, each with its own `@Cron` decorator and its own `isRunning` flag:
+
+| Tier         | Cron expression | Cron name                                      |
+| ------------ | --------------- | ---------------------------------------------- |
+| `FACULTY`    | `0 1 * * 0`     | `TieredPipelineSchedulerJob.RunFacultyTier`    |
+| `DEPARTMENT` | `0 2 * * 0`     | `TieredPipelineSchedulerJob.RunDepartmentTier` |
+| `CAMPUS`     | `0 3 * * 0`     | `TieredPipelineSchedulerJob.RunCampusTier`     |
+
+Cron names and expressions are exported from `tiered-scheduler.constants.ts` so the orchestrator can introspect the next firing without a circular import.
+
+### Per-tier flow
+
+For each scope returned by `orchestrator.FindActiveScopesForTier(tier)`:
+
+1. **Skip-check** — `submissionRepository.FindChangedSince(scopeFilter, lastPipelineCompletedAt)` counts submissions created after the previous completed pipeline. Zero new submissions ⇒ skip (logged at `debug`).
+2. **Enqueue** — Otherwise, `orchestrator.CreateAndConfirmPipeline({...scope, triggeredById: systemUserId})` bypasses the human gate and dispatches sentiment immediately. The pipeline is tagged `trigger=SCHEDULER`.
+3. **Per-tier exclusion** — `running[tier]` short-circuits the next firing if the previous one is still in progress. Tiers are independent so a long faculty run does not block the department or campus tier that follows an hour later.
+
+If a scheduler-driven pipeline cannot satisfy coverage requirements at firing time, it still completes (rather than failing) but persists `warnings: ['insufficient_coverage_at_schedule_time']` for transparency.
+
+### System-user attribution
+
+Scheduler-driven pipelines need an `actorId` for audit metadata. `resolveSystemUserId()` looks up the seeded SUPER_ADMIN by `env.SUPER_ADMIN_USERNAME` and uses its UUID. If the lookup fails, the tier returns `failed` and emits an error log — no pipelines are enqueued, since attribution would otherwise be lost.
+
+### Next-run surfacing
+
+`GET /analysis/pipelines/:id/status` returns `nextScheduledRunAt` (ISO 8601 UTC) so the frontend can render "next refresh in N hours" copy. The value is computed by `getNextScheduledRunAt(tier)` via `SchedulerRegistry` + `cron-parser`, falling back to a parsed cron expression when the registry has not yet registered the job (e.g., during boot).

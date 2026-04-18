@@ -163,24 +163,26 @@ Single Redis instance for development/staging. In production, split into two:
 
 ## 7. Environment Variables
 
-| Variable                             | Default       | Description                                     |
-| ------------------------------------ | ------------- | ----------------------------------------------- |
-| `SENTIMENT_WORKER_URL`               | —             | RunPod/mock URL for sentiment analysis          |
-| `EMBEDDINGS_WORKER_URL`              | —             | URL for embedding generation                    |
-| `TOPIC_MODEL_WORKER_URL`             | —             | URL for topic modeling                          |
-| `RECOMMENDATIONS_WORKER_URL`         | —             | Deprecated — recommendations now use direct LLM |
-| `RECOMMENDATIONS_MODEL`              | `gpt-4o-mini` | OpenAI model for recommendation generation      |
-| `BULLMQ_SENTIMENT_CONCURRENCY`       | 3             | Sentiment processor concurrency                 |
-| `EMBEDDINGS_CONCURRENCY`             | 3             | Embedding processor concurrency                 |
-| `TOPIC_MODEL_CONCURRENCY`            | 1             | Topic model processor concurrency               |
-| `RECOMMENDATIONS_CONCURRENCY`        | 1             | Recommendations processor concurrency           |
-| `BULLMQ_DEFAULT_ATTEMPTS`            | 3             | Job retry attempts                              |
-| `BULLMQ_DEFAULT_BACKOFF_MS`          | 5000          | Initial backoff delay                           |
-| `BULLMQ_HTTP_TIMEOUT_MS`             | 90000         | HTTP request timeout (default)                  |
-| `BULLMQ_TOPIC_MODEL_HTTP_TIMEOUT_MS` | 300000        | Topic model HTTP timeout (5 min)                |
-| `BULLMQ_STALLED_INTERVAL_MS`         | 30000         | Stall detection interval                        |
-| `BULLMQ_MAX_STALLED_COUNT`           | 2             | Max stalled retries before failure              |
-| `RUNPOD_API_KEY`                     | —             | RunPod API key for serverless workers           |
+| Variable                               | Default       | Description                                                                 |
+| -------------------------------------- | ------------- | --------------------------------------------------------------------------- |
+| `SENTIMENT_WORKER_URL`                 | —             | RunPod/mock URL for sentiment analysis                                      |
+| `SENTIMENT_CHUNK_SIZE`                 | 50            | Submissions per sentiment chunk (see §14)                                   |
+| `ALLOW_SENTIMENT_VLLM_ENABLED_IN_PROD` | `false`       | Production safety gate — required to enable vLLM dispatch in prod (see §15) |
+| `EMBEDDINGS_WORKER_URL`                | —             | URL for embedding generation                                                |
+| `TOPIC_MODEL_WORKER_URL`               | —             | URL for topic modeling                                                      |
+| `RECOMMENDATIONS_WORKER_URL`           | —             | Deprecated — recommendations now use direct LLM                             |
+| `RECOMMENDATIONS_MODEL`                | `gpt-4o-mini` | OpenAI model for recommendation generation                                  |
+| `BULLMQ_SENTIMENT_CONCURRENCY`         | 3             | Sentiment processor concurrency                                             |
+| `EMBEDDINGS_CONCURRENCY`               | 3             | Embedding processor concurrency                                             |
+| `TOPIC_MODEL_CONCURRENCY`              | 1             | Topic model processor concurrency                                           |
+| `RECOMMENDATIONS_CONCURRENCY`          | 1             | Recommendations processor concurrency                                       |
+| `BULLMQ_DEFAULT_ATTEMPTS`              | 3             | Job retry attempts                                                          |
+| `BULLMQ_DEFAULT_BACKOFF_MS`            | 5000          | Initial backoff delay                                                       |
+| `BULLMQ_HTTP_TIMEOUT_MS`               | 90000         | HTTP request timeout (default)                                              |
+| `BULLMQ_TOPIC_MODEL_HTTP_TIMEOUT_MS`   | 300000        | Topic model HTTP timeout (5 min)                                            |
+| `BULLMQ_STALLED_INTERVAL_MS`           | 30000         | Stall detection interval                                                    |
+| `BULLMQ_MAX_STALLED_COUNT`             | 2             | Max stalled retries before failure                                          |
+| `RUNPOD_API_KEY`                       | —             | RunPod API key for serverless workers                                       |
 
 ## 8. Vector Storage
 
@@ -327,7 +329,59 @@ Actions follow the `RecommendedActionItem` schema:
 | `RECOMMENDATIONS_MODEL` | `gpt-4o-mini` | OpenAI model for generation    |
 | `OPENAI_API_KEY`        | —             | Required (shared with ChatKit) |
 
-## 13. Adding a New Analysis Type
+## 13. Chunked Sentiment Dispatch
+
+`PipelineOrchestratorService.dispatchSentiment()` splits in-scope submissions into N chunks of `SENTIMENT_CHUNK_SIZE` (default `50`) using `chunkSubmissionsForSentiment()` and enqueues one BullMQ job per chunk. Each chunk receives the same `BatchAnalysisJobMessage` envelope plus optional `metadata.chunkIndex` (0-based) and `metadata.chunkCount` (total chunks for the run). The envelope schema is `.strict()` — any drift fails validation at dispatch.
+
+`SentimentRun` carries `expectedChunks` and `completedChunks` integer counters. Each chunk's `Persist()` runs in a single transaction:
+
+1. Insert `SentimentResult` rows for the chunk's submissions.
+2. `UPDATE sentiment_run SET completed_chunks = completed_chunks + 1`.
+3. Read `(completedChunks, expectedChunks)`. When saturated, mark the run `COMPLETED` and call `OnSentimentComplete()`.
+
+The transactional context is passed via `tx.getTransactionContext()` so the row inserts and the counter bump commit atomically — partial chunk failures retry per-chunk without rolling back peers.
+
+If a chunk's BullMQ ack fails after commit, the retry hits the run's full unique index on `(run_id, submission_id)` (converted from a partial index in migration `20260417120000_sentiment-chunk-counters.ts`) and is treated as `duplicate-swallowed`. The processor re-reads the counter and re-fires `OnSentimentComplete()` only when the run is genuinely saturated, so completion is at-least-once but the downstream effect is idempotent.
+
+For workflow detail and job log fields, see [Analysis Job Processing — Chunked Sentiment Dispatch](../workflows/analysis-job-processing.md#chunked-sentiment-dispatch).
+
+## 14. vLLM-Primary Sentiment Dispatch
+
+The sentiment worker can route requests through a self-hosted vLLM model (primary) with the existing OpenAI path as fallback. The choice is runtime-configurable via a single `SystemConfig` row keyed `SENTIMENT_VLLM_CONFIG`:
+
+```typescript
+{
+  url: string;
+  model: string;
+  enabled: boolean;
+}
+```
+
+### Snapshot-once dispatch
+
+`PipelineOrchestratorService.dispatchSentiment()` calls `SentimentConfigService.readConfig()` **once** per run, then attaches the resolved config to every chunk envelope as the optional `vllmConfig` field — but only when `enabled === true && url !== ''`. Reading once per dispatch (rather than per chunk) prevents a config flip mid-run from straddling the two paths and producing inconsistent `servedBy` provenance across the chunks of a single run.
+
+The optional `servedBy: 'vllm' | 'openai'` field on each result item lets the worker tell the API which path actually served the request. The processor stores this in `SentimentResult.rawResult` JSONB for provenance — no schema change to the result table.
+
+### Admin config endpoint
+
+`AdminSentimentConfigController` (`/admin/sentiment/vllm-config`, SUPER_ADMIN only) exposes `GET` and `PUT`:
+
+| Method | Path                           | Body                                 | Behavior                                                                   |
+| ------ | ------------------------------ | ------------------------------------ | -------------------------------------------------------------------------- |
+| GET    | `/admin/sentiment/vllm-config` | —                                    | Returns the current `{url, model, enabled}` (or defaults if unset)         |
+| PUT    | `/admin/sentiment/vllm-config` | `{url?, model?, enabled?}` (partial) | Patches the row, validates, returns the post-write `{url, model, enabled}` |
+
+Validation rules enforced by `SentimentConfigService.updateConfig()`:
+
+- `url` must start with `https://` (SSRF mitigation against compromised admin sessions). Non-https values reject with 400 at the DTO layer.
+- `enabled = true` with empty `url` or empty `model` rejects with 400.
+
+The controller adds a production gate: when `NODE_ENV === 'production'` and `ALLOW_SENTIMENT_VLLM_ENABLED_IN_PROD !== true`, a `PUT` with `enabled: true` returns 400. Operators must set the env var explicitly to flip vLLM on in production.
+
+`updateConfig()` returns `{previous, next}` from a single read, and the controller emits `admin.sentiment-vllm-config.update` with both sides as audit metadata. This avoids a TOCTOU window between a separate read and the write. See [Audit Trail — admin.sentiment-vllm-config.update](./audit-trail.md#adminsentiment-vllm-configupdate).
+
+## 15. Adding a New Analysis Type
 
 1. Create `NewTypeProcessor extends BaseBatchProcessor` (or `RunPodBatchProcessor` for RunPod workers) in `src/modules/analysis/processors/`
 2. Add `NEW_TYPE_WORKER_URL` and `NEW_TYPE_CONCURRENCY` to `src/configurations/env/bullmq.env.ts`

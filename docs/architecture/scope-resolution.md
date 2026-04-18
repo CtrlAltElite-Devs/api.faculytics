@@ -156,6 +156,14 @@ When a user holds multiple roles, the highest-priority role wins:
 
 Analysis-pipeline authorization (create/confirm/cancel/read) reuses `ResolveDepartmentIds`, `ResolveProgramIds`, and `ResolveCampusIds`. Pipeline-specific rules — required axis per role, list default-fill, FACULTY auto-override, 404-before-403 ordering, and the active-scope unique index — live in [analysis-pipeline.md §Access Control](../workflows/analysis-pipeline.md#access-control). `PipelineOrchestratorService` calls these resolvers before any DB write or flush so a foreign caller cannot cause side effects.
 
+### Faculty self-view on analytics endpoints
+
+The faculty report endpoints (`/analytics/faculty/:facultyId/report`, `.../report/comments`, `.../qualitative-summary`, `.../questionnaire-types`) are the only analytics surfaces that admit the FACULTY role. The `AnalyticsController` declares its class-level allowlist as `(DEAN, CHAIRPERSON, CAMPUS_HEAD, SUPER_ADMIN)`; each faculty endpoint widens with a per-method `@UseJwtGuard(... , FACULTY)` and then calls `assertFacultySelfScope(currentUser, facultyId)`.
+
+`assertFacultySelfScope` (`src/modules/analytics/lib/faculty-scope.util.ts`) is a no-op for non-FACULTY roles and throws `ForbiddenException` if a FACULTY user requests a `facultyId` other than their own. Use the same helper on any future analytics surface that exposes per-faculty data to FACULTY users — equality of `user.id === facultyId` is the canonical ownership check (faculty users do not have a separate FacultyProfile entity).
+
+For pipeline read access, FACULTY ownership is checked via `pipeline.faculty.id === user.id` inside `PipelineOrchestratorService.assertCanAccessPipeline`; verbatim student text in the recommendations response is then redacted by `AnalysisAccessService.RedactIfFacultySelfView` regardless of which role-coincidence path admitted the request. See [Analytics — Faculty Self-View Redaction](./analytics.md#faculty-self-view-redaction).
+
 ## Source Files
 
 | File                                                          | Purpose                                                      |

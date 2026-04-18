@@ -9,7 +9,7 @@ import * as Handlebars from 'handlebars';
 import * as fs from 'fs';
 import * as path from 'path';
 import { FacultyReportResponseDto } from 'src/modules/analytics/dto/responses/faculty-report.response.dto';
-import { ReportCommentDto } from 'src/modules/analytics/dto/responses/faculty-report-comments.response.dto';
+import { PdfCommentDto } from '../dto/pdf-comment.dto';
 
 @Injectable()
 export class PdfService implements OnModuleInit, OnModuleDestroy {
@@ -32,10 +32,17 @@ export class PdfService implements OnModuleInit, OnModuleDestroy {
 
   async GenerateFacultyEvaluationPdf(
     data: FacultyReportResponseDto,
-    comments: ReportCommentDto[],
+    comments: PdfCommentDto[],
   ): Promise<Buffer> {
     const template = this.getCompiledTemplate();
     const css = this.getCss();
+
+    const renderedComments = comments.map((comment) => ({
+      ...comment,
+      sentimentLabel: comment.sentiment
+        ? comment.sentiment.charAt(0).toUpperCase() + comment.sentiment.slice(1)
+        : null,
+    }));
 
     const html = template({
       faculty: data.faculty,
@@ -45,8 +52,8 @@ export class PdfService implements OnModuleInit, OnModuleDestroy {
       sections: data.sections,
       overallRating: data.overallRating,
       overallInterpretation: data.overallInterpretation,
-      comments,
-      hasComments: comments.length > 0,
+      comments: renderedComments,
+      hasComments: renderedComments.length > 0,
       css,
     });
 

@@ -613,6 +613,33 @@ export class AnalyticsService {
     return this.queryComments(facultyId, versionIds, query);
   }
 
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetAllFacultyReportCommentsAnnotatedUnscoped(
+    facultyId: string,
+    query: BaseFacultyReportQueryDto,
+  ): Promise<ReportCommentDto[]> {
+    const { versionIds } = await this.resolveVersionIds(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+    );
+
+    if (versionIds.length === 0) {
+      return [];
+    }
+
+    const { sentimentRunId, topicModelRunId } =
+      await this.resolveCommentAnnotationRunIds(facultyId, query);
+
+    return this.queryAnnotatedComments(
+      facultyId,
+      versionIds,
+      query,
+      sentimentRunId,
+      topicModelRunId,
+    );
+  }
+
   async GetFacultyReportComments(
     facultyId: string,
     query: FacultyReportCommentsQueryDto,
@@ -632,25 +659,12 @@ export class AnalyticsService {
       return this.emptyCommentsResponse(page, limit);
     }
 
-    // Resolve pipeline (for per-row annotations + sentiment/theme filters).
-    const pipeline = await this.findLatestCompletedPipelineByScope(
-      facultyId,
-      query.semesterId,
-      query.questionnaireTypeCode,
-      query.courseId,
-    );
+    const { sentimentRunId, topicModelRunId, hasPipeline } =
+      await this.resolveCommentAnnotationRunIds(facultyId, query);
 
     // If filters require a pipeline but none exists, return empty.
-    if (!pipeline && (query.sentiment || query.themeId)) {
+    if (!hasPipeline && (query.sentiment || query.themeId)) {
       return this.emptyCommentsResponse(page, limit);
-    }
-
-    let sentimentRunId: string | null = null;
-    let topicModelRunId: string | null = null;
-    if (pipeline) {
-      const runs = await this.resolvePipelineRuns(pipeline.id);
-      sentimentRunId = runs.sentimentRun?.id ?? null;
-      topicModelRunId = runs.topicModelRun?.id ?? null;
     }
 
     // Filters whose runs are missing → empty (cannot satisfy filter).
@@ -661,129 +675,23 @@ export class AnalyticsService {
       return this.emptyCommentsResponse(page, limit);
     }
 
-    const baseParams: unknown[] = [
-      facultyId,
-      query.semesterId,
-      pgArray(versionIds),
-    ];
-    let courseFilter = '';
-    if (query.courseId) {
-      courseFilter = ` AND qs.course_id = ?`;
-      baseParams.push(query.courseId);
-    }
-
-    let sentimentFilterSql = '';
-    if (query.sentiment) {
-      sentimentFilterSql = ` AND EXISTS (
-        SELECT 1 FROM sentiment_result sr
-        WHERE sr.submission_id = qs.id
-          AND sr.run_id = ?
-          AND sr.label = ?
-          AND sr.deleted_at IS NULL
-      )`;
-      baseParams.push(sentimentRunId!, query.sentiment);
-    }
-
-    let themeFilterSql = '';
-    if (query.themeId) {
-      themeFilterSql = ` AND EXISTS (
-        SELECT 1 FROM topic_assignment ta_f
-        JOIN topic t_f ON t_f.id = ta_f.topic_id
-        WHERE ta_f.submission_id = qs.id
-          AND ta_f.topic_id = ?
-          AND ta_f.is_dominant = true
-          AND ta_f.deleted_at IS NULL
-          AND t_f.run_id = ?
-          AND t_f.deleted_at IS NULL
-      )`;
-      baseParams.push(query.themeId, topicModelRunId!);
-    }
-
-    const whereClause = `
-      WHERE qs.faculty_id = ?
-        AND qs.semester_id = ?
-        AND qs.questionnaire_version_id = ANY(?)
-        AND qs.qualitative_comment IS NOT NULL
-        AND TRIM(qs.qualitative_comment) != ''
-        AND qs.deleted_at IS NULL${courseFilter}${sentimentFilterSql}${themeFilterSql}
-    `;
-
-    const countSql = `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`;
-
-    const offset = (page - 1) * limit;
-
-    // Per-row annotation LEFT JOINs when a pipeline is resolved.
-    let annotationSelect = '';
-    let annotationJoins = '';
-    const annotationParams: unknown[] = [];
-    if (sentimentRunId) {
-      annotationSelect += `, sr_ann.label AS sentiment`;
-      annotationJoins += `
-        LEFT JOIN LATERAL (
-          SELECT sr.label FROM sentiment_result sr
-          WHERE sr.submission_id = qs.id
-            AND sr.run_id = ?
-            AND sr.deleted_at IS NULL
-          ORDER BY sr.processed_at DESC
-          LIMIT 1
-        ) sr_ann ON true`;
-      annotationParams.push(sentimentRunId);
-    }
-    if (topicModelRunId) {
-      annotationSelect += `, ta_ann.theme_ids AS theme_ids`;
-      annotationJoins += `
-        LEFT JOIN LATERAL (
-          SELECT array_agg(DISTINCT ta.topic_id) AS theme_ids
-          FROM topic_assignment ta
-          JOIN topic t ON t.id = ta.topic_id
-          WHERE ta.submission_id = qs.id
-            AND ta.is_dominant = true
-            AND ta.deleted_at IS NULL
-            AND t.run_id = ?
-            AND t.deleted_at IS NULL
-        ) ta_ann ON true`;
-      annotationParams.push(topicModelRunId);
-    }
-
-    const paginatedSql = `
-      SELECT qs.qualitative_comment AS text, qs.submitted_at${annotationSelect}
-      FROM questionnaire_submission qs
-      ${annotationJoins}
-      ${whereClause}
-      ORDER BY qs.submitted_at DESC
-      LIMIT ? OFFSET ?
-    `;
-
-    const paginatedParams = [...annotationParams, ...baseParams, limit, offset];
-
+    const { countSql, countParams, selectSql, selectParams } =
+      this.buildAnnotatedCommentsQueryParts(
+        facultyId,
+        versionIds,
+        query,
+        sentimentRunId,
+        topicModelRunId,
+        limit,
+        (page - 1) * limit,
+      );
     const [countRows, commentRows] = await Promise.all([
-      this.em.execute(countSql, baseParams),
-      this.em.execute(paginatedSql, paginatedParams),
+      this.em.execute(countSql, countParams),
+      this.em.execute(selectSql, selectParams),
     ]);
 
     const totalItems = Number(countRows[0]?.total ?? 0);
-    const items: ReportCommentDto[] = commentRows.map((r) => {
-      const row = r as {
-        text: string;
-        submitted_at: string;
-        sentiment?: string | null;
-        theme_ids?: string[] | null;
-      };
-      const dto: ReportCommentDto = {
-        text: row.text,
-        submittedAt: new Date(row.submitted_at).toISOString(),
-      };
-      if (
-        row.sentiment &&
-        SENTIMENT_LABEL_VALUES.includes(row.sentiment as SentimentLabel)
-      ) {
-        dto.sentiment = row.sentiment as SentimentLabel;
-      }
-      if (row.theme_ids && row.theme_ids.length > 0) {
-        dto.themeIds = row.theme_ids;
-      }
-      return dto;
-    });
+    const items = this.mapAnnotatedCommentRows(commentRows);
 
     const totalPages = Math.ceil(totalItems / limit) || 0;
 
@@ -805,6 +713,21 @@ export class AnalyticsService {
   ): Promise<QualitativeSummaryResponseDto> {
     await this.validateFacultyScope(facultyId, query.semesterId);
 
+    return this.BuildQualitativeSummary(facultyId, query);
+  }
+
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetQualitativeSummaryUnscoped(
+    facultyId: string,
+    query: QualitativeSummaryQueryDto,
+  ): Promise<QualitativeSummaryResponseDto> {
+    return this.BuildQualitativeSummary(facultyId, query);
+  }
+
+  private async BuildQualitativeSummary(
+    facultyId: string,
+    query: QualitativeSummaryQueryDto,
+  ): Promise<QualitativeSummaryResponseDto> {
     const emptyResponse: QualitativeSummaryResponseDto = {
       sentimentDistribution: { positive: 0, neutral: 0, negative: 0 },
       themes: [],
@@ -951,6 +874,199 @@ export class AnalyticsService {
       sentimentDistribution,
       themes,
     };
+  }
+
+  private async resolveCommentAnnotationRunIds(
+    facultyId: string,
+    query: BaseFacultyReportQueryDto,
+  ): Promise<{
+    sentimentRunId: string | null;
+    topicModelRunId: string | null;
+    hasPipeline: boolean;
+  }> {
+    const pipeline = await this.findLatestCompletedPipelineByScope(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+      query.courseId,
+    );
+    if (!pipeline) {
+      return {
+        sentimentRunId: null,
+        topicModelRunId: null,
+        hasPipeline: false,
+      };
+    }
+
+    const { sentimentRun, topicModelRun } = await this.resolvePipelineRuns(
+      pipeline.id,
+    );
+    return {
+      sentimentRunId: sentimentRun?.id ?? null,
+      topicModelRunId: topicModelRun?.id ?? null,
+      hasPipeline: true,
+    };
+  }
+
+  private buildAnnotatedCommentsQueryParts(
+    facultyId: string,
+    versionIds: string[],
+    query: BaseFacultyReportQueryDto & {
+      sentiment?: SentimentLabel;
+      themeId?: string;
+    },
+    sentimentRunId: string | null,
+    topicModelRunId: string | null,
+    limit?: number,
+    offset?: number,
+  ): {
+    countSql: string;
+    countParams: unknown[];
+    selectSql: string;
+    selectParams: unknown[];
+  } {
+    const baseParams: unknown[] = [
+      facultyId,
+      query.semesterId,
+      pgArray(versionIds),
+    ];
+    let courseFilter = '';
+    if (query.courseId) {
+      courseFilter = ` AND qs.course_id = ?`;
+      baseParams.push(query.courseId);
+    }
+
+    let sentimentFilterSql = '';
+    if (query.sentiment) {
+      sentimentFilterSql = ` AND EXISTS (
+        SELECT 1 FROM sentiment_result sr
+        WHERE sr.submission_id = qs.id
+          AND sr.run_id = ?
+          AND sr.label = ?
+          AND sr.deleted_at IS NULL
+      )`;
+      baseParams.push(sentimentRunId!, query.sentiment);
+    }
+
+    let themeFilterSql = '';
+    if (query.themeId) {
+      themeFilterSql = ` AND EXISTS (
+        SELECT 1 FROM topic_assignment ta_f
+        JOIN topic t_f ON t_f.id = ta_f.topic_id
+        WHERE ta_f.submission_id = qs.id
+          AND ta_f.topic_id = ?
+          AND ta_f.is_dominant = true
+          AND ta_f.deleted_at IS NULL
+          AND t_f.run_id = ?
+          AND t_f.deleted_at IS NULL
+      )`;
+      baseParams.push(query.themeId, topicModelRunId!);
+    }
+
+    const whereClause = `
+      WHERE qs.faculty_id = ?
+        AND qs.semester_id = ?
+        AND qs.questionnaire_version_id = ANY(?)
+        AND qs.qualitative_comment IS NOT NULL
+        AND TRIM(qs.qualitative_comment) != ''
+        AND qs.deleted_at IS NULL${courseFilter}${sentimentFilterSql}${themeFilterSql}
+    `;
+
+    let annotationSelect = '';
+    let annotationJoins = '';
+    const annotationParams: unknown[] = [];
+    if (sentimentRunId) {
+      annotationSelect += `, sr_ann.label AS sentiment`;
+      annotationJoins += `
+        LEFT JOIN LATERAL (
+          SELECT sr.label FROM sentiment_result sr
+          WHERE sr.submission_id = qs.id
+            AND sr.run_id = ?
+            AND sr.deleted_at IS NULL
+          ORDER BY sr.processed_at DESC
+          LIMIT 1
+        ) sr_ann ON true`;
+      annotationParams.push(sentimentRunId);
+    }
+    if (topicModelRunId) {
+      annotationSelect += `, ta_ann.theme_ids AS theme_ids`;
+      annotationJoins += `
+        LEFT JOIN LATERAL (
+          SELECT array_agg(DISTINCT ta.topic_id) AS theme_ids
+          FROM topic_assignment ta
+          JOIN topic t ON t.id = ta.topic_id
+          WHERE ta.submission_id = qs.id
+            AND ta.is_dominant = true
+            AND ta.deleted_at IS NULL
+            AND t.run_id = ?
+            AND t.deleted_at IS NULL
+        ) ta_ann ON true`;
+      annotationParams.push(topicModelRunId);
+    }
+
+    let paginationSql = '';
+    const selectParams = [...annotationParams, ...baseParams];
+    if (limit != null && offset != null) {
+      paginationSql = `
+      LIMIT ? OFFSET ?`;
+      selectParams.push(limit, offset);
+    }
+
+    return {
+      countSql: `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`,
+      countParams: baseParams,
+      selectSql: `
+      SELECT qs.qualitative_comment AS text, qs.submitted_at${annotationSelect}
+      FROM questionnaire_submission qs
+      ${annotationJoins}
+      ${whereClause}
+      ORDER BY qs.submitted_at DESC${paginationSql}
+    `,
+      selectParams,
+    };
+  }
+
+  private async queryAnnotatedComments(
+    facultyId: string,
+    versionIds: string[],
+    query: BaseFacultyReportQueryDto,
+    sentimentRunId: string | null,
+    topicModelRunId: string | null,
+  ): Promise<ReportCommentDto[]> {
+    const { selectSql, selectParams } = this.buildAnnotatedCommentsQueryParts(
+      facultyId,
+      versionIds,
+      query,
+      sentimentRunId,
+      topicModelRunId,
+    );
+    const rows = await this.em.execute(selectSql, selectParams);
+    return this.mapAnnotatedCommentRows(rows);
+  }
+
+  private mapAnnotatedCommentRows(rows: unknown[]): ReportCommentDto[] {
+    return rows.map((r) => {
+      const row = r as {
+        text: string;
+        submitted_at: string;
+        sentiment?: string | null;
+        theme_ids?: string[] | null;
+      };
+      const dto: ReportCommentDto = {
+        text: row.text,
+        submittedAt: new Date(row.submitted_at).toISOString(),
+      };
+      if (
+        row.sentiment &&
+        SENTIMENT_LABEL_VALUES.includes(row.sentiment as SentimentLabel)
+      ) {
+        dto.sentiment = row.sentiment as SentimentLabel;
+      }
+      if (row.theme_ids && row.theme_ids.length > 0) {
+        dto.themeIds = row.theme_ids;
+      }
+      return dto;
+    });
   }
 
   private emptyCommentsResponse(
@@ -1273,8 +1389,7 @@ export class AnalyticsService {
 
     const dimensions = [...dimensionAggregate.entries()]
       .map(([code, { weightedSum, responseCount }]) => {
-        const average =
-          Math.round((weightedSum / responseCount) * 100) / 100;
+        const average = Math.round((weightedSum / responseCount) * 100) / 100;
         return {
           code,
           displayName: dimensionDisplayNames.get(code) ?? code,

@@ -4,10 +4,23 @@
   box-sizing: border-box;
 }
 
+:root {
+  --brand-blue: #1f39d1;
+  --brand-blue-dark: #172a99;
+  --brand-yellow: #ffd21a;
+  --brand-neutral: #f5f2ed;
+  --brand-neutral-dark: #ded8cf;
+  --text-strong: #171717;
+  --text-muted: #505050;
+  --line-soft: #d8d2ca;
+  --surface-soft: #fcfbf8;
+  --surface-blue: #eef2ff;
+}
+
 body {
   font-family: Arial, Helvetica, sans-serif;
   font-size: 10pt;
-  color: #000;
+  color: var(--text-strong);
   line-height: 1.4;
 }
 
@@ -31,7 +44,8 @@ body {
 
 .header-left .questionnaire-type {
   font-size: 10pt;
-  color: #333;
+  color: var(--brand-blue-dark);
+  font-weight: bold;
 }
 
 .header-right {
@@ -45,7 +59,7 @@ body {
 
 .header-right .academic-year {
   font-size: 10pt;
-  color: #333;
+  color: var(--text-muted);
 }
 
 .confidential-banner {
@@ -63,16 +77,21 @@ body {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 12px;
+  border: 1px solid var(--line-soft);
+  background-color: var(--surface-soft);
 }
 
 .info-table td {
-  padding: 4px 8px;
+  padding: 8px 10px;
   font-size: 10pt;
+  border: 1px solid var(--line-soft);
 }
 
 .info-table .label {
   font-weight: bold;
   width: 20%;
+  color: var(--brand-blue-dark);
+  background-color: var(--brand-neutral);
 }
 
 .info-table .value {
@@ -82,30 +101,37 @@ body {
 .section-table {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   page-break-inside: avoid;
+  border: 1px solid var(--line-soft);
 }
 
 .section-table th,
 .section-table td {
-  border: 1px solid #000;
-  padding: 4px 8px;
+  padding: 7px 10px;
   font-size: 10pt;
+  border: 1px solid var(--line-soft);
+  vertical-align: top;
 }
 
 .section-header th {
-  background-color: #f0f0f0;
+  background-color: var(--brand-blue);
+  color: #fff;
   text-align: left;
   font-size: 11pt;
   font-weight: bold;
-  padding: 6px 8px;
+  padding: 10px 12px;
+  border-color: var(--brand-blue-dark);
 }
 
 .column-header th {
-  background-color: #e8e8e8;
+  background-color: var(--brand-neutral);
+  color: var(--text-strong);
   font-weight: bold;
   text-align: center;
   font-size: 9pt;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .column-header .col-question {
@@ -128,9 +154,14 @@ body {
   font-size: 9pt;
 }
 
+.section-table tbody tr:nth-child(even) td {
+  background-color: var(--surface-soft);
+}
+
 .section-footer td {
-  background-color: #f8f8f8;
+  background-color: var(--surface-blue);
   font-weight: bold;
+  color: var(--brand-blue-dark);
 }
 
 .overall-table {
@@ -138,29 +169,34 @@ body {
   border-collapse: collapse;
   margin-bottom: 16px;
   page-break-inside: avoid;
+  border: 2px solid var(--brand-blue);
+  background: linear-gradient(180deg, var(--surface-blue) 0%, #ffffff 100%);
 }
 
 .overall-table td {
-  border: 2px solid #000;
-  padding: 8px;
+  padding: 10px 12px;
   font-size: 11pt;
+  border: 1px solid rgba(31, 57, 209, 0.18);
 }
 
 .overall-table .label {
   width: 60%;
-  background-color: #e0e0e0;
+  background-color: var(--brand-blue);
+  color: #fff;
+  letter-spacing: 0.3px;
 }
 
 .overall-table .col-average {
   width: 15%;
   text-align: center;
-  background-color: #f0f0f0;
+  background-color: var(--surface-blue);
+  color: var(--brand-blue-dark);
 }
 
 .overall-table .col-interpretation {
   width: 25%;
   text-align: center;
-  background-color: #f0f0f0;
+  background-color: #fff;
 }
 
 .comments-section {
@@ -172,8 +208,9 @@ body {
   font-size: 12pt;
   font-weight: bold;
   margin-bottom: 8px;
-  border-bottom: 1px solid #000;
+  border-bottom: 1px solid var(--line-soft);
   padding-bottom: 4px;
+  color: var(--brand-blue-dark);
 }
 
 .comments-list {
@@ -183,14 +220,13 @@ body {
 }
 
 .comment-card {
-  border: 1px solid #d9d9d9;
-  border-radius: 8px;
-  padding: 8px 10px;
-  background-color: #fafafa;
+  border: 1px solid var(--line-soft);
+  padding: 7px 10px;
+  background-color: var(--surface-soft);
 }
 
-.comment-tags {
-  margin-bottom: 6px;
+.comment-line {
+  line-height: 1.5;
 }
 
 .comment-chip {
@@ -221,18 +257,19 @@ body {
 }
 
 .theme-chip {
-  background-color: #efefef;
-  color: #333;
-  border-color: #d0d0d0;
+  background-color: var(--brand-neutral);
+  color: var(--text-strong);
+  border-color: var(--brand-neutral-dark);
 }
 
 .comment-text {
   font-size: 10pt;
   line-height: 1.45;
+  vertical-align: middle;
 }
 
 .no-comments {
   font-style: italic;
-  color: #666;
+  color: var(--text-muted);
   font-size: 10pt;
 }

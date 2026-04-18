@@ -77,15 +77,15 @@
       <div class="comments-list">
         {{#each comments}}
         <div class="comment-card">
-          <div class="comment-tags">
+          <div class="comment-line">
             {{#if sentimentLabel}}
             <span class="comment-chip sentiment-chip sentiment-{{sentiment}}">{{sentimentLabel}}</span>
             {{/if}}
             {{#each themeLabels}}
             <span class="comment-chip theme-chip">{{this}}</span>
             {{/each}}
+            <span class="comment-text">{{text}}</span>
           </div>
-          <p class="comment-text">{{text}}</p>
         </div>
         {{/each}}
       </div>

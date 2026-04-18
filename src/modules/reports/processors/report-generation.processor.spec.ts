@@ -20,7 +20,8 @@ describe('ReportGenerationProcessor', () => {
   let mockEm: { fork: jest.Mock };
   let mockAnalyticsService: {
     GetFacultyReportUnscoped: jest.Mock;
-    GetAllFacultyReportComments: jest.Mock;
+    GetAllFacultyReportCommentsAnnotatedUnscoped: jest.Mock;
+    GetQualitativeSummaryUnscoped: jest.Mock;
   };
   let mockPdfService: { GenerateFacultyEvaluationPdf: jest.Mock };
   let mockStorageProvider: { Upload: jest.Mock };
@@ -48,7 +49,8 @@ describe('ReportGenerationProcessor', () => {
 
     mockAnalyticsService = {
       GetFacultyReportUnscoped: jest.fn(),
-      GetAllFacultyReportComments: jest.fn(),
+      GetAllFacultyReportCommentsAnnotatedUnscoped: jest.fn(),
+      GetQualitativeSummaryUnscoped: jest.fn(),
     };
 
     mockPdfService = {
@@ -81,14 +83,26 @@ describe('ReportGenerationProcessor', () => {
   describe('process — happy path', () => {
     it('should fetch data, generate PDF, upload, and set status to completed', async () => {
       const reportData = { submissionCount: 10 };
-      const comments = [{ text: 'Great course' }];
+      const comments = [
+        {
+          text: 'Great course',
+          sentiment: 'positive',
+          themeIds: ['theme-1', 'theme-missing'],
+        },
+      ];
+      const qualitativeSummary = {
+        themes: [{ themeId: 'theme-1', label: 'Class Engagement Strategies' }],
+      };
       const pdfBuffer = Buffer.from('pdf-content');
 
       mockAnalyticsService.GetFacultyReportUnscoped.mockResolvedValue(
         reportData,
       );
-      mockAnalyticsService.GetAllFacultyReportComments.mockResolvedValue(
+      mockAnalyticsService.GetAllFacultyReportCommentsAnnotatedUnscoped.mockResolvedValue(
         comments,
+      );
+      mockAnalyticsService.GetQualitativeSummaryUnscoped.mockResolvedValue(
+        qualitativeSummary,
       );
       mockPdfService.GenerateFacultyEvaluationPdf.mockResolvedValue(pdfBuffer);
 
@@ -115,7 +129,13 @@ describe('ReportGenerationProcessor', () => {
 
       // Fetches comments
       expect(
-        mockAnalyticsService.GetAllFacultyReportComments,
+        mockAnalyticsService.GetAllFacultyReportCommentsAnnotatedUnscoped,
+      ).toHaveBeenCalledWith('faculty-1', {
+        semesterId: 'sem-1',
+        questionnaireTypeCode: 'EVAL',
+      });
+      expect(
+        mockAnalyticsService.GetQualitativeSummaryUnscoped,
       ).toHaveBeenCalledWith('faculty-1', {
         semesterId: 'sem-1',
         questionnaireTypeCode: 'EVAL',
@@ -124,7 +144,13 @@ describe('ReportGenerationProcessor', () => {
       // Generates PDF
       expect(mockPdfService.GenerateFacultyEvaluationPdf).toHaveBeenCalledWith(
         reportData,
-        comments,
+        [
+          {
+            text: 'Great course',
+            sentiment: 'positive',
+            themeLabels: ['Class Engagement Strategies'],
+          },
+        ],
       );
 
       // Uploads to storage
@@ -150,7 +176,12 @@ describe('ReportGenerationProcessor', () => {
       mockAnalyticsService.GetFacultyReportUnscoped.mockResolvedValue({
         submissionCount: 5,
       });
-      mockAnalyticsService.GetAllFacultyReportComments.mockResolvedValue([]);
+      mockAnalyticsService.GetAllFacultyReportCommentsAnnotatedUnscoped.mockResolvedValue(
+        [],
+      );
+      mockAnalyticsService.GetQualitativeSummaryUnscoped.mockResolvedValue({
+        themes: [],
+      });
       mockPdfService.GenerateFacultyEvaluationPdf.mockResolvedValue(
         Buffer.from('pdf'),
       );
@@ -181,7 +212,10 @@ describe('ReportGenerationProcessor', () => {
 
       // Should NOT generate PDF, fetch comments, or upload
       expect(
-        mockAnalyticsService.GetAllFacultyReportComments,
+        mockAnalyticsService.GetAllFacultyReportCommentsAnnotatedUnscoped,
+      ).not.toHaveBeenCalled();
+      expect(
+        mockAnalyticsService.GetQualitativeSummaryUnscoped,
       ).not.toHaveBeenCalled();
       expect(
         mockPdfService.GenerateFacultyEvaluationPdf,

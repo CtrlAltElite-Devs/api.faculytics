@@ -1,12 +1,14 @@
 import { Logger, Inject } from '@nestjs/common';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
+import { RequestContext } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { QueueName } from 'src/configurations/common/queue-names';
 import { env } from 'src/configurations/index.config';
 import { ReportJob } from 'src/entities/report-job.entity';
 import { AnalyticsService } from 'src/modules/analytics/analytics.service';
 import { PdfService } from '../services/pdf.service';
+import { PdfCommentDto } from '../dto/pdf-comment.dto';
 import {
   StorageProvider,
   STORAGE_PROVIDER,
@@ -44,10 +46,51 @@ export class ReportGenerationProcessor extends WorkerHost {
     reportJob.status = 'active';
     await fork.flush();
 
-    // Fetch report data (unscoped — authorization was performed at enqueue time)
-    const reportData = await this.analyticsService.GetFacultyReportUnscoped(
-      facultyId,
-      { semesterId, questionnaireTypeCode },
+    const { reportData, pdfComments } = await RequestContext.create(
+      this.em,
+      async () => {
+        // Fetch report data (unscoped — authorization was performed at enqueue time)
+        const reportData = await this.analyticsService.GetFacultyReportUnscoped(
+          facultyId,
+          {
+            semesterId,
+            questionnaireTypeCode,
+          },
+        );
+
+        // Skip downstream qualitative work if there is nothing to render.
+        if (reportData.submissionCount === 0) {
+          return { reportData, pdfComments: [] as PdfCommentDto[] };
+        }
+
+        const [comments, qualitativeSummary] = await Promise.all([
+          this.analyticsService.GetAllFacultyReportCommentsAnnotatedUnscoped(
+            facultyId,
+            { semesterId, questionnaireTypeCode },
+          ),
+          this.analyticsService.GetQualitativeSummaryUnscoped(facultyId, {
+            semesterId,
+            questionnaireTypeCode,
+          }),
+        ]);
+
+        const themeLabelById = new Map(
+          qualitativeSummary.themes.map((theme) => [
+            theme.themeId,
+            theme.label,
+          ]),
+        );
+        const pdfComments: PdfCommentDto[] = comments.map((comment) => ({
+          text: comment.text,
+          sentiment: comment.sentiment,
+          themeLabels:
+            comment.themeIds
+              ?.map((themeId) => themeLabelById.get(themeId))
+              .filter((label): label is string => !!label) ?? [],
+        }));
+
+        return { reportData, pdfComments };
+      },
     );
 
     // Skip PDF generation if no submissions
@@ -61,16 +104,10 @@ export class ReportGenerationProcessor extends WorkerHost {
       return;
     }
 
-    // Fetch all comments
-    const comments = await this.analyticsService.GetAllFacultyReportComments(
-      facultyId,
-      { semesterId, questionnaireTypeCode },
-    );
-
     // Generate PDF
     const pdfBuffer = await this.pdfService.GenerateFacultyEvaluationPdf(
       reportData,
-      comments,
+      pdfComments,
     );
 
     // Build storage key

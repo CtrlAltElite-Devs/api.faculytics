@@ -5,6 +5,7 @@ const mockBrowserClose = jest.fn();
 const mockPageSetContent = jest.fn();
 const mockPagePdf = jest.fn();
 const mockPageClose = jest.fn();
+const mockTemplateDelegate = jest.fn().mockReturnValue('<html>rendered</html>');
 
 const mockBrowser = {
   newPage: mockNewPage,
@@ -29,9 +30,6 @@ jest.mock('fs', () => ({
 }));
 
 jest.mock('handlebars', () => {
-  const mockTemplateDelegate = jest
-    .fn()
-    .mockReturnValue('<html>rendered</html>');
   return {
     compile: jest.fn().mockReturnValue(mockTemplateDelegate),
   };
@@ -39,7 +37,7 @@ jest.mock('handlebars', () => {
 
 import { PdfService } from './pdf.service';
 import { FacultyReportResponseDto } from 'src/modules/analytics/dto/responses/faculty-report.response.dto';
-import { ReportCommentDto } from 'src/modules/analytics/dto/responses/faculty-report-comments.response.dto';
+import { PdfCommentDto } from '../dto/pdf-comment.dto';
 
 describe('PdfService', () => {
   let service: PdfService;
@@ -79,9 +77,13 @@ describe('PdfService', () => {
     overallInterpretation: 'Very Satisfactory',
   };
 
-  const mockComments: ReportCommentDto[] = [
-    { text: 'Great professor!', submittedAt: '2024-06-01' },
-    { text: 'Very helpful', submittedAt: '2024-06-02' },
+  const mockComments: PdfCommentDto[] = [
+    {
+      text: 'Great professor!',
+      sentiment: 'positive',
+      themeLabels: ['Class Engagement Strategies'],
+    },
+    { text: 'Very helpful', themeLabels: [] },
   ];
 
   beforeEach(async () => {
@@ -119,6 +121,24 @@ describe('PdfService', () => {
         printBackground: true,
         margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
       });
+      expect(mockTemplateDelegate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          comments: [
+            expect.objectContaining({
+              text: 'Great professor!',
+              sentiment: 'positive',
+              sentimentLabel: 'Positive',
+              themeLabels: ['Class Engagement Strategies'],
+            }),
+            expect.objectContaining({
+              text: 'Very helpful',
+              themeLabels: [],
+              sentimentLabel: null,
+            }),
+          ],
+          hasComments: true,
+        }),
+      );
       expect(mockPageClose).toHaveBeenCalledTimes(1);
     });
 

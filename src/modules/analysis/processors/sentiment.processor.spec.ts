@@ -318,6 +318,58 @@ describe('SentimentProcessor', () => {
     });
   });
 
+  describe('Persist — servedBy round-trip (vLLM-primary feature)', () => {
+    it('preserves servedBy inside rawResult JSONB when the worker supplies it', async () => {
+      setCounter(1, 1);
+
+      const result = buildResult({
+        results: [
+          {
+            submissionId: 's1',
+            positive: 1,
+            neutral: 0,
+            negative: 0,
+            servedBy: 'vllm',
+          } as unknown as BatchAnalysisResultMessage['results'][number],
+          {
+            submissionId: 's2',
+            positive: 0.05,
+            neutral: 0.15,
+            negative: 0.8,
+            servedBy: 'openai',
+          } as unknown as BatchAnalysisResultMessage['results'][number],
+        ],
+      });
+
+      await processor.Persist(createMockBatchJob(), result);
+
+      const createCalls = tx.create.mock.calls as Array<
+        [unknown, { rawResult: Record<string, unknown> }]
+      >;
+      expect(createCalls).toHaveLength(2);
+      const rawOf = (idx: number) => createCalls[idx][1].rawResult;
+      expect(rawOf(0)).toMatchObject({ servedBy: 'vllm', submissionId: 's1' });
+      expect(rawOf(1)).toMatchObject({
+        servedBy: 'openai',
+        submissionId: 's2',
+      });
+    });
+
+    it('does not error when the worker omits servedBy (backward compatibility)', async () => {
+      setCounter(1, 1);
+
+      await processor.Persist(createMockBatchJob(), buildResult());
+
+      expect(tx.create).toHaveBeenCalledTimes(2);
+      const createCalls = tx.create.mock.calls as Array<
+        [unknown, { rawResult: Record<string, unknown> }]
+      >;
+      const rawOf = (idx: number) => createCalls[idx][1].rawResult;
+      expect(rawOf(0).servedBy).toBeUndefined();
+      expect(rawOf(1).servedBy).toBeUndefined();
+    });
+  });
+
   describe('Persist — idempotency and supersede', () => {
     it('swallows UniqueConstraintViolationException as duplicate-swallowed', async () => {
       tx.flush.mockRejectedValue(

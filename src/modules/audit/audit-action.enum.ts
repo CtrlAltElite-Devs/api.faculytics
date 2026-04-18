@@ -5,6 +5,7 @@ export const AuditAction = {
   AUTH_TOKEN_REFRESH: 'auth.token.refresh',
   ADMIN_SYNC_TRIGGER: 'admin.sync.trigger',
   ADMIN_SYNC_SCHEDULE_UPDATE: 'admin.sync-schedule.update',
+  ADMIN_SENTIMENT_VLLM_CONFIG_UPDATE: 'admin.sentiment-vllm-config.update',
   ADMIN_USER_SCOPE_UPDATE: 'admin.user.scope.update',
   ADMIN_USER_CREATE: 'admin.user.create',
   QUESTIONNAIRE_SUBMIT: 'questionnaire.submit',

@@ -130,3 +130,74 @@ When callers pass `programCode` on `overview` or `attention`, the service valida
 The silent short-circuit avoids leaking existence information (a 403 tells the caller "that program exists but you can't see it"; an empty result does not). Chairpersons already cannot enumerate programs outside their scope via `/curriculum/programs` — that endpoint applies the same `ResolveProgramIds` filter.
 
 `GetAttentionList` adds `AND program_code_snapshot = ?` to the `mv_faculty_semester_stats` source of the consistency-gap and skipped-signals subqueries. The trend-based signal joins `mv_faculty_trends` against `mv_faculty_semester_stats` on `(faculty_id, department_code_snapshot)` so trend rows can be filtered by the per-semester program snapshot — trend rows are not scoped to a single program by themselves.
+
+## Faculty Report Endpoints
+
+A separate set of endpoints serves the per-faculty evaluation report — they read live submission/answer data rather than the materialized views and are the only analytics endpoints that allow the FACULTY role.
+
+| Method | Path                                                | Required query                                                                                         | Description                                                          |
+| ------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| GET    | `/analytics/faculty/:facultyId/report`              | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`)                                          | Per-section/question averages, dimension averages, overall rating    |
+| GET    | `/analytics/faculty/:facultyId/report/comments`     | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`, `page`, `limit`, `sentiment`, `themeId`) | Paginated qualitative comments with sentiment and theme annotations  |
+| GET    | `/analytics/faculty/:facultyId/qualitative-summary` | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`)                                          | Aggregated sentiment distribution + ranked themes with sample quotes |
+| GET    | `/analytics/faculty/:facultyId/questionnaire-types` | `semesterId`                                                                                           | Questionnaire types that have submissions for this faculty/semester  |
+
+### Faculty Self-View Authorization
+
+Class-level `@UseJwtGuard(DEAN, CHAIRPERSON, CAMPUS_HEAD, SUPER_ADMIN)` restricts the controller, but each faculty endpoint widens with a method-level `@UseJwtGuard(... , FACULTY)` and then calls `assertFacultySelfScope(currentUser, facultyId)`. FACULTY may only request their own `facultyId` — any other id throws `ForbiddenException`. Non-FACULTY roles are unaffected by the helper.
+
+### Quantitative Distributions
+
+`GET /analytics/faculty/:facultyId/report` returns three quantitative shapes computed in-memory from a single per-question aggregation query:
+
+- `sections[].questions[].ratingCounts: Record<string, number>` — counts keyed by raw numeric value (`"1".."5"` for Likert-5, `"0"/"1"` for YES_NO). Bucketed by raw value, not by interpretation label.
+- `sections[].responseCount` — total answered responses summed across the section's questions.
+- `dimensions[]: { code, displayName, average, responseCount, interpretation }` — response-count-weighted averages grouped by the schema's `dimensionCode`. Display names resolve against the `Dimension` registry.
+
+Dimension display names come from the registry rather than the schema so that a future questionnaire revision keeps the same dimension labels (and the registry is the canonical source for dimension copy).
+
+### Qualitative Summary
+
+`GET /analytics/faculty/:facultyId/qualitative-summary` returns:
+
+```typescript
+{
+  sentimentDistribution: {
+    positive: number;
+    neutral: number;
+    negative: number;
+  }
+  themes: Array<{
+    themeId: string;
+    label: string;
+    count: number;
+    sentimentSplit: { positive; neutral; negative };
+    sampleQuotes?: string[]; // up to 3, PII-scrubbed, length-capped
+  }>;
+}
+```
+
+Sample quotes are truncated to ~280 characters and run through name redaction before being returned. Themes are ranked by `count` desc.
+
+### Comments Filtering
+
+`GET /analytics/faculty/:facultyId/report/comments` accepts optional `sentiment` (`positive | neutral | negative`) and `themeId` filters. Each row in the response is annotated with its `sentiment` label and `themeIds[]`. The `themeId` filter matches on the comment's **dominant** theme assignment.
+
+## Voice Breakdown & Facet Tagging
+
+When a pipeline aggregates multiple questionnaire types into one analysis (DEPARTMENT or CAMPUS scope), each `RecommendedAction` is tagged with a `facet` to help readers attribute the recommendation back to a primary questionnaire dimension.
+
+| Questionnaire code         | Facet             |
+| -------------------------- | ----------------- |
+| `FACULTY_FEEDBACK`         | `facultyFeedback` |
+| `FACULTY_IN_CLASSROOM`     | `inClassroom`     |
+| `FACULTY_OUT_OF_CLASSROOM` | `outOfClassroom`  |
+| anything else / mixed      | `overall`         |
+
+`RecommendationGenerationService.deriveFacetFromTypeCodeCounts()` counts how many of an action's contributing submissions came from each primary questionnaire-type code. The top code is assigned only when its share is `≥ FACET_DOMINANCE_THRESHOLD` (currently `0.6`); below that, the action falls back to `overall`. The threshold is intentionally a code constant (no env flag) — tuning it is a code-review decision because it changes evidence semantics.
+
+Pipeline status responses also surface a per-facet `voiceBreakdown` (counts of contributing submissions per questionnaire code) so the frontend can render attribution alongside the action list.
+
+### Faculty Self-View Redaction
+
+`AnalysisAccessService.RedactIfFacultySelfView()` strips `sampleQuotes[]` from every `TopicSource` in `recommendations.actions[].supportingEvidence.sources` when the requester is a FACULTY user reading their **own** pipeline. Non-faculty roles see the full payload; ownership is determined by `pipeline.faculty.id === requester.id`. Adding any new endpoint that returns verbatim student text must call this helper or implement equivalent redaction.

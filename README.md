@@ -50,18 +50,21 @@ cp .env.sample .env
 
 **Optional Variables:**
 
-| Variable                           | Default       | Description                                         |
-| ---------------------------------- | ------------- | --------------------------------------------------- |
-| `PORT`                             | `5200`        | Server port                                         |
-| `NODE_ENV`                         | `development` | `development` \| `production` \| `test`             |
-| `OPENAPI_MODE`                     | `false`       | Set to `"true"` to enable Swagger docs              |
-| `SUPER_ADMIN_USERNAME`             | `superadmin`  | Default super admin username                        |
-| `SUPER_ADMIN_PASSWORD`             | `password123` | Default super admin password                        |
-| `SYNC_ON_STARTUP`                  | `false`       | Run course and enrollment sync on startup           |
-| `DISABLE_SYNC_CATEGORY_ON_STARTUP` | `false`       | Skip category sync on startup (faster dev restarts) |
-| `MOODLE_SYNC_CONCURRENCY`          | `3`           | Max concurrent Moodle HTTP calls during sync (1-20) |
+| Variable                               | Default       | Description                                                                                |
+| -------------------------------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| `PORT`                                 | `5200`        | Server port                                                                                |
+| `NODE_ENV`                             | `development` | `development` \| `production` \| `test`                                                    |
+| `OPENAPI_MODE`                         | `false`       | Set to `"true"` to enable Swagger docs                                                     |
+| `SUPER_ADMIN_USERNAME`                 | `superadmin`  | Default super admin username (also used by the tiered scheduler for system attribution)    |
+| `SUPER_ADMIN_PASSWORD`                 | `password123` | Default super admin password                                                               |
+| `SYNC_ON_STARTUP`                      | `false`       | Run course and enrollment sync on startup                                                  |
+| `DISABLE_SYNC_CATEGORY_ON_STARTUP`     | `false`       | Skip category sync on startup (faster dev restarts)                                        |
+| `MOODLE_SYNC_CONCURRENCY`              | `3`           | Max concurrent Moodle HTTP calls during sync (1-20)                                        |
+| `SENTIMENT_WORKER_URL`                 | —             | RunPod/mock worker URL for sentiment analysis                                              |
+| `SENTIMENT_CHUNK_SIZE`                 | `50`          | Submissions per sentiment chunk dispatched to the worker                                   |
+| `ALLOW_SENTIMENT_VLLM_ENABLED_IN_PROD` | `false`       | Production safety gate — must be `true` to enable vLLM dispatch when `NODE_ENV=production` |
 
-See `.env.sample` for the full list including BullMQ and analysis worker options.
+See `.env.sample` for the full list including BullMQ, embeddings, topic-model, and recommendation worker options.
 
 ### 3. Database Initialization
 

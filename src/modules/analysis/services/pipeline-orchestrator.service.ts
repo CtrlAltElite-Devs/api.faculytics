@@ -85,6 +85,7 @@ import { RecommendationsResponseDto } from '../dto/responses/recommendations.res
 import { AnalysisService } from '../analysis.service';
 import { TopicLabelService } from './topic-label.service';
 import { AnalysisAccessService } from './analysis-access.service';
+import { SentimentConfigService } from './sentiment-config.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
 import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { AuditService } from 'src/modules/audit/audit.service';
@@ -141,6 +142,7 @@ export class PipelineOrchestratorService {
     private readonly currentUserService: CurrentUserService,
     private readonly schedulerRegistry: SchedulerRegistry,
     private readonly auditService: AuditService,
+    private readonly sentimentConfigService: SentimentConfigService,
     @InjectQueue(QueueName.SENTIMENT) private readonly sentimentQueue: Queue,
     @InjectQueue(QueueName.TOPIC_MODEL) private readonly topicModelQueue: Queue,
     @InjectQueue(QueueName.RECOMMENDATIONS)
@@ -1683,6 +1685,15 @@ export class PipelineOrchestratorService {
       env.SENTIMENT_CHUNK_SIZE,
     );
 
+    // Snapshot the vLLM config ONCE per dispatch so every chunk in a single
+    // batch sees the same URL/model — avoids mid-batch drift if an operator
+    // rotates the URL while dispatch is in flight.
+    const vllmConfigSnapshot = await this.sentimentConfigService.readConfig();
+    const dispatchVllmConfig =
+      vllmConfigSnapshot.enabled && vllmConfigSnapshot.url
+        ? vllmConfigSnapshot
+        : undefined;
+
     // `run.jobId` under chunking names the BullMQ jobId *prefix* shared by all this run's chunks;
     // per-chunk jobIds are derived as `${run.jobId}--<paddedChunkIndex>`.
     const run = em.create(SentimentRun, {
@@ -1711,6 +1722,7 @@ export class PipelineOrchestratorService {
           chunkCount: chunks.length,
         },
         publishedAt: new Date().toISOString(),
+        ...(dispatchVllmConfig ? { vllmConfig: dispatchVllmConfig } : {}),
       };
       batchAnalysisJobSchema.parse(envelope);
 

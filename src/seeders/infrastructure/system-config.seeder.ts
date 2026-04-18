@@ -20,6 +20,12 @@ export class SystemConfigSeeder extends Seeder {
         value: '60',
         description: 'Interval for Moodle synchronization in minutes.',
       },
+      {
+        key: 'SENTIMENT_VLLM_CONFIG',
+        value: JSON.stringify({ url: '', model: '', enabled: false }),
+        description:
+          'vLLM-primary sentiment classifier runtime config (URL, model, enabled).',
+      },
     ];
 
     for (const config of configs) {

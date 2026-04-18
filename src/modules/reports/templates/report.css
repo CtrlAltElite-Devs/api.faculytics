@@ -102,8 +102,19 @@ body {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 12px;
-  page-break-inside: avoid;
   border: 1px solid var(--line-soft);
+}
+
+.section-table thead {
+  display: table-header-group;
+}
+
+.section-table tfoot {
+  display: table-row-group;
+}
+
+.section-table tr {
+  page-break-inside: avoid;
 }
 
 .section-table th,

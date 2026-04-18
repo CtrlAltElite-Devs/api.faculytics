@@ -14,10 +14,16 @@ type DispatchCtx = {
   emCreate: jest.Mock;
   emFlush: jest.Mock;
   emFind: jest.Mock;
+  readConfig: jest.Mock;
 };
 
 function buildOrchestrator(
   findResult: Array<{ id: string; cleanedComment: string | null }>,
+  vllmConfig: { url: string; model: string; enabled: boolean } = {
+    url: '',
+    model: '',
+    enabled: false,
+  },
 ): DispatchCtx {
   const emCreate = jest
     .fn()
@@ -29,6 +35,7 @@ function buildOrchestrator(
   const emFind = jest.fn().mockResolvedValue(findResult);
   const queueAdd = jest.fn().mockResolvedValue(undefined);
   const failPipeline = jest.fn().mockResolvedValue(undefined);
+  const readConfig = jest.fn().mockResolvedValue(vllmConfig);
 
   const orchestrator = Object.create(
     PipelineOrchestratorService.prototype as object,
@@ -43,6 +50,9 @@ function buildOrchestrator(
   Object.defineProperty(orchestrator, 'failPipeline', {
     value: failPipeline,
   });
+  Object.defineProperty(orchestrator, 'sentimentConfigService', {
+    value: { readConfig },
+  });
 
   return {
     orchestrator,
@@ -51,6 +61,7 @@ function buildOrchestrator(
     emCreate,
     emFlush,
     emFind,
+    readConfig,
   };
 }
 
@@ -164,5 +175,85 @@ describe('PipelineOrchestratorService.dispatchSentiment (chunking)', () => {
       expect.objectContaining({ id: 'p1' }),
       'No submissions with cleaned comments found for sentiment analysis',
     );
+  });
+
+  describe('vllmConfig injection', () => {
+    it('injects vllmConfig on every chunk envelope when enabled + url present', async () => {
+      const submissions = Array.from({ length: 120 }, (_, i) => ({
+        id: `s${i}`,
+        cleanedComment: `c${i}`,
+      }));
+      const ctx = buildOrchestrator(submissions, {
+        url: 'https://vllm.example',
+        model: 'gemma',
+        enabled: true,
+      });
+
+      await dispatch(ctx.orchestrator, fakeEm(ctx), fakePipeline());
+
+      expect(ctx.queueAdd).toHaveBeenCalledTimes(
+        Math.ceil(120 / env.SENTIMENT_CHUNK_SIZE),
+      );
+      for (const call of ctx.queueAdd.mock.calls) {
+        const envelope = call[1];
+        expect(envelope.vllmConfig).toEqual({
+          url: 'https://vllm.example',
+          model: 'gemma',
+          enabled: true,
+        });
+      }
+    });
+
+    it('omits vllmConfig when enabled=false', async () => {
+      const submissions = Array.from({ length: 10 }, (_, i) => ({
+        id: `s${i}`,
+        cleanedComment: `c${i}`,
+      }));
+      const ctx = buildOrchestrator(submissions, {
+        url: 'https://vllm.example',
+        model: 'gemma',
+        enabled: false,
+      });
+
+      await dispatch(ctx.orchestrator, fakeEm(ctx), fakePipeline());
+
+      for (const call of ctx.queueAdd.mock.calls) {
+        expect(call[1].vllmConfig).toBeUndefined();
+      }
+    });
+
+    it('omits vllmConfig when url is empty even if enabled=true', async () => {
+      const submissions = Array.from({ length: 10 }, (_, i) => ({
+        id: `s${i}`,
+        cleanedComment: `c${i}`,
+      }));
+      const ctx = buildOrchestrator(submissions, {
+        url: '',
+        model: 'gemma',
+        enabled: true,
+      });
+
+      await dispatch(ctx.orchestrator, fakeEm(ctx), fakePipeline());
+
+      for (const call of ctx.queueAdd.mock.calls) {
+        expect(call[1].vllmConfig).toBeUndefined();
+      }
+    });
+
+    it('reads the vllm config ONCE per dispatch, not per chunk', async () => {
+      const submissions = Array.from({ length: 200 }, (_, i) => ({
+        id: `s${i}`,
+        cleanedComment: `c${i}`,
+      }));
+      const ctx = buildOrchestrator(submissions, {
+        url: 'https://v',
+        model: 'gemma',
+        enabled: true,
+      });
+
+      await dispatch(ctx.orchestrator, fakeEm(ctx), fakePipeline());
+
+      expect(ctx.readConfig).toHaveBeenCalledTimes(1);
+    });
   });
 });

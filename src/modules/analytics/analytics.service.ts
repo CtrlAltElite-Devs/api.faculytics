@@ -1,6 +1,7 @@
 import {
   Injectable,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
@@ -13,12 +14,20 @@ import {
 } from 'src/modules/questionnaires/lib/questionnaire.types';
 import { getInterpretation } from './lib/interpretation.util';
 import {
+  COMPOSITE_TYPE_ORDER,
+  COMPOSITE_WEIGHTS,
+  CompositeCoverageStatus,
+  CompositeQuestionnaireTypeCode,
+  round2,
+} from './lib/composite-rating.constants';
+import {
   DepartmentOverviewQueryDto,
   AttentionListQueryDto,
   FacultyTrendsQueryDto,
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
   BaseFacultyReportQueryDto,
+  FacultyOverviewQueryDto,
   QualitativeSummaryQueryDto,
   SentimentLabel,
 } from './dto/analytics-query.dto';
@@ -37,6 +46,10 @@ import {
   FacultyTrendDto,
 } from './dto/responses/faculty-trends.response.dto';
 import { FacultyReportResponseDto } from './dto/responses/faculty-report.response.dto';
+import {
+  FacultyOverviewResponseDto,
+  FacultyOverviewContributionDto,
+} from './dto/responses/faculty-overview.response.dto';
 import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report-comments.response.dto';
 import {
   FacultyQuestionnaireTypeOptionDto,
@@ -105,6 +118,8 @@ function scrubQuote(raw: string): string {
 
 @Injectable()
 export class AnalyticsService {
+  private readonly logger = new Logger(AnalyticsService.name);
+
   constructor(
     private readonly em: EntityManager,
     private readonly scopeResolver: ScopeResolverService,
@@ -593,6 +608,227 @@ export class AnalyticsService {
       questionnaireTypeName,
       query,
     );
+  }
+
+  /**
+   * Composite overall rating across the three faculty questionnaire types
+   * (50% FEEDBACK / 25% OUT / 25% IN). Reuses GetFacultyReportUnscoped three
+   * times inside a single transaction for parity with /report and snapshot
+   * consistency across the per-type pulls.
+   */
+  async GetFacultyOverview(
+    facultyId: string,
+    query: FacultyOverviewQueryDto,
+  ): Promise<FacultyOverviewResponseDto> {
+    // Called for the auth side-effect only; the return value intentionally
+    // unused — metadata (incl. profilePicture) is fetched directly below.
+    await this.validateFacultyScope(facultyId, query.semesterId);
+
+    const [facultyRow, semesterRow] = await Promise.all([
+      this.em
+        .execute(
+          'SELECT u.first_name, u.last_name, u.user_profile_picture FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+          [facultyId],
+        )
+        .then(
+          (
+            rows: {
+              first_name: string;
+              last_name: string;
+              user_profile_picture: string | null;
+            }[],
+          ) => {
+            if (rows.length === 0)
+              throw new NotFoundException('Faculty not found');
+            return rows[0];
+          },
+        ),
+      this.em
+        .execute(
+          'SELECT s.id, s.code, s.label, s.academic_year FROM semester s WHERE s.id = ? AND s.deleted_at IS NULL',
+          [query.semesterId],
+        )
+        .then(
+          (
+            rows: {
+              id: string;
+              code: string;
+              label: string;
+              academic_year: string;
+            }[],
+          ) => {
+            if (rows.length === 0)
+              throw new NotFoundException('Semester not found');
+            return rows[0];
+          },
+        ),
+    ]);
+
+    const facultyDto = {
+      id: facultyId,
+      name: `${facultyRow.first_name} ${facultyRow.last_name}`,
+      profilePicture: facultyRow.user_profile_picture || null,
+    };
+    const semesterDto = {
+      id: semesterRow.id,
+      code: semesterRow.code,
+      label: semesterRow.label,
+      academicYear: semesterRow.academic_year,
+    };
+
+    const ratingsMap = await this.computeFacultyPerTypeRatings(
+      facultyId,
+      query.semesterId,
+      query.courseId,
+    );
+
+    const typeRows: { code: string; name: string }[] = await this.em.execute(
+      `SELECT qt.code, qt.name
+         FROM questionnaire_type qt
+         WHERE qt.code = ANY(?)
+           AND qt.deleted_at IS NULL`,
+      [pgArray([...COMPOSITE_TYPE_ORDER])],
+    );
+    const typeNameMap = new Map<string, string>(
+      typeRows.map((r) => [r.code, r.name]),
+    );
+
+    const contributions: FacultyOverviewContributionDto[] =
+      COMPOSITE_TYPE_ORDER.map((code) => {
+        const entry = ratingsMap.get(code) ?? {
+          rating: null,
+          submissionCount: 0,
+        };
+        return {
+          questionnaireTypeCode: code,
+          questionnaireTypeName: typeNameMap.get(code) ?? code,
+          rating: entry.rating,
+          weight: COMPOSITE_WEIGHTS[code],
+          effectiveWeight: 0,
+          contribution: null,
+          submissionCount: entry.submissionCount,
+        };
+      });
+
+    const coverageStatus = this.resolveCompositeCoverageStatus(contributions);
+    const coverageWeight = round2(
+      contributions
+        .filter((c) => c.rating !== null)
+        .reduce((sum, c) => sum + c.weight, 0),
+    );
+
+    let compositeRating: number | null;
+    if (
+      coverageStatus === 'NO_DATA' ||
+      coverageStatus === 'INSUFFICIENT' ||
+      coverageStatus === 'PARTIAL_NO_FEEDBACK'
+    ) {
+      compositeRating = null;
+    } else {
+      for (const c of contributions) {
+        if (c.rating === null) continue;
+        c.effectiveWeight =
+          coverageStatus === 'FULL' ? c.weight : c.weight / coverageWeight;
+        c.contribution = round2(c.rating * c.effectiveWeight);
+      }
+      const sum = contributions.reduce(
+        (acc, c) => acc + (c.contribution ?? 0),
+        0,
+      );
+      compositeRating = round2(sum);
+    }
+
+    const compositeInterpretation =
+      compositeRating === null ? null : getInterpretation(compositeRating);
+
+    this.logger.debug(
+      `Composite overview computed (facultyId=${facultyId}, semesterId=${query.semesterId}, coverageStatus=${coverageStatus}, coverageWeight=${coverageWeight}, courseId=${query.courseId ?? 'none'})`,
+    );
+
+    return {
+      faculty: facultyDto,
+      semester: semesterDto,
+      composite: {
+        rating: compositeRating,
+        interpretation: compositeInterpretation,
+        coverageStatus,
+        coverageWeight,
+      },
+      contributions,
+    };
+  }
+
+  /**
+   * Runs GetFacultyReportUnscoped once per canonical questionnaire type
+   * (FEEDBACK, OUT, IN) in parallel. Parity with the per-type /report endpoint
+   * is guaranteed by code-path reuse — both endpoints compute overallRating
+   * through the same BuildFacultyReportData pipeline. Cross-type snapshot
+   * consistency is best-effort (MikroORM's request-scoped EM batches all
+   * queries onto one connection, so three parallel pulls share the same
+   * read view under normal NestJS request context).
+   */
+  private async computeFacultyPerTypeRatings(
+    facultyId: string,
+    semesterId: string,
+    courseId?: string,
+  ): Promise<
+    Map<
+      CompositeQuestionnaireTypeCode,
+      { rating: number | null; submissionCount: number }
+    >
+  > {
+    const entries = await Promise.all(
+      COMPOSITE_TYPE_ORDER.map(async (typeCode) => {
+        try {
+          const report = await this.GetFacultyReportUnscoped(facultyId, {
+            semesterId,
+            questionnaireTypeCode: typeCode,
+            courseId,
+          });
+          return [
+            typeCode,
+            {
+              rating: report.overallRating,
+              submissionCount: report.submissionCount,
+            },
+          ] as const;
+        } catch (e) {
+          // Narrow: only the "type not found" NotFoundException maps to
+          // "this type absent from the composite". Faculty/semester-missing
+          // NotFoundExceptions are real 404s — propagate them unchanged.
+          if (
+            e instanceof NotFoundException &&
+            e.message === 'Questionnaire type not found'
+          ) {
+            return [typeCode, { rating: null, submissionCount: 0 }] as const;
+          }
+          throw e;
+        }
+      }),
+    );
+    return new Map(entries);
+  }
+
+  /**
+   * Lookup table mapping (hasFeedback, presentCount) → coverageStatus.
+   * Explicit instead of an if/else ladder so every case is inspectable.
+   */
+  private resolveCompositeCoverageStatus(
+    contributions: FacultyOverviewContributionDto[],
+  ): CompositeCoverageStatus {
+    const present = contributions.filter((c) => c.rating !== null);
+    const presentCount = present.length;
+    const hasFeedback = present.some(
+      (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+    );
+
+    if (presentCount === 0) return 'NO_DATA';
+    if (presentCount === 3) return 'FULL';
+    if (hasFeedback && presentCount === 1) return 'FEEDBACK_ONLY';
+    if (hasFeedback && presentCount === 2) return 'PARTIAL';
+    if (!hasFeedback && presentCount === 2) return 'PARTIAL_NO_FEEDBACK';
+    // !hasFeedback && presentCount === 1 → only IN or only OUT
+    return 'INSUFFICIENT';
   }
 
   /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
@@ -1398,7 +1634,7 @@ export class AnalyticsService {
 
     const dimensions = [...dimensionAggregate.entries()]
       .map(([code, { weightedSum, responseCount }]) => {
-        const average = Math.round((weightedSum / responseCount) * 100) / 100;
+        const average = round2(weightedSum / responseCount);
         return {
           code,
           displayName: dimensionDisplayNames.get(code) ?? code,
@@ -1420,7 +1656,7 @@ export class AnalyticsService {
       );
       const totalWeight = sections.reduce((sum, s) => sum + s.weight, 0);
       if (totalWeight > 0) {
-        overallRating = Math.round((weightedSum / totalWeight) * 100) / 100;
+        overallRating = round2(weightedSum / totalWeight);
         overallInterpretation = getInterpretation(overallRating);
       }
     }

@@ -137,3 +137,21 @@ export class FacultyQuestionnaireTypesQueryDto {
   @IsUUID()
   semesterId!: string;
 }
+
+export class FacultyOverviewQueryDto {
+  @ApiProperty({ description: 'Semester UUID (required)' })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsUUID()
+  @IsNotEmpty()
+  semesterId!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional course UUID — if present, composite is scoped to this course (matches /report behavior)',
+  })
+  @IsUUID()
+  @IsOptional()
+  courseId?: string;
+}

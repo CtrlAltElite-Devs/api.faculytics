@@ -58,6 +58,10 @@ The app uses a split between **Infrastructure** and **Application** modules (`sr
 - Use `@UseJwtGuard()` decorator from `src/security/decorators/` to protect endpoints
 - Two Passport strategies: `jwt` (access token) and `refresh-jwt` (refresh token)
 
+**Composite Overall Rating**:
+
+- Faculty composite = 50% Feedback + 25% In-Class + 25% Out-of-Class. See `docs/architecture/analytics.md` § "Composite Overall Rating" for formula, 6 coverage states (FULL/PARTIAL/PARTIAL_NO_FEEDBACK/FEEDBACK_ONLY/INSUFFICIENT/NO_DATA), chain-of-rounding spec, and the Dean-respecting null-on-missing-FEEDBACK behavior.
+
 **Login Strategy Pattern** (`src/modules/auth/strategies/`):
 
 - Authentication uses the Strategy pattern via the `LoginStrategy` interface

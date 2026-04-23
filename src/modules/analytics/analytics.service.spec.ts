@@ -26,6 +26,7 @@ describe('AnalyticsService', () => {
       findOne: mockFindOne,
       find: mockFind,
       getConnection: jest.fn().mockReturnValue({ execute: mockExecute }),
+      transactional: jest.fn().mockImplementation((cb: () => unknown) => cb()),
     };
 
     mockScopeResolver = {
@@ -1714,6 +1715,391 @@ describe('AnalyticsService', () => {
       ];
       const filter = call[1];
       expect(filter.course).toBeNull();
+    });
+  });
+
+  describe('GetFacultyOverview', () => {
+    const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+    const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+    const courseId = '550e8400-e29b-41d4-a716-4466554400aa';
+
+    const facultyMetadataRow = {
+      first_name: 'John',
+      last_name: 'Doe',
+      user_profile_picture: 'https://cdn/profile.png',
+    };
+    const semesterMetadataRow = {
+      id: semesterId,
+      code: '1S2526',
+      label: '1st Semester',
+      academic_year: '2025-2026',
+    };
+    const typeNameRows = [
+      { code: 'FACULTY_FEEDBACK', name: 'Faculty Feedback' },
+      { code: 'FACULTY_OUT_OF_CLASSROOM', name: 'Out-of-Classroom' },
+      { code: 'FACULTY_IN_CLASSROOM', name: 'In-Classroom' },
+    ];
+
+    function stubReport(overallRating: number | null, submissionCount: number) {
+      return {
+        faculty: { id: facultyId, name: 'John Doe', profilePicture: null },
+        semester: {
+          id: semesterId,
+          code: '1S2526',
+          label: '1st Semester',
+          academicYear: '2025-2026',
+        },
+        questionnaireType: { code: 'X', name: 'X' },
+        courseFilter: null,
+        submissionCount,
+        sections: [],
+        overallRating,
+        overallInterpretation: null,
+        dimensions: [],
+      };
+    }
+
+    function setupMetadata() {
+      // Super admin path: validateFacultyScope short-circuits via ResolveDepartmentIds=null
+      // Metadata queries (faculty + semester) and finally the type-name lookup.
+      mockExecute
+        .mockResolvedValueOnce([facultyMetadataRow]) // faculty
+        .mockResolvedValueOnce([semesterMetadataRow]) // semester
+        .mockResolvedValueOnce(typeNameRows); // type-name lookup
+    }
+
+    function spyUnscoped(
+      ratings: Partial<
+        Record<
+          | 'FACULTY_FEEDBACK'
+          | 'FACULTY_IN_CLASSROOM'
+          | 'FACULTY_OUT_OF_CLASSROOM',
+          { rating: number | null; submissionCount: number }
+        >
+      >,
+    ): jest.SpyInstance {
+      return jest
+        .spyOn(service, 'GetFacultyReportUnscoped')
+        .mockImplementation(
+          (_id: string, q: { questionnaireTypeCode: string }) => {
+            const entry =
+              ratings[q.questionnaireTypeCode as keyof typeof ratings];
+            if (!entry) return Promise.resolve(stubReport(null, 0));
+            return Promise.resolve(
+              stubReport(entry.rating, entry.submissionCount),
+            );
+          },
+        );
+    }
+
+    describe('parity with GetFacultyReportUnscoped (F32)', () => {
+      // This test asserts wiring parity — the helper extracts overallRating
+      // from GetFacultyReportUnscoped and must surface the same value per
+      // type. Functional parity of the aggregation itself is guaranteed by
+      // code-path reuse (the helper calls the real method), not by this
+      // test. A future refactor that swaps the helper for duplicated
+      // aggregation SQL would need its own integration coverage.
+      it('every per-type rating in the composite equals GetFacultyReportUnscoped.overallRating for same inputs', async () => {
+        setupMetadata();
+        const spy = spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.12, submissionCount: 10 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 3.48, submissionCount: 5 },
+          FACULTY_IN_CLASSROOM: { rating: 4.76, submissionCount: 7 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(spy).toHaveBeenCalledTimes(3);
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        );
+        const out = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_OUT_OF_CLASSROOM',
+        );
+        const inc = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_IN_CLASSROOM',
+        );
+        expect(feedback?.rating).toBe(4.12);
+        expect(out?.rating).toBe(3.48);
+        expect(inc?.rating).toBe(4.76);
+      });
+    });
+
+    describe('coverage states', () => {
+      it('FULL: all three ratings non-null → weighted composite with coverageWeight=1.00', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.0, submissionCount: 10 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 3.0, submissionCount: 5 },
+          FACULTY_IN_CLASSROOM: { rating: 5.0, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('FULL');
+        expect(result.composite.coverageWeight).toBeCloseTo(1.0, 5);
+        // contributions: round2(4*0.5)=2, round2(3*0.25)=0.75, round2(5*0.25)=1.25
+        // composite = round2(2 + 0.75 + 1.25) = 4.00
+        expect(result.composite.rating).toBe(4.0);
+        expect(result.composite.interpretation).toBe(
+          'VERY SATISFACTORY PERFORMANCE',
+        );
+
+        // Chain-of-rounding invariant
+        const sum = result.contributions.reduce(
+          (acc, c) => acc + (c.contribution ?? 0),
+          0,
+        );
+        expect(Math.round(sum * 100) / 100).toBe(result.composite.rating);
+
+        // No effective-weight renormalization in FULL
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        );
+        expect(feedback?.effectiveWeight).toBe(0.5);
+      });
+
+      it('PARTIAL: FEEDBACK + IN only → renormalized composite, coverageWeight=0.75', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.0, submissionCount: 10 },
+          FACULTY_IN_CLASSROOM: { rating: 5.0, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('PARTIAL');
+        expect(result.composite.coverageWeight).toBeCloseTo(0.75, 5);
+
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        )!;
+        const inc = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_IN_CLASSROOM',
+        )!;
+        const out = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_OUT_OF_CLASSROOM',
+        )!;
+
+        // effectiveWeight(FEEDBACK) = 0.5/0.75 ≈ 0.6667
+        // effectiveWeight(IN) = 0.25/0.75 ≈ 0.3333
+        expect(feedback.effectiveWeight).toBeCloseTo(0.6667, 3);
+        expect(inc.effectiveWeight).toBeCloseTo(0.3333, 3);
+        expect(out.effectiveWeight).toBe(0);
+        expect(out.contribution).toBeNull();
+        expect(out.rating).toBeNull();
+        expect(result.composite.rating).not.toBeNull();
+      });
+
+      it('PARTIAL_NO_FEEDBACK: IN + OUT only, FEEDBACK missing → composite is null (Dean-respecting)', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_OUT_OF_CLASSROOM: { rating: 4.5, submissionCount: 5 },
+          FACULTY_IN_CLASSROOM: { rating: 3.5, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('PARTIAL_NO_FEEDBACK');
+        expect(result.composite.coverageWeight).toBeCloseTo(0.5, 5);
+        expect(result.composite.rating).toBeNull();
+        expect(result.composite.interpretation).toBeNull();
+
+        // All rows: effectiveWeight=0, contribution=null — but ratings preserved for transparency
+        for (const c of result.contributions) {
+          expect(c.effectiveWeight).toBe(0);
+          expect(c.contribution).toBeNull();
+        }
+        const out = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_OUT_OF_CLASSROOM',
+        )!;
+        const inc = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_IN_CLASSROOM',
+        )!;
+        expect(out.rating).toBe(4.5);
+        expect(inc.rating).toBe(3.5);
+      });
+
+      it('FEEDBACK_ONLY: composite = FEEDBACK rating, coverageWeight=0.50', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.33, submissionCount: 10 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('FEEDBACK_ONLY');
+        expect(result.composite.coverageWeight).toBeCloseTo(0.5, 5);
+        expect(result.composite.rating).toBe(4.33);
+
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        )!;
+        expect(feedback.effectiveWeight).toBe(1);
+        expect(feedback.contribution).toBe(4.33);
+      });
+
+      it('INSUFFICIENT (IN only): composite is null, coverageWeight=0.25', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_IN_CLASSROOM: { rating: 3.5, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('INSUFFICIENT');
+        expect(result.composite.coverageWeight).toBeCloseTo(0.25, 5);
+        expect(result.composite.rating).toBeNull();
+
+        const inc = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_IN_CLASSROOM',
+        )!;
+        expect(inc.rating).toBe(3.5);
+        expect(inc.effectiveWeight).toBe(0);
+        expect(inc.contribution).toBeNull();
+      });
+
+      it('INSUFFICIENT (OUT only): composite is null, coverageWeight=0.25', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_OUT_OF_CLASSROOM: { rating: 3.5, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('INSUFFICIENT');
+        expect(result.composite.rating).toBeNull();
+      });
+
+      it('NO_DATA: all ratings null, coverageWeight=0', async () => {
+        setupMetadata();
+        spyUnscoped({});
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('NO_DATA');
+        expect(result.composite.coverageWeight).toBe(0);
+        expect(result.composite.rating).toBeNull();
+        for (const c of result.contributions) {
+          expect(c.rating).toBeNull();
+          expect(c.contribution).toBeNull();
+          expect(c.effectiveWeight).toBe(0);
+        }
+      });
+    });
+
+    describe('edge cases', () => {
+      it('rating===null with submissionCount>0: treated as not-present, submissionCount preserved', async () => {
+        setupMetadata();
+        spyUnscoped({
+          // Degenerate: type has 5 submissions but zero scored answers
+          FACULTY_FEEDBACK: { rating: null, submissionCount: 5 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 4.0, submissionCount: 3 },
+          FACULTY_IN_CLASSROOM: { rating: 3.0, submissionCount: 2 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        // FEEDBACK absent (rating null) → coverage excludes it
+        expect(result.composite.coverageStatus).toBe('PARTIAL_NO_FEEDBACK');
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        )!;
+        expect(feedback.rating).toBeNull();
+        expect(feedback.submissionCount).toBe(5); // preserved for "No scored data" popover label
+      });
+
+      it('contributions are returned in canonical order (FEEDBACK, OUT, IN)', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.0, submissionCount: 1 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 3.0, submissionCount: 1 },
+          FACULTY_IN_CLASSROOM: { rating: 5.0, submissionCount: 1 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(
+          result.contributions.map((c) => c.questionnaireTypeCode),
+        ).toEqual([
+          'FACULTY_FEEDBACK',
+          'FACULTY_OUT_OF_CLASSROOM',
+          'FACULTY_IN_CLASSROOM',
+        ]);
+      });
+
+      it('faculty metadata missing → NotFoundException (does not silently return NO_DATA)', async () => {
+        mockExecute
+          .mockResolvedValueOnce([]) // faculty lookup — empty
+          .mockResolvedValueOnce([semesterMetadataRow]); // semester lookup
+
+        await expect(
+          service.GetFacultyOverview(facultyId, { semesterId }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('semester metadata missing → NotFoundException', async () => {
+        mockExecute
+          .mockResolvedValueOnce([facultyMetadataRow]) // faculty lookup
+          .mockResolvedValueOnce([]); // semester lookup — empty
+
+        await expect(
+          service.GetFacultyOverview(facultyId, { semesterId }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('GetFacultyReportUnscoped throwing a non-type NotFoundException propagates (not swallowed as NO_DATA)', async () => {
+        setupMetadata();
+        jest
+          .spyOn(service, 'GetFacultyReportUnscoped')
+          .mockRejectedValue(new NotFoundException('Faculty not found'));
+
+        await expect(
+          service.GetFacultyOverview(facultyId, { semesterId }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('courseId propagation: forwards the same courseId to every GetFacultyReportUnscoped call', async () => {
+        setupMetadata();
+        const spy = spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.0, submissionCount: 1 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 4.0, submissionCount: 1 },
+          FACULTY_IN_CLASSROOM: { rating: 4.0, submissionCount: 1 },
+        });
+
+        await service.GetFacultyOverview(facultyId, {
+          semesterId,
+          courseId,
+        });
+
+        expect(spy).toHaveBeenCalledTimes(3);
+        for (const [, query] of spy.mock.calls as unknown as [
+          string,
+          { courseId: string },
+        ][]) {
+          expect(query.courseId).toBe(courseId);
+        }
+      });
     });
   });
 });

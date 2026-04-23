@@ -19,6 +19,7 @@ import {
   FacultyTrendsQueryDto,
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
+  FacultyOverviewQueryDto,
   QualitativeSummaryQueryDto,
   FacultyQuestionnaireTypesQueryDto,
 } from './dto/analytics-query.dto';
@@ -26,6 +27,7 @@ import { DepartmentOverviewResponseDto } from './dto/responses/department-overvi
 import { AttentionListResponseDto } from './dto/responses/attention-list.response.dto';
 import { FacultyTrendsResponseDto } from './dto/responses/faculty-trends.response.dto';
 import { FacultyReportResponseDto } from './dto/responses/faculty-report.response.dto';
+import { FacultyOverviewResponseDto } from './dto/responses/faculty-overview.response.dto';
 import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report-comments.response.dto';
 import { QualitativeSummaryResponseDto } from './dto/responses/qualitative-summary.response.dto';
 import { FacultyQuestionnaireTypesResponseDto } from './dto/responses/faculty-questionnaire-types.response.dto';
@@ -102,6 +104,33 @@ export class AnalyticsController {
   ): Promise<FacultyReportResponseDto> {
     assertFacultySelfScope(this.currentUserService.getOrFail(), facultyId);
     return this.analyticsService.GetFacultyReport(facultyId, query);
+  }
+
+  @Get('faculty/:facultyId/overview')
+  @UseJwtGuard(
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+    UserRole.CAMPUS_HEAD,
+    UserRole.SUPER_ADMIN,
+    UserRole.FACULTY,
+  )
+  @ApiOperation({
+    summary:
+      'Composite overall rating across all 3 questionnaire types (50/25/25)',
+    description:
+      'Accepts semesterId (required) and optional courseId (propagates into per-type scope).',
+  })
+  @ApiQuery({ name: 'semesterId', required: true, type: String })
+  @ApiQuery({ name: 'courseId', required: false, type: String })
+  @ApiResponse({ status: 200, type: FacultyOverviewResponseDto })
+  @ApiResponse({ status: 403, description: 'Out of scope for requesting user' })
+  @ApiResponse({ status: 404, description: 'Faculty or semester not found' })
+  async GetFacultyOverview(
+    @Param('facultyId', ParseUUIDPipe) facultyId: string,
+    @Query() query: FacultyOverviewQueryDto,
+  ): Promise<FacultyOverviewResponseDto> {
+    assertFacultySelfScope(this.currentUserService.getOrFail(), facultyId);
+    return this.analyticsService.GetFacultyOverview(facultyId, query);
   }
 
   @Get('faculty/:facultyId/report/comments')

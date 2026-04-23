@@ -135,16 +135,67 @@ The silent short-circuit avoids leaking existence information (a 403 tells the c
 
 A separate set of endpoints serves the per-faculty evaluation report — they read live submission/answer data rather than the materialized views and are the only analytics endpoints that allow the FACULTY role.
 
-| Method | Path                                                | Required query                                                                                         | Description                                                          |
-| ------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| GET    | `/analytics/faculty/:facultyId/report`              | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`)                                          | Per-section/question averages, dimension averages, overall rating    |
-| GET    | `/analytics/faculty/:facultyId/report/comments`     | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`, `page`, `limit`, `sentiment`, `themeId`) | Paginated qualitative comments with sentiment and theme annotations  |
-| GET    | `/analytics/faculty/:facultyId/qualitative-summary` | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`)                                          | Aggregated sentiment distribution + ranked themes with sample quotes |
-| GET    | `/analytics/faculty/:facultyId/questionnaire-types` | `semesterId`                                                                                           | Questionnaire types that have submissions for this faculty/semester  |
+| Method | Path                                                | Required query                                                                                         | Description                                                                                                           |
+| ------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/analytics/faculty/:facultyId/report`              | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`)                                          | Per-section/question averages, dimension averages, overall rating                                                     |
+| GET    | `/analytics/faculty/:facultyId/report/comments`     | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`, `page`, `limit`, `sentiment`, `themeId`) | Paginated qualitative comments with sentiment and theme annotations                                                   |
+| GET    | `/analytics/faculty/:facultyId/overview`            | `semesterId` (+ optional `courseId`)                                                                   | Composite overall rating across all 3 questionnaire types (50/25/25) with per-track contributions and coverage status |
+| GET    | `/analytics/faculty/:facultyId/qualitative-summary` | `semesterId`, `questionnaireTypeCode` (+ optional `courseId`)                                          | Aggregated sentiment distribution + ranked themes with sample quotes                                                  |
+| GET    | `/analytics/faculty/:facultyId/questionnaire-types` | `semesterId`                                                                                           | Questionnaire types that have submissions for this faculty/semester                                                   |
 
 ### Faculty Self-View Authorization
 
 Class-level `@UseJwtGuard(DEAN, CHAIRPERSON, CAMPUS_HEAD, SUPER_ADMIN)` restricts the controller, but each faculty endpoint widens with a method-level `@UseJwtGuard(... , FACULTY)` and then calls `assertFacultySelfScope(currentUser, facultyId)`. FACULTY may only request their own `facultyId` — any other id throws `ForbiddenException`. Non-FACULTY roles are unaffected by the helper.
+
+### Composite Overall Rating
+
+`GET /api/v1/analytics/faculty/:facultyId/overview?semesterId=X[&courseId=Z]` returns a single composite rating that weights the three faculty questionnaire types:
+
+| Code                       | Weight |
+| -------------------------- | ------ |
+| `FACULTY_FEEDBACK`         | 0.50   |
+| `FACULTY_OUT_OF_CLASSROOM` | 0.25   |
+| `FACULTY_IN_CLASSROOM`     | 0.25   |
+
+Roles: `DEAN`, `CHAIRPERSON`, `CAMPUS_HEAD`, `SUPER_ADMIN`, and `FACULTY` (self-only via `assertFacultySelfScope`). Example URLs:
+
+```
+GET /api/v1/analytics/faculty/<facultyId>/overview?semesterId=<semesterId>
+GET /api/v1/analytics/faculty/<facultyId>/overview?semesterId=<semesterId>&courseId=<courseId>
+```
+
+**Computation** — the composite reuses `AnalyticsService.GetFacultyReportUnscoped()` once per canonical questionnaire type inside a single `em.transactional()` block so per-type ratings are snapshot-consistent and numerically identical to what `/report` returns. There is no duplicate aggregation path.
+
+**Formula (non-null composite cases)**:
+
+```
+composite.rating = round2(Σ non-null contribution[i])
+contribution[i]  = round2(rating[i] × effectiveWeight[i])
+effectiveWeight  = weight (FULL) or weight / coverageWeight (PARTIAL / FEEDBACK_ONLY)
+```
+
+`round2` is the shared 2-decimal rounding util in `lib/composite-rating.constants.ts`. `BuildFacultyReportData` uses the same util so composite and per-type numbers never drift by rounding.
+
+**Coverage status** — keyed on `rating !== null` per type (not `submissionCount`). `presentTypes = {t : rating(t) !== null}`, `coverageWeight = Σ weight(t) for t ∈ presentTypes`:
+
+| `coverageStatus`      | Condition                                                          | Composite                    |
+| --------------------- | ------------------------------------------------------------------ | ---------------------------- |
+| `FULL`                | All three types present (coverageWeight = 1.00)                    | `round2(Σ contribution[i])`  |
+| `PARTIAL`             | FEEDBACK + ≥1 of {IN, OUT} but not all three (coverageWeight 0.75) | `round2(Σ contribution[i])`  |
+| `PARTIAL_NO_FEEDBACK` | IN + OUT present, FEEDBACK missing (coverageWeight 0.50)           | **`null`** (Dean-respecting) |
+| `FEEDBACK_ONLY`       | Only FEEDBACK present (coverageWeight 0.50)                        | `round2(rating_FEEDBACK)`    |
+| `INSUFFICIENT`        | Only one of {IN, OUT} present (coverageWeight 0.25)                | `null`                       |
+| `NO_DATA`             | No type has `rating !== null`                                      | `null`                       |
+
+`PARTIAL_NO_FEEDBACK` returns `null` because replacing the Dean-specified 50% FEEDBACK weighting with `mean(r_IN, r_OUT)` would silently invert the approved weighting scheme. The popover still shows IN + OUT ratings for transparency and the coverage banner explains the gap.
+
+**`courseId` propagation** — when `?courseId=` is passed, the composite forwards it into every per-type `GetFacultyReportUnscoped` call so the composite and the per-type `/report` strip always reflect the same scope filter on the same page.
+
+**Chain-of-rounding invariant**: `composite.rating === round2(Σ non-null contribution[i])`. The popover's visible sum equals the visible composite. An asserting parity unit test (`analytics.service.spec.ts`) fails CI if this invariant drifts or if any per-type rating diverges from `GetFacultyReportUnscoped.overallRating`.
+
+**Response shape** — see `FacultyOverviewResponseDto` in `dto/responses/faculty-overview.response.dto.ts`. `contributions` is always length 3 in canonical order (FEEDBACK, OUT, IN). Missing types appear with `rating: null, effectiveWeight: 0, contribution: null` and `submissionCount` preserved (frontend uses `submissionCount > 0 && rating === null` to display `"No scored data"` rather than `"No submissions"`).
+
+**Known limitation (V1)**: PDF exports still show per-track ratings only — the dashboard button carries a tooltip noting this. Adding the composite block to PDF is tracked as a named fast-follow.
 
 ### Quantitative Distributions
 

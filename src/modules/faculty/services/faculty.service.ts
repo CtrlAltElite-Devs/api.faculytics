@@ -35,143 +35,32 @@ export class FacultyService {
   async ListFaculty(
     query: ListFacultyQueryDto,
   ): Promise<FacultyListResponseDto> {
-    // 1. Validate semester exists
-    const semester = await this.em.findOne(Semester, { id: query.semesterId });
-    if (!semester) {
-      throw new NotFoundException(
-        `Semester with id '${query.semesterId}' not found.`,
-      );
-    }
-
-    // 2. Resolve scope
-    const departmentIds = await this.scopeResolverService.ResolveDepartmentIds(
-      query.semesterId,
-    );
-
-    // 3. Validate filters
-    if (query.departmentId && departmentIds !== null) {
-      if (!departmentIds.includes(query.departmentId)) {
-        throw new ForbiddenException(
-          'Department is outside your authorized scope.',
-        );
-      }
-    }
-
-    if (query.programId) {
-      const program = await this.em.findOne(
-        Program,
-        { id: query.programId },
-        { populate: ['department'] },
-      );
-
-      if (!program) {
-        throw new NotFoundException(
-          `Program with id '${query.programId}' not found.`,
-        );
-      }
-
-      if (query.departmentId && program.department.id !== query.departmentId) {
-        throw new BadRequestException(
-          'Program does not belong to the specified department.',
-        );
-      }
-
-      if (
-        departmentIds !== null &&
-        !departmentIds.includes(program.department.id)
-      ) {
-        throw new ForbiddenException(
-          'Program is outside your authorized scope.',
-        );
-      }
-    }
-
-    const page = query.page ?? 1;
-    const limit = query.limit ?? 20;
-    const offset = (page - 1) * limit;
-
-    // Empty scope → no home-dept matches are possible; skip DB entirely.
-    if (departmentIds !== null && departmentIds.length === 0) {
-      return this.EmptyListResponse(page, limit);
-    }
-
-    // 4. Query users filtered by home dept/program + role + active.
-    const userFilter = this.BuildUserFilter(query, departmentIds);
-    const [users, totalItems] = await this.em.findAndCount(User, userFilter, {
-      limit,
-      offset,
-      orderBy: {
-        fullName: QueryOrder.ASC_NULLS_LAST,
-        id: QueryOrder.ASC,
-      },
-    });
-
-    if (totalItems === 0 || users.length === 0) {
-      return {
-        data: [],
-        meta: {
-          totalItems,
-          itemCount: 0,
-          itemsPerPage: limit,
-          totalPages: Math.ceil(totalItems / limit),
-          currentPage: page,
-        },
-      };
-    }
-
-    // 5. Enrich with scope-visible teaching (subjects[] may be empty).
-    const userIds = users.map((u) => u.id);
-    const scopedEnrollments = await this.em.find(
-      Enrollment,
-      {
-        user: { $in: userIds },
-        role: {
-          $in: [EnrollmentRole.EDITING_TEACHER, EnrollmentRole.TEACHER],
-        },
-        isActive: true,
-        course: this.BuildCourseFilter(query, departmentIds),
-      },
-      { populate: ['course'] },
-    );
-
-    const userCourseMap = new Map<string, string[]>();
-    for (const enrollment of scopedEnrollments) {
-      const userId = enrollment.user.id;
-      if (!userCourseMap.has(userId)) {
-        userCourseMap.set(userId, []);
-      }
-      const shortname = enrollment.course.shortname;
-      const courses = userCourseMap.get(userId)!;
-      if (!courses.includes(shortname)) {
-        courses.push(shortname);
-      }
-    }
-
-    const userMap = new Map(users.map((u) => [u.id, u]));
-    const data: FacultyCardResponseDto[] = userIds
-      .map((id) => {
-        const u = userMap.get(id);
-        if (!u) return null;
-        return FacultyCardResponseDto.Map(u, userCourseMap.get(id) ?? []);
-      })
-      .filter((dto): dto is FacultyCardResponseDto => dto !== null);
-
-    return {
-      data,
-      meta: {
-        totalItems,
-        itemCount: data.length,
-        itemsPerPage: limit,
-        totalPages: Math.ceil(totalItems / limit),
-        currentPage: page,
-      },
-    };
+    return this.ExecuteFacultyListing(query, { crossDeptOnly: false });
   }
 
   async ListCrossDepartmentTeaching(
     query: ListFacultyQueryDto,
   ): Promise<FacultyListResponseDto> {
-    // 1. Validate semester exists
+    return this.ExecuteFacultyListing(query, { crossDeptOnly: true });
+  }
+
+  /**
+   * Lists faculty teaching in a given semester. Membership is derived from
+   * active TEACHER/EDITING_TEACHER enrollments joined to courses whose owning
+   * Department belongs to the semester (and to the caller's scope).
+   *
+   * Why enrollment-driven (not User.department-driven): Department is
+   * per-semester, but User.department is single-valued and points to the
+   * user's enrollment-majority semester — comparing it to a different
+   * semester's Department row would silently exclude carryover faculty.
+   *
+   * `query.departmentId` / `query.programId` filter on the COURSE's owning
+   * dept/program, not on the user's home dept/program.
+   */
+  private async ExecuteFacultyListing(
+    query: ListFacultyQueryDto,
+    options: { crossDeptOnly: boolean },
+  ): Promise<FacultyListResponseDto> {
     const semester = await this.em.findOne(Semester, { id: query.semesterId });
     if (!semester) {
       throw new NotFoundException(
@@ -179,13 +68,10 @@ export class FacultyService {
       );
     }
 
-    // 2. Resolve scope
     const departmentIds = await this.scopeResolverService.ResolveDepartmentIds(
       query.semesterId,
     );
 
-    // 3. Validate filters (same semantics as primary — departmentId/programId
-    // refer to course-owning dept/program here).
     if (query.departmentId && departmentIds !== null) {
       if (!departmentIds.includes(query.departmentId)) {
         throw new ForbiddenException(
@@ -231,9 +117,11 @@ export class FacultyService {
       return this.EmptyListResponse(page, limit);
     }
 
-    const enrollmentFilter = this.BuildEnrollmentFilter(query, departmentIds, {
-      crossDeptOnly: true,
-    });
+    const enrollmentFilter = this.BuildEnrollmentFilter(
+      query,
+      departmentIds,
+      options,
+    );
 
     const countResult: { count: string }[] = await this.em
       .getConnection()
@@ -445,40 +333,6 @@ export class FacultyService {
     };
   }
 
-  private BuildUserFilter(
-    query: ListFacultyQueryDto,
-    departmentIds: string[] | null,
-  ): FilterQuery<User> {
-    const filter: Record<string, unknown> = {
-      roles: { $contains: [UserRole.FACULTY] },
-      isActive: true,
-    };
-
-    // Home-dept scoping: super-admin (null scope) still excludes NULL home;
-    // restricted scope narrows to the caller's departments.
-    if (departmentIds === null) {
-      filter.department = { $ne: null };
-    } else {
-      filter.department = { $in: departmentIds };
-    }
-
-    // departmentId / programId filter against home dept/program (user.*).
-    if (query.departmentId) {
-      filter.department = query.departmentId;
-    }
-
-    if (query.programId) {
-      filter.program = query.programId;
-    }
-
-    if (query.search) {
-      const escaped = this.EscapeLikeWildcards(query.search);
-      filter.fullName = { $ilike: `%${escaped}%` };
-    }
-
-    return filter as FilterQuery<User>;
-  }
-
   private EmptyListResponse(
     page: number,
     limit: number,
@@ -643,14 +497,13 @@ export class FacultyService {
       const departmentIds =
         await this.scopeResolverService.ResolveDepartmentIds(semesterId);
 
-      if (departmentIds === null) {
-        return;
-      }
+      const inScope = await this.scopeResolverService.IsFacultyInSemesterScope(
+        faculty.id,
+        semesterId,
+        departmentIds,
+      );
 
-      if (
-        !faculty.department?.id ||
-        !departmentIds.includes(faculty.department.id)
-      ) {
+      if (!inScope) {
         throw new ForbiddenException(
           'You do not have access to this faculty member',
         );

@@ -146,6 +146,51 @@ export class ScopeResolverService {
     );
   }
 
+  /**
+   * Returns true iff the faculty has at least one active TEACHER /
+   * EDITING_TEACHER enrollment in a course whose owning Department belongs to
+   * `semesterId` AND is contained in `allowedDepartmentIds`.
+   *
+   * `allowedDepartmentIds === null` means unrestricted (super-admin) — always
+   * true. Empty array = caller has no scope for this semester — always false.
+   *
+   * Why: `Department` is per-semester, but `User.department` is single-valued
+   * and points to the user's enrollment-majority semester. Comparing
+   * `User.department.id` against `ResolveDepartmentIds(otherSemesterId)`
+   * silently excludes carryover faculty. Use this enrollment-driven check at
+   * every "is faculty X in scope for semester Y?" guard.
+   */
+  async IsFacultyInSemesterScope(
+    facultyId: string,
+    semesterId: string,
+    allowedDepartmentIds: string[] | null,
+  ): Promise<boolean> {
+    if (allowedDepartmentIds === null) return true;
+    if (allowedDepartmentIds.length === 0) return false;
+
+    const placeholders = allowedDepartmentIds.map(() => '?').join(', ');
+    const rows: { hit: number }[] = await this.em.execute(
+      `SELECT 1 AS hit
+         FROM enrollment e
+         INNER JOIN course c ON c.id = e.course_id
+         INNER JOIN program p ON p.id = c.program_id
+         INNER JOIN department d ON d.id = p.department_id
+        WHERE e.user_id = ?
+          AND e.role IN ('editingteacher', 'teacher')
+          AND e.is_active = true
+          AND e.deleted_at IS NULL
+          AND c.is_active = true
+          AND c.deleted_at IS NULL
+          AND p.deleted_at IS NULL
+          AND d.deleted_at IS NULL
+          AND d.semester_id = ?
+          AND d.id IN (${placeholders})
+        LIMIT 1`,
+      [facultyId, semesterId, ...allowedDepartmentIds],
+    );
+    return rows.length > 0;
+  }
+
   private async resolveCampusHeadCampusIds(
     userId: string,
     semesterId: string,

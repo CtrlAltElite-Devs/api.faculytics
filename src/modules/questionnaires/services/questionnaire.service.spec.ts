@@ -51,7 +51,10 @@ describe('QuestionnaireService', () => {
   let versionRepo: jest.Mocked<EntityRepository<QuestionnaireVersion>>;
   let questionnaireRepo: jest.Mocked<EntityRepository<Questionnaire>>;
   let analysisService: { EnqueueJob: jest.Mock };
-  let scopeResolverService: { ResolveDepartmentIds: jest.Mock };
+  let scopeResolverService: {
+    ResolveDepartmentIds: jest.Mock;
+    IsFacultyInSemesterScope: jest.Mock;
+  };
   let cacheService: {
     invalidateNamespace: jest.Mock;
     invalidateNamespaces: jest.Mock;
@@ -189,6 +192,7 @@ describe('QuestionnaireService', () => {
             ResolveDepartmentIds: jest
               .fn()
               .mockResolvedValue(['fac126-dept-1']),
+            IsFacultyInSemesterScope: jest.fn().mockResolvedValue(true),
           },
         },
       ],
@@ -630,6 +634,9 @@ describe('QuestionnaireService', () => {
         scopeResolverService.ResolveDepartmentIds.mockResolvedValueOnce([
           'other-dept',
         ]);
+        scopeResolverService.IsFacultyInSemesterScope.mockResolvedValueOnce(
+          false,
+        );
         enrollmentRepo.findOne.mockClear();
         await expect(
           service.submitQuestionnaire(mockDataNoCourse),
@@ -665,6 +672,9 @@ describe('QuestionnaireService', () => {
           cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
         );
         scopeResolverService.ResolveDepartmentIds.mockResolvedValueOnce([]);
+        scopeResolverService.IsFacultyInSemesterScope.mockResolvedValueOnce(
+          false,
+        );
         const warnSpy = jest
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           .spyOn((service as any).logger, 'warn')
@@ -698,7 +708,10 @@ describe('QuestionnaireService', () => {
         expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
       });
 
-      it('dean + null faculty.department rejected with scope message', async () => {
+      it('dean rejected when faculty has no in-scope enrollments for the semester', async () => {
+        // The home-dept value on the User no longer participates in the scope
+        // check — IsFacultyInSemesterScope decides via enrollments. We set
+        // faculty.department=null only to assert the gate doesn't depend on it.
         const respondent = { ...mockRespondent, roles: [UserRole.DEAN] };
         const facultyNoDept = { ...mockFaculty, department: null };
         (em.findOne as jest.Mock).mockImplementation((entity, id) => {
@@ -711,6 +724,9 @@ describe('QuestionnaireService', () => {
         versionRepo.findOne.mockResolvedValue(
           cloneVersionWithType('FACULTY_IN_CLASSROOM') as any,
         );
+        scopeResolverService.IsFacultyInSemesterScope.mockResolvedValueOnce(
+          false,
+        );
         enrollmentRepo.findOne.mockClear();
         await expect(
           service.submitQuestionnaire(mockDataNoCourse),
@@ -718,6 +734,39 @@ describe('QuestionnaireService', () => {
           new ForbiddenException('Faculty is not within your scope.'),
         );
         expect(enrollmentRepo.findOne).not.toHaveBeenCalled();
+      });
+
+      it('dean accepted for carryover faculty (home dept in another semester) when enrollments exist in scope', async () => {
+        const respondent = { ...mockRespondent, roles: [UserRole.DEAN] };
+        const carryoverFaculty = {
+          ...mockFaculty,
+          department: { id: 'sem2-dept-id' },
+        };
+        (em.findOne as jest.Mock).mockImplementation((entity, id) => {
+          if (entity === User && id === RESPONDENT_ID) return respondent;
+          if (entity === User && id === FACULTY_ID) return carryoverFaculty;
+          if (entity === Semester && id === SEMESTER_ID) return mockSemester;
+          if (entity === Course && id === COURSE_ID) return mockCourse;
+          return null;
+        });
+        versionRepo.findOne.mockResolvedValue(
+          cloneVersionWithType('FACULTY_OUT_OF_CLASSROOM') as any,
+        );
+        // Caller's semester scope is sem1; faculty.department points to sem2.
+        // Old code rejected. New code: enrollment-driven check returns true.
+        scopeResolverService.ResolveDepartmentIds.mockResolvedValueOnce([
+          'sem1-dept-id',
+        ]);
+        scopeResolverService.IsFacultyInSemesterScope.mockResolvedValueOnce(
+          true,
+        );
+
+        const result = await service.submitQuestionnaire(mockDataNoCourse);
+
+        expect(result).toBeDefined();
+        expect(
+          scopeResolverService.IsFacultyInSemesterScope,
+        ).toHaveBeenCalledWith(FACULTY_ID, SEMESTER_ID, ['sem1-dept-id']);
       });
 
       it('super admin + FACULTY_FEEDBACK succeeds and ScopeResolver NOT called', async () => {

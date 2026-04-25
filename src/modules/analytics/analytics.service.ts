@@ -151,9 +151,9 @@ export class AnalyticsService {
     const prevSemRows: { id: string }[] = await this.em.execute(
       `SELECT s2.id FROM semester s2
          WHERE s2.campus_id = (SELECT s1.campus_id FROM semester s1 WHERE s1.id = ?)
-           AND s2.created_at < (SELECT s1.created_at FROM semester s1 WHERE s1.id = ?)
+           AND s2.start_date < (SELECT s1.start_date FROM semester s1 WHERE s1.id = ?)
            AND s2.deleted_at IS NULL
-         ORDER BY s2.created_at DESC LIMIT 1`,
+         ORDER BY s2.start_date DESC LIMIT 1`,
       [semesterId, semesterId],
     );
     const prevSemesterId = prevSemRows[0]?.id ?? null;
@@ -491,10 +491,12 @@ export class AnalyticsService {
     const minR2 = query.minR2 ?? 0.5;
 
     // Resolve scope — use provided semesterId or fall back to latest semester
+    // (ordered by academic start_date, not DB insertion time, so backfilled
+    // past semesters don't masquerade as the current term).
     let scopeSemesterId = query.semesterId;
     if (!scopeSemesterId) {
       const rows: { id: string }[] = await this.em.execute(
-        'SELECT id FROM semester WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1',
+        'SELECT id FROM semester WHERE deleted_at IS NULL ORDER BY start_date DESC LIMIT 1',
       );
       scopeSemesterId = rows[0]?.id;
     }

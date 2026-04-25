@@ -175,7 +175,8 @@ export class MoodleCategorySyncService {
       const campus = campusMap.get(parentCategory.moodleCategoryId);
       if (!campus) throw new Error('Missing campus in map');
 
-      const { label, academicYear } = this.parseSemesterCode(cat.name);
+      const { label, academicYear, startDate, endDate } =
+        this.parseSemesterCode(cat.name);
 
       const data = tx.create(
         Semester,
@@ -184,6 +185,8 @@ export class MoodleCategorySyncService {
           code: cat.name,
           label,
           academicYear,
+          startDate: startDate ?? new Date(),
+          endDate,
           description: this.stripHtml(cat.description),
           campus,
         },
@@ -196,6 +199,8 @@ export class MoodleCategorySyncService {
           'code',
           'label',
           'academicYear',
+          'startDate',
+          'endDate',
           'description',
           'campus',
           'updatedAt',
@@ -278,20 +283,57 @@ export class MoodleCategorySyncService {
   }
 
   /**
-   * Parses a semester code like "S22526" into label and academic year.
-   * Format: S{semester}{YY1}{YY2} → Semester {semester}, 20{YY1}-20{YY2}
+   * Parses a semester code like "S22526" into label, academic year, and dates.
+   * Format: S{semester}{YY1}{YY2} → Semester {semester}, 20{YY1}-20{YY2}.
+   *
+   * Calendar mirrors `admin.faculytics/src/lib/constants.ts` getSemesterDates():
+   *   Sem 1: Aug 1  – Dec 18 of startYear
+   *   Sem 2: Jan 20 – Jun 1  of endYear
+   *   Sem 3: Jun 15 – Jul 31 of endYear (intersession)
+   * Unknown semester numbers get a best-effort start of Aug 1 of startYear so
+   * ordering still places them sensibly within the academic year.
    */
   private parseSemesterCode(code: string): {
     label: string | undefined;
     academicYear: string | undefined;
+    startDate: Date | undefined;
+    endDate: Date | undefined;
   } {
     const match = code.match(/^S(\d)(\d{2})(\d{2})$/);
-    if (!match) return { label: undefined, academicYear: undefined };
+    if (!match) {
+      return {
+        label: undefined,
+        academicYear: undefined,
+        startDate: undefined,
+        endDate: undefined,
+      };
+    }
 
-    const [, semester, startYear, endYear] = match;
+    const [, semester, startYY, endYY] = match;
+    const startYear = 2000 + parseInt(startYY, 10);
+    const endYear = 2000 + parseInt(endYY, 10);
+
+    let startDate: Date;
+    let endDate: Date | undefined;
+    if (semester === '1') {
+      startDate = new Date(Date.UTC(startYear, 7, 1));
+      endDate = new Date(Date.UTC(startYear, 11, 18));
+    } else if (semester === '2') {
+      startDate = new Date(Date.UTC(endYear, 0, 20));
+      endDate = new Date(Date.UTC(endYear, 5, 1));
+    } else if (semester === '3') {
+      startDate = new Date(Date.UTC(endYear, 5, 15));
+      endDate = new Date(Date.UTC(endYear, 6, 31));
+    } else {
+      startDate = new Date(Date.UTC(startYear, 7, 1));
+      endDate = undefined;
+    }
+
     return {
       label: `Semester ${semester}`,
-      academicYear: `20${startYear}-20${endYear}`,
+      academicYear: `20${startYY}-20${endYY}`,
+      startDate,
+      endDate,
     };
   }
 

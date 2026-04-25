@@ -25,7 +25,10 @@ describe('FacultyService', () => {
     count: jest.Mock;
     getConnection: jest.Mock;
   };
-  let scopeResolver: { ResolveDepartmentIds: jest.Mock };
+  let scopeResolver: {
+    ResolveDepartmentIds: jest.Mock;
+    IsFacultyInSemesterScope: jest.Mock;
+  };
   let currentUserService: { getOrFail: jest.Mock };
   let executeMock: jest.Mock;
 
@@ -79,6 +82,7 @@ describe('FacultyService', () => {
 
     scopeResolver = {
       ResolveDepartmentIds: jest.fn(),
+      IsFacultyInSemesterScope: jest.fn().mockResolvedValue(true),
     };
 
     currentUserService = {
@@ -104,45 +108,42 @@ describe('FacultyService', () => {
     em.findOne.mockResolvedValue({ id: semesterId });
   }
 
-  function call(mock: jest.Mock, callIndex = 0): unknown[] {
-    return (mock.mock.calls[callIndex] ?? []) as unknown[];
-  }
-
-  function filterOf(mock: jest.Mock, callIndex = 0): Record<string, unknown> {
-    return (call(mock, callIndex)[1] ?? {}) as Record<string, unknown>;
-  }
-
-  function optsOf(mock: jest.Mock, callIndex = 0): Record<string, unknown> {
-    return (call(mock, callIndex)[2] ?? {}) as Record<string, unknown>;
-  }
-
   /**
-   * Prime `findAndCount` (primary user query) and `em.find` (subjects
-   * enrichment). The enrichment query only fires when users.length > 0.
+   * Prime the raw-SQL listing path: count query, paginated user-id query,
+   * then the user + enrollment hydration (`em.find` calls).
+   *
+   * Enrollment-driven listing means a "no rows" outcome can short-circuit
+   * before the user-id query — call `primeListingEmpty()` for that branch.
    */
-  function primePrimary(
-    users: User[],
-    totalCount: number,
-    enrollments: ReturnType<typeof mockEnrollment>[] = [],
-  ) {
-    em.findAndCount.mockResolvedValueOnce([users, totalCount]);
-    if (users.length > 0) {
-      em.find.mockResolvedValueOnce(enrollments);
-    }
+  function primeListingEmpty() {
+    executeMock.mockResolvedValueOnce([{ count: '0' }]);
   }
 
-  describe('super admin sees all faculty', () => {
-    it('returns all faculty, excluding NULL home dept', async () => {
+  function primeListing(
+    userIds: string[],
+    totalCount: number,
+    users: User[],
+    enrollments: ReturnType<typeof mockEnrollment>[],
+  ) {
+    executeMock
+      .mockResolvedValueOnce([{ count: String(totalCount) }])
+      .mockResolvedValueOnce(userIds.map((id) => ({ user_id: id })));
+    em.find.mockResolvedValueOnce(users).mockResolvedValueOnce(enrollments);
+  }
+
+  describe('ListFaculty', () => {
+    it('returns enrollment-driven faculty list with subjects[] for super admin (null scope)', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
 
-      const user1 = mockUser('u1', 'John Doe', 'John', 'Doe', 'pic.jpg');
-      const user2 = mockUser('u2', 'Jane Smith', 'Jane', 'Smith', 'pic2.jpg');
-
-      primePrimary([user1, user2], 2, [
-        mockEnrollment('u1', 'FREAI'),
-        mockEnrollment('u2', 'ELEMSYS'),
-      ]);
+      const user1 = mockUser('u1', 'Alice', 'Alice', 'Smith', 'pic1.jpg');
+      const user2 = mockUser('u2', 'Bob', 'Bob', 'Jones', 'pic2.jpg');
+      primeListing(
+        ['u1', 'u2'],
+        2,
+        [user1, user2],
+        [mockEnrollment('u1', 'CS101'), mockEnrollment('u2', 'CS201')],
+      );
 
       const result = await service.ListFaculty(baseQuery);
 
@@ -152,109 +153,123 @@ describe('FacultyService', () => {
         semesterId,
       );
 
-      expect(filterOf(em.findAndCount)).toMatchObject({
-        roles: { $contains: [UserRole.FACULTY] },
-        isActive: true,
-        department: { $ne: null },
-      });
-      expect(optsOf(em.findAndCount).orderBy).toEqual({
-        fullName: QueryOrder.ASC_NULLS_LAST,
-        id: QueryOrder.ASC,
-      });
+      // Generated SQL is enrollment-join based and includes the per-semester
+      // department predicate. The cross-dept-only predicates must NOT appear
+      // (this endpoint includes both home-dept and cross-dept teachers).
+      const [countSql] = executeMock.mock.calls[0] as [string, unknown[]];
+      const normalized = countSql.replace(/\s+/g, ' ');
+      expect(normalized).toContain('FROM enrollment e');
+      expect(normalized).toContain('d.semester_id = ?');
+      expect(normalized).not.toContain('u.department_id <> d.id');
     });
-  });
 
-  describe('dean sees only faculty in their department scope', () => {
-    it('scopes department to $in', async () => {
+    it('includes carryover faculty (home dept in another semester) — the FAC bug fix', async () => {
+      // Faculty user has user.department pointing to a previous semester's
+      // Department row, but they have a TEACHER enrollment in the requested
+      // semester's courses. Old (home-dept-driven) listing excluded them; the
+      // new enrollment-driven listing must include them.
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
 
-      const user1 = mockUser('u1', 'John Doe', 'John', 'Doe', 'pic.jpg');
-      primePrimary([user1], 1, [mockEnrollment('u1', 'FREAI')]);
+      const carryoverFaculty = mockUser(
+        'u-carryover',
+        'Carryover Faculty',
+        'Carryover',
+        'Faculty',
+        '',
+      );
+      primeListing(
+        ['u-carryover'],
+        1,
+        [carryoverFaculty],
+        [mockEnrollment('u-carryover', 'CS101')],
+      );
 
       const result = await service.ListFaculty(baseQuery);
 
       expect(result.data).toHaveLength(1);
-      expect(result.data[0].fullName).toBe('John Doe');
+      expect(result.data[0].subjects).toEqual(['CS101']);
 
-      expect(filterOf(em.findAndCount).department).toEqual({ $in: [deptId] });
+      // Sanity: the count query passed semesterId + scoped deptIds as params.
+      const [, countParams] = executeMock.mock.calls[0] as [string, unknown[]];
+      expect(countParams[0]).toBe(semesterId);
+      expect(countParams).toContain(deptId);
     });
-  });
 
-  describe('cross-dept leak prevented on primary list (AC 2)', () => {
-    it('filters by home department — SOE-home teaching CCS is absent from CCS dean', async () => {
-      // A CCS dean's scope is [CCS]. A SOE-home faculty teaching a CCS course
-      // exists in the DB, but the home-dept filter excludes them outright.
-      // We simulate this by asserting (a) the filter sent to findAndCount
-      // narrows department to CCS, and (b) when the mock DB obeys that filter
-      // and returns no rows, the SOE-home user does NOT appear in the response.
+    it('short-circuits when scope resolves to [] (dean with no scope)', async () => {
       setupSemesterFound();
-      const ccsDept = 'ccs';
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue([ccsDept]);
-
-      // Mock DB honors the `department: { $in: [ccs] }` predicate -> 0 rows.
-      primePrimary([], 0);
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue([]);
 
       const result = await service.ListFaculty(baseQuery);
 
-      expect(filterOf(em.findAndCount).department).toEqual({ $in: [ccsDept] });
       expect(result.data).toEqual([]);
-      // Contrast with legacy enrollment-join semantics: under the old query,
-      // the SOE-home faculty teaching the CCS course would leak in. Here they
-      // cannot — the DB is never asked for non-CCS-home users.
-    });
-  });
-
-  describe('pagination', () => {
-    it('returns correct PaginationMeta', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-
-      const users = Array.from({ length: 5 }, (_, i) =>
-        mockUser(`u${i}`, `User ${i}`, 'First', 'Last', ''),
-      );
-      primePrimary(
-        users,
-        12,
-        users.map((u) => mockEnrollment(u.id, 'CS101')),
-      );
-
-      const result = await service.ListFaculty({
-        ...baseQuery,
-        page: 2,
-        limit: 5,
-      });
-
       expect(result.meta).toEqual({
-        totalItems: 12,
-        itemCount: 5,
-        itemsPerPage: 5,
-        totalPages: 3,
-        currentPage: 2,
+        totalItems: 0,
+        itemCount: 0,
+        itemsPerPage: 20,
+        totalPages: 0,
+        currentPage: 1,
       });
-
-      const opts = optsOf(em.findAndCount);
-      expect(opts.limit).toBe(5);
-      expect(opts.offset).toBe(5);
+      expect(executeMock).not.toHaveBeenCalled();
+      expect(em.find).not.toHaveBeenCalled();
     });
-  });
 
-  describe('search filter', () => {
-    it('applies $ilike on fullName with wrapping %', async () => {
+    it('returns zero meta and skips enrichment on empty result', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
+      primeListingEmpty();
+
+      const result = await service.ListFaculty(baseQuery);
+
+      expect(result.data).toEqual([]);
+      expect(result.meta.totalItems).toBe(0);
+      expect(em.find).not.toHaveBeenCalled();
+    });
+
+    it('paginates: passes limit + offset as the last two SQL params', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      primePrimary([], 0);
+      const user1 = mockUser('u1', 'Alice', 'Alice', 'Smith', '');
+      primeListing(['u1'], 25, [user1], []);
 
-      await service.ListFaculty({ ...baseQuery, search: 'Varst' });
+      await service.ListFaculty({ ...baseQuery, page: 2, limit: 10 });
 
-      expect(filterOf(em.findAndCount).fullName).toEqual({
-        $ilike: '%Varst%',
-      });
+      const paginatedCall = executeMock.mock.calls[1] as [string, unknown[]];
+      expect(paginatedCall[1].slice(-2)).toEqual([10, 10]);
     });
-  });
 
-  describe('departmentId outside dean scope', () => {
-    it('throws ForbiddenException', async () => {
+    it('escapes LIKE wildcards in search and threads to the SQL params', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+      primeListingEmpty();
+
+      await service.ListFaculty({ ...baseQuery, search: '%admin_test' });
+
+      const [, params] = executeMock.mock.calls[0] as [string, unknown[]];
+      expect(params).toContain('%\\%admin\\_test%');
+    });
+
+    it('subjects[] dedupes and sorts alphabetically', async () => {
+      setupSemesterFound();
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+      const user = mockUser('u1', 'Alice', 'Alice', 'Smith', '');
+      primeListing(
+        ['u1'],
+        1,
+        [user],
+        [
+          mockEnrollment('u1', 'BETA'),
+          mockEnrollment('u1', 'ALPHA'),
+          mockEnrollment('u1', 'BETA'), // duplicate
+        ],
+      );
+
+      const result = await service.ListFaculty(baseQuery);
+
+      expect(result.data[0].subjects).toEqual(['ALPHA', 'BETA']);
+    });
+
+    it('throws ForbiddenException when departmentId is outside dean scope', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
 
@@ -262,12 +277,11 @@ describe('FacultyService', () => {
         service.ListFaculty({ ...baseQuery, departmentId: deptId2 }),
       ).rejects.toThrow(ForbiddenException);
     });
-  });
 
-  describe('programId not belonging to department', () => {
-    it('throws BadRequestException', async () => {
+    it('throws BadRequestException when programId does not belong to specified departmentId', async () => {
+      setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-
+      em.findOne.mockReset();
       em.findOne
         .mockResolvedValueOnce({ id: semesterId })
         .mockResolvedValueOnce({ id: programId, department: { id: deptId2 } });
@@ -280,12 +294,11 @@ describe('FacultyService', () => {
         }),
       ).rejects.toThrow(BadRequestException);
     });
-  });
 
-  describe('programId without departmentId outside dean scope', () => {
-    it('throws ForbiddenException', async () => {
+    it('throws ForbiddenException when programId belongs to a department outside dean scope', async () => {
+      setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
-
+      em.findOne.mockReset();
       em.findOne
         .mockResolvedValueOnce({ id: semesterId })
         .mockResolvedValueOnce({ id: programId, department: { id: deptId2 } });
@@ -294,324 +307,53 @@ describe('FacultyService', () => {
         service.ListFaculty({ ...baseQuery, programId }),
       ).rejects.toThrow(ForbiddenException);
     });
-  });
 
-  describe('subjects aggregation', () => {
-    it('dedupes and sorts shortnames for faculty teaching multiple courses', async () => {
-      setupSemesterFound();
+    it('throws NotFoundException when programId does not exist', async () => {
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce(null);
 
-      const user1 = mockUser('u1', 'John Doe', 'John', 'Doe', 'pic.jpg');
-      primePrimary([user1], 1, [
-        mockEnrollment('u1', 'FREAI'),
-        mockEnrollment('u1', 'ELEMSYS'),
-        mockEnrollment('u1', 'ELDNET1'),
-      ]);
-
-      const result = await service.ListFaculty(baseQuery);
-
-      expect(result.data).toHaveLength(1);
-      expect(result.data[0].subjects).toEqual(['ELDNET1', 'ELEMSYS', 'FREAI']);
+      await expect(
+        service.ListFaculty({ ...baseQuery, programId: 'missing' }),
+      ).rejects.toThrow(NotFoundException);
     });
-  });
 
-  describe('subjects sorted alphabetically', () => {
-    it('sorts subjects array', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-
-      const user1 = mockUser('u1', 'John Doe', 'John', 'Doe', '');
-      primePrimary([user1], 1, [
-        mockEnrollment('u1', 'ZETA'),
-        mockEnrollment('u1', 'ALPHA'),
-        mockEnrollment('u1', 'MIDDLE'),
-      ]);
-
-      const result = await service.ListFaculty(baseQuery);
-
-      expect(result.data[0].subjects).toEqual(['ALPHA', 'MIDDLE', 'ZETA']);
-    });
-  });
-
-  describe('empty result', () => {
-    it('returns empty data with zero meta', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      primePrimary([], 0);
-
-      const result = await service.ListFaculty(baseQuery);
-
-      expect(result).toEqual({
-        data: [],
-        meta: {
-          totalItems: 0,
-          itemCount: 0,
-          itemsPerPage: 20,
-          totalPages: 0,
-          currentPage: 1,
-        },
-      });
-    });
-  });
-
-  describe('LIKE wildcard escaping', () => {
-    it('escapes % and _ in search term', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      primePrimary([], 0);
-
-      await service.ListFaculty({ ...baseQuery, search: '%admin_test' });
-
-      expect(filterOf(em.findAndCount).fullName).toEqual({
-        $ilike: '%\\%admin\\_test%',
-      });
-    });
-  });
-
-  describe('non-existent semesterId', () => {
-    it('throws NotFoundException', async () => {
+    it('throws NotFoundException when semester does not exist', async () => {
       em.findOne.mockResolvedValue(null);
 
       await expect(service.ListFaculty(baseQuery)).rejects.toThrow(
         NotFoundException,
       );
     });
-  });
 
-  describe('fullName fallback', () => {
     it('uses firstName + lastName when fullName is null', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-
-      const user1 = mockUser('u1', undefined, 'John', 'Doe', '');
-      primePrimary([user1], 1, [mockEnrollment('u1', 'CS101')]);
-
-      const result = await service.ListFaculty(baseQuery);
-
-      expect(result.data[0].fullName).toBe('John Doe');
-    });
-  });
-
-  describe('page beyond totalPages', () => {
-    it('returns empty data with correct currentPage', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-
-      // findAndCount reports totalCount=3 but page=5 gives no rows.
-      em.findAndCount.mockResolvedValueOnce([[], 3]);
-
-      const result = await service.ListFaculty({
-        ...baseQuery,
-        page: 5,
-        limit: 5,
-      });
-
-      expect(result.data).toHaveLength(0);
-      expect(result.meta).toEqual({
-        totalItems: 3,
-        itemCount: 0,
-        itemsPerPage: 5,
-        totalPages: 1,
-        currentPage: 5,
-      });
-    });
-  });
-
-  describe('dean with empty department scope (AC 19)', () => {
-    it('short-circuits without calling findAndCount', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue([]);
+      const user = mockUser('u1', undefined, 'Ada', 'Lovelace', '');
+      primeListing(['u1'], 1, [user], []);
 
       const result = await service.ListFaculty(baseQuery);
 
-      expect(result).toEqual({
-        data: [],
-        meta: {
-          totalItems: 0,
-          itemCount: 0,
-          itemsPerPage: 20,
-          totalPages: 0,
-          currentPage: 1,
-        },
-      });
-      expect(em.findAndCount).not.toHaveBeenCalled();
-      expect(em.find).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('empty profilePicture', () => {
-    it('returns profilePicture as null when empty string', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-
-      const user1 = mockUser('u1', 'John Doe', 'John', 'Doe', '');
-      primePrimary([user1], 1, [mockEnrollment('u1', 'CS101')]);
-
-      const result = await service.ListFaculty(baseQuery);
-
-      expect(result.data[0].profilePicture).toBeNull();
+      expect(result.data[0].fullName).toBe('Ada Lovelace');
     });
 
-    it('returns profilePicture when present', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-
-      const user1 = mockUser('u1', 'John Doe', 'John', 'Doe', 'http://pic.jpg');
-      primePrimary([user1], 1, [mockEnrollment('u1', 'CS101')]);
-
-      const result = await service.ListFaculty(baseQuery);
-
-      expect(result.data[0].profilePicture).toBe('http://pic.jpg');
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // New spec blocks covering FAC-129 ACs 4, 5, 6, 17, 18, 20, 21, 22.
-  // ---------------------------------------------------------------------------
-
-  describe('home-dept faculty with zero scope-visible teaching (AC 3)', () => {
-    it('appears in data with subjects: []', async () => {
+    it('subjects enrichment query is scoped to the requested semester + dept scope', async () => {
       setupSemesterFound();
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
-
-      const user1 = mockUser('u1', 'Orphan Teacher', 'Orphan', 'T', '');
-      // enrollment enrichment returns no rows.
-      primePrimary([user1], 1, []);
-
-      const result = await service.ListFaculty(baseQuery);
-
-      expect(result.data).toHaveLength(1);
-      expect(result.data[0].subjects).toEqual([]);
-    });
-  });
-
-  describe('excludes faculty with NULL home department (AC 4, AC 18)', () => {
-    it('filter.department is {$ne: null} under super-admin', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      primePrimary([], 0);
+      const user = mockUser('u1', 'Alice', 'Alice', 'Smith', '');
+      primeListing(['u1'], 1, [user], [mockEnrollment('u1', 'CS101')]);
 
       await service.ListFaculty(baseQuery);
 
-      expect(filterOf(em.findAndCount).department).toEqual({ $ne: null });
-    });
-
-    it('filter.department is {$in: [...]} under scoped caller', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId, deptId2]);
-      primePrimary([], 0);
-
-      await service.ListFaculty(baseQuery);
-
-      expect(filterOf(em.findAndCount).department).toEqual({
-        $in: [deptId, deptId2],
-      });
-    });
-  });
-
-  describe('departmentId param filters user.department (AC 5)', () => {
-    it('scalar department overrides scope predicate', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      primePrimary([], 0);
-
-      await service.ListFaculty({ ...baseQuery, departmentId: deptId });
-
-      expect(filterOf(em.findAndCount).department).toBe(deptId);
-    });
-  });
-
-  describe('programId param filters user.program (AC 6)', () => {
-    it('scalar program on the user filter', async () => {
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.findOne
-        .mockResolvedValueOnce({ id: semesterId })
-        .mockResolvedValueOnce({ id: programId, department: { id: deptId } });
-      primePrimary([], 0);
-
-      await service.ListFaculty({ ...baseQuery, programId });
-
-      expect(filterOf(em.findAndCount).program).toBe(programId);
-    });
-  });
-
-  describe('inactive faculty excluded (AC 20)', () => {
-    it('filter always includes isActive: true', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
-      primePrimary([], 0);
-
-      await service.ListFaculty(baseQuery);
-
-      expect(filterOf(em.findAndCount).isActive).toBe(true);
-    });
-  });
-
-  describe('dual-role faculty included (AC 21)', () => {
-    it('includes user whose roles contain FACULTY', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
-
-      const dualRole = mockUser('u1', 'Dual Hat', 'Dual', 'Hat', '');
-      (dualRole as unknown as { roles: UserRole[] }).roles = [
-        UserRole.FACULTY,
-        UserRole.DEAN,
-      ];
-      primePrimary([dualRole], 1, [mockEnrollment('u1', 'CS101')]);
-
-      const result = await service.ListFaculty(baseQuery);
-
-      expect(result.data).toHaveLength(1);
-      expect(result.data[0].id).toBe('u1');
-
-      expect(filterOf(em.findAndCount).roles).toEqual({
-        $contains: [UserRole.FACULTY],
-      });
-    });
-  });
-
-  describe('subjects enrichment skipped on empty result (AC 22)', () => {
-    it('does not issue enrollment query when findAndCount returns []', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      em.findAndCount.mockResolvedValueOnce([[], 0]);
-
-      await service.ListFaculty(baseQuery);
-
-      expect(em.find).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('orderBy uses fullName ASC NULLS LAST then id ASC', () => {
-    it('passes the documented orderBy to findAndCount', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue(null);
-      primePrimary([], 0);
-
-      await service.ListFaculty(baseQuery);
-
-      expect(optsOf(em.findAndCount).orderBy).toEqual({
-        fullName: QueryOrder.ASC_NULLS_LAST,
-        id: QueryOrder.ASC,
-      });
-    });
-  });
-
-  describe('subjects enrichment uses scope-visible courses (AC 17)', () => {
-    it('passes semester + scope course filter to em.find(Enrollment, ...)', async () => {
-      setupSemesterFound();
-      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
-
-      const user1 = mockUser('u1', 'Jane', 'Jane', 'Doe', '');
-      primePrimary([user1], 1, [mockEnrollment('u1', 'A')]);
-
-      await service.ListFaculty(baseQuery);
-
-      const findCall = call(em.find, 0);
-      expect(findCall[0]).toBe(Enrollment);
-      const findFilter = findCall[1] as Record<string, unknown>;
-      expect(findFilter).toMatchObject({
+      // Second em.find call is the subjects-enrichment query.
+      const findCall = em.find.mock.calls[1] as unknown[];
+      const filter = findCall[1] as Record<string, unknown>;
+      expect(filter).toMatchObject({
         user: { $in: ['u1'] },
+        role: {
+          $in: [EnrollmentRole.EDITING_TEACHER, EnrollmentRole.TEACHER],
+        },
         isActive: true,
         course: {
           isActive: true,
@@ -623,8 +365,6 @@ describe('FacultyService', () => {
           },
         },
       });
-      const findOpts = findCall[2] as { populate: string[] };
-      expect(findOpts.populate).toEqual(['course']);
     });
   });
 
@@ -982,7 +722,7 @@ describe('FacultyService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('forbids dean when faculty is outside scope', async () => {
+    it('forbids dean when faculty has no in-scope enrollments for the semester', async () => {
       em.findOne
         .mockResolvedValueOnce({ id: semesterId })
         .mockResolvedValueOnce({
@@ -992,10 +732,47 @@ describe('FacultyService', () => {
           department: { id: deptId2 },
         });
       scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
+      scopeResolver.IsFacultyInSemesterScope.mockResolvedValueOnce(false);
 
       await expect(
         service.GetFacultyEnrollments(facultyId, baseEnrollmentsQuery),
       ).rejects.toThrow(ForbiddenException);
+      expect(scopeResolver.IsFacultyInSemesterScope).toHaveBeenCalledWith(
+        facultyId,
+        semesterId,
+        [deptId],
+      );
+    });
+
+    it('allows dean to access carryover faculty (home dept in different semester) when enrollments exist in scope', async () => {
+      em.findOne
+        .mockResolvedValueOnce({ id: semesterId })
+        .mockResolvedValueOnce({
+          id: facultyId,
+          isActive: true,
+          roles: [UserRole.FACULTY],
+          // home dept is a different semester's dept (carryover scenario)
+          department: { id: deptId2 },
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          userName: 'EMP001',
+          userProfilePicture: '',
+        });
+      scopeResolver.ResolveDepartmentIds.mockResolvedValue([deptId]);
+      // IsFacultyInSemesterScope sees the enrollment join → true.
+      em.findAndCount.mockResolvedValueOnce([[], 0]);
+
+      const result = await service.GetFacultyEnrollments(
+        facultyId,
+        baseEnrollmentsQuery,
+      );
+
+      expect(result.data).toEqual([]);
+      expect(scopeResolver.IsFacultyInSemesterScope).toHaveBeenCalledWith(
+        facultyId,
+        semesterId,
+        [deptId],
+      );
     });
 
     it('throws NotFoundException when semester does not exist', async () => {

@@ -1780,11 +1780,10 @@ export class AnalyticsService {
 
     const userRows: {
       id: string;
-      department_id: string;
       first_name: string;
       last_name: string;
     }[] = await this.em.execute(
-      'SELECT u.id, u.department_id, u.first_name, u.last_name FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+      'SELECT u.id, u.first_name, u.last_name FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
       [facultyId],
     );
 
@@ -1792,7 +1791,13 @@ export class AnalyticsService {
       throw new NotFoundException('Faculty not found');
     }
 
-    if (!deptIds.includes(userRows[0].department_id)) {
+    const inScope = await this.scopeResolver.IsFacultyInSemesterScope(
+      facultyId,
+      semesterId,
+      deptIds,
+    );
+
+    if (!inScope) {
       throw new ForbiddenException(
         'You do not have access to this faculty member',
       );

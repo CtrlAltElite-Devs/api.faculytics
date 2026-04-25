@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsDate, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CampusShortResponseDto } from './campus-short.response.dto';
 
@@ -21,6 +21,17 @@ export class SemesterItemResponseDto {
   @IsString()
   @IsOptional()
   academicYear?: string;
+
+  @ApiProperty()
+  @IsDate()
+  @Type(() => Date)
+  startDate: Date;
+
+  @ApiPropertyOptional()
+  @IsDate()
+  @IsOptional()
+  @Type(() => Date)
+  endDate?: Date;
 
   @ApiProperty({ type: CampusShortResponseDto })
   @ValidateNested()

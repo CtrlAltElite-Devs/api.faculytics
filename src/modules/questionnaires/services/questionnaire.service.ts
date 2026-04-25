@@ -956,7 +956,12 @@ export class QuestionnaireService {
           `Respondent ${respondent.id} (role=${role}) has an empty department scope for semester ${semesterId} — likely mis-provisioned.`,
         );
       }
-      if (!allowedDepartmentIds.includes(faculty.department?.id ?? '')) {
+      const inScope = await this.scopeResolverService.IsFacultyInSemesterScope(
+        faculty.id,
+        semesterId,
+        allowedDepartmentIds,
+      );
+      if (!inScope) {
         throw new ForbiddenException('Faculty is not within your scope.');
       }
     }

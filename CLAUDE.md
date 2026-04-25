@@ -34,7 +34,7 @@ npx mikro-orm migration:list     # Check migration status
 The app uses a split between **Infrastructure** and **Application** modules (`src/modules/index.module.ts`):
 
 - **InfrastructureModules**: ConfigModule, PassportModule, MikroOrmModule, JwtModule, ScheduleModule, BullModule, TerminusModule
-- **ApplicationModules**: HealthModule, MoodleModule, AuthModule, ChatKitModule, EnrollmentsModule, QuestionnaireModule, AnalysisModule
+- **ApplicationModules**: HealthModule, MoodleModule, AuthModule, ChatKitModule, EnrollmentsModule, QuestionnaireModule, AnalysisModule, AnalyticsModule, AuditModule, FacultyModule, CurriculumModule, DimensionsModule, AdminModule, ReportsModule
 
 ### Key Patterns
 
@@ -58,6 +58,10 @@ The app uses a split between **Infrastructure** and **Application** modules (`sr
 - Use `@UseJwtGuard()` decorator from `src/security/decorators/` to protect endpoints
 - Two Passport strategies: `jwt` (access token) and `refresh-jwt` (refresh token)
 
+**Composite Overall Rating**:
+
+- Faculty composite = 50% Feedback + 25% In-Class + 25% Out-of-Class. See `docs/architecture/analytics.md` § "Composite Overall Rating" for formula, 6 coverage states (FULL/PARTIAL/PARTIAL_NO_FEEDBACK/FEEDBACK_ONLY/INSUFFICIENT/NO_DATA), chain-of-rounding spec, and the Dean-respecting null-on-missing-FEEDBACK behavior.
+
 **Login Strategy Pattern** (`src/modules/auth/strategies/`):
 
 - Authentication uses the Strategy pattern via the `LoginStrategy` interface
@@ -73,6 +77,8 @@ The app uses a split between **Infrastructure** and **Application** modules (`sr
 - Jobs register results in `StartupJobRegistry` for boot summary
 - **Active jobs:**
   - `RefreshTokenCleanupJob`: Purges expired refresh tokens every 12 hours (7-day retention)
+  - `TieredPipelineSchedulerJob`: Auto-enqueues analysis pipelines for active scopes with new submissions. Three independent `@Cron` methods (FACULTY Sun 01:00 UTC, DEPARTMENT Sun 02:00, CAMPUS Sun 03:00) with per-tier `isRunning` guards. Skips scopes with no new submissions since their last completed pipeline. Pipelines created this way are tagged `trigger=SCHEDULER` and attributed to the seeded SUPER_ADMIN.
+  - `ReportCleanupJob`: Daily at 03:00 — purges expired report jobs and R2 objects.
 
 **Moodle Sync Scheduling** (`src/modules/moodle/schedulers/`):
 
@@ -86,9 +92,11 @@ The app uses a split between **Infrastructure** and **Application** modules (`sr
 
 BullMQ on Redis provides async job processing for AI analysis tasks:
 
-- **Queue-per-type pattern**: Each analysis type (sentiment, topic model, embeddings) gets its own BullMQ queue and processor
+- **Queue-per-type pattern**: Each analysis type (sentiment, topic model, embeddings, recommendations) gets its own BullMQ queue and processor
 - **Entry points**: `AnalysisService.EnqueueJob()` and `EnqueueBatch()` — other modules use these to dispatch analysis jobs
 - **BaseAnalysisProcessor**: Abstract base class handling HTTP dispatch to external workers, Zod validation of responses, retry/error handling, and observability events
+- **Sentiment chunking**: `PipelineOrchestratorService.dispatchSentiment()` splits a run into N chunks of `SENTIMENT_CHUNK_SIZE` (default 50) and enqueues one job per chunk. `SentimentRun.expectedChunks/completedChunks` counters track completion atomically with row inserts; the last chunk advances the pipeline.
+- **vLLM-primary dispatch**: When the `SENTIMENT_VLLM_CONFIG` system-config row is enabled, the orchestrator snapshots it once per dispatch and attaches `vllmConfig` to every chunk envelope. Admin endpoint `GET/PUT /admin/sentiment/vllm-config` (SUPER_ADMIN) manages it; production enable is gated by `ALLOW_SENTIMENT_VLLM_ENABLED_IN_PROD=true`.
 - **Mock worker**: `mock-worker/` directory contains a Hono HTTP server mimicking worker responses for local dev
 - **Local dev**: `docker compose up` starts Redis and mock worker
 
@@ -172,4 +180,6 @@ Optional:
 - `BULLMQ_HTTP_TIMEOUT_MS`: HTTP request timeout in ms (default: `90000`)
 - `BULLMQ_SENTIMENT_CONCURRENCY`: Sentiment processor concurrency (default: `3`)
 - `SENTIMENT_WORKER_URL`: RunPod/mock worker URL for sentiment analysis
+- `SENTIMENT_CHUNK_SIZE`: Submissions per sentiment chunk dispatched to the worker (default: `50`)
+- `ALLOW_SENTIMENT_VLLM_ENABLED_IN_PROD`: Production safety gate — required to enable vLLM dispatch when `NODE_ENV=production` (default: `false`)
 - `MOODLE_SYNC_INTERVAL_MINUTES`: Sync schedule interval in minutes (min `30`; defaults per env: dev=60, staging=360, prod=180)

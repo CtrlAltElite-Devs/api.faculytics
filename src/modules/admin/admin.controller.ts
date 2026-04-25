@@ -23,14 +23,17 @@ import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-
 import { MetaDataInterceptor } from 'src/modules/common/interceptors/metadata.interceptor';
 import { UserRole } from '../auth/roles.enum';
 import { AdminService } from './services/admin.service';
+import { AdminNonSubmittersService } from './services/admin-non-submitters.service';
 import { AdminUserService } from './services/admin-user.service';
 import { AssignInstitutionalRoleDto } from './dto/requests/assign-institutional-role.request.dto';
 import { RemoveInstitutionalRoleDto } from './dto/requests/remove-institutional-role.request.dto';
+import { ListNonSubmittersQueryDto } from './dto/requests/list-non-submitters-query.dto';
 import { ListUsersQueryDto } from './dto/requests/list-users-query.dto';
 import { DeanEligibleCategoriesQueryDto } from './dto/requests/dean-eligible-categories-query.dto';
 import { CampusHeadEligibleCategoriesQueryDto } from './dto/requests/campus-head-eligible-categories-query.dto';
 import { UpdateScopeAssignmentDto } from './dto/requests/update-scope-assignment.request.dto';
 import { CreateLocalUserRequestDto } from './dto/requests/create-user.request.dto';
+import { AdminNonSubmitterListResponseDto } from './dto/responses/admin-non-submitter-list.response.dto';
 import { AdminUserDetailResponseDto } from './dto/responses/admin-user-detail.response.dto';
 import { AdminUserListResponseDto } from './dto/responses/admin-user-list.response.dto';
 import { AdminUserScopeAssignmentResponseDto } from './dto/responses/admin-user-scope-assignment.response.dto';
@@ -47,6 +50,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly adminUserService: AdminUserService,
+    private readonly adminNonSubmittersService: AdminNonSubmittersService,
   ) {}
 
   @Post('users')
@@ -130,6 +134,57 @@ export class AdminController {
     @Query() query: ListUsersQueryDto,
   ): Promise<AdminUserListResponseDto> {
     return this.adminService.ListUsers(query);
+  }
+
+  @Get('users/without-submissions')
+  @ApiOperation({
+    summary:
+      'List students with no questionnaire submissions in the scope semester',
+    description:
+      'Internal admin lookup. Scope defaults to the latest semester. Optional faculty/course filters narrow the pool to students enrolled in that course and treat "no submissions" as no submissions for that (faculty, course, semester) tuple.',
+  })
+  @ApiQuery({
+    name: 'search',
+    required: false,
+    type: String,
+    example: 'jane',
+    description: 'Search by username, full name, first name, last name, or id',
+  })
+  @ApiQuery({
+    name: 'semesterId',
+    required: false,
+    type: String,
+    description: 'Scope semester UUID (defaults to latest)',
+  })
+  @ApiQuery({
+    name: 'facultyUsername',
+    required: false,
+    type: String,
+    description: 'Restrict to the course pool taught by this faculty username',
+  })
+  @ApiQuery({
+    name: 'courseId',
+    required: false,
+    type: String,
+    description: 'Restrict to students enrolled in this course UUID',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 20,
+  })
+  @ApiResponse({ status: 200, type: AdminNonSubmitterListResponseDto })
+  async ListUsersWithoutSubmissions(
+    @Query() query: ListNonSubmittersQueryDto,
+  ): Promise<AdminNonSubmitterListResponseDto> {
+    return this.adminNonSubmittersService.ListNonSubmitters(query);
   }
 
   @Get('users/:id')

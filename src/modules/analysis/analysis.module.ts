@@ -13,6 +13,7 @@ import {
   TopicAssignment,
   TopicModelRun,
 } from '../../entities/index.entity';
+import { SystemConfig } from '../../entities/system-config.entity';
 import { User } from '../../entities/user.entity';
 import { CommonModule } from '../common/common.module';
 import DataLoaderModule from '../common/data-loaders/index.module';
@@ -25,6 +26,9 @@ import { RecommendationsProcessor } from './processors/recommendations.processor
 import { PipelineOrchestratorService } from './services/pipeline-orchestrator.service';
 import { TopicLabelService } from './services/topic-label.service';
 import { RecommendationGenerationService } from './services/recommendation-generation.service';
+import { AnalysisAccessService } from './services/analysis-access.service';
+import { SentimentConfigService } from './services/sentiment-config.service';
+import { AdminSentimentConfigController } from './controllers/admin-sentiment-config.controller';
 
 @Module({
   imports: [
@@ -50,6 +54,7 @@ import { RecommendationGenerationService } from './services/recommendation-gener
       // controller level (RolesGuard consumes UserRepository to check
       // user.roles). Matches the pattern in AnalyticsModule.
       User,
+      SystemConfig,
     ]),
     CommonModule,
     // Provides UserLoader for CurrentUserInterceptor (FAC-132 added the
@@ -57,7 +62,7 @@ import { RecommendationGenerationService } from './services/recommendation-gener
     // as AnalyticsModule.
     DataLoaderModule,
   ],
-  controllers: [AnalysisController],
+  controllers: [AnalysisController, AdminSentimentConfigController],
   providers: [
     AnalysisService,
     SentimentProcessor,
@@ -67,7 +72,13 @@ import { RecommendationGenerationService } from './services/recommendation-gener
     PipelineOrchestratorService,
     TopicLabelService,
     RecommendationGenerationService,
+    AnalysisAccessService,
+    SentimentConfigService,
   ],
-  exports: [AnalysisService, PipelineOrchestratorService],
+  exports: [
+    AnalysisService,
+    PipelineOrchestratorService,
+    SentimentConfigService,
+  ],
 })
 export class AnalysisModule {}

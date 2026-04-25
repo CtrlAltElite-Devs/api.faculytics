@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { UniqueConstraintViolationException } from '@mikro-orm/core';
 import { v4 } from 'uuid';
@@ -25,14 +26,14 @@ import { Semester } from 'src/entities/semester.entity';
 import { User } from 'src/entities/user.entity';
 import { QuestionnaireVersion } from 'src/entities/questionnaire-version.entity';
 import { Department } from 'src/entities/department.entity';
-import { Program } from 'src/entities/program.entity';
 import { Campus } from 'src/entities/campus.entity';
-import { Course } from 'src/entities/course.entity';
 import { Enrollment } from 'src/entities/enrollment.entity';
 import { UserRole } from 'src/modules/auth/roles.enum';
-import { PipelineStatus, RunStatus } from '../enums';
+import { PipelineStatus, PipelineTrigger, RunStatus } from '../enums';
 import { SENTIMENT_GATE, COVERAGE_WARNINGS } from '../constants';
+import type { ScopeType } from '../dto/facet.dto';
 import { buildSubmissionScope } from '../lib/build-submission-scope';
+import { chunkSubmissionsForSentiment } from '../lib/chunk-submissions-for-sentiment';
 import {
   CreatePipelineInput,
   createPipelineSchema,
@@ -41,6 +42,38 @@ import {
   ListPipelinesQueryInput,
   listPipelinesQuerySchema,
 } from '../dto/list-pipelines.dto';
+import {
+  PRIMARY_QUESTIONNAIRE_CODE_TO_FACET,
+  type Facet,
+} from '../dto/facet.dto';
+import {
+  deriveScopeLabel,
+  type VoiceBreakdownDto,
+} from '../dto/responses/pipeline-summary.response.dto';
+import {
+  getNextScheduledRunAt,
+  tierFromPipelineScope,
+} from '../lib/next-scheduled-run';
+
+// Internal legacy-field shape used by the authorization and duplicate-check
+// logic inside this service. The external DTO is now {scopeType, scopeId}
+// but the AnalysisPipeline entity still stores nullable FK columns per
+// tier — this struct mediates the two until we migrate the entity.
+interface InternalCreateInput {
+  semesterId: string;
+  facultyId?: string;
+  departmentId?: string;
+  campusId?: string;
+  questionnaireVersionId?: string;
+}
+
+// Phase B scheduler: one work item per (scope, semester) tuple per tier.
+export interface ActiveScopeForTier {
+  scopeType: ScopeType;
+  scopeId: string;
+  semesterId: string;
+  lastPipelineCompletedAt: Date | null;
+}
 import { BatchAnalysisJobMessage } from '../dto/batch-analysis-job-message.dto';
 import { batchAnalysisJobSchema } from '../dto/batch-analysis-job-message.dto';
 import { PipelineStatusResponse } from '../dto/pipeline-status.dto';
@@ -51,8 +84,12 @@ import {
 import { RecommendationsResponseDto } from '../dto/responses/recommendations.response.dto';
 import { AnalysisService } from '../analysis.service';
 import { TopicLabelService } from './topic-label.service';
+import { AnalysisAccessService } from './analysis-access.service';
+import { SentimentConfigService } from './sentiment-config.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
 import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
+import { AuditService } from 'src/modules/audit/audit.service';
+import { AuditAction } from 'src/modules/audit/audit-action.enum';
 
 interface CoverageStats {
   totalEnrolled: number;
@@ -72,7 +109,7 @@ interface ScopeFilter {
   course?: string;
 }
 
-const TERMINAL_STATUSES = [
+export const TERMINAL_STATUSES = [
   PipelineStatus.COMPLETED,
   PipelineStatus.FAILED,
   PipelineStatus.CANCELLED,
@@ -100,8 +137,12 @@ export class PipelineOrchestratorService {
     private readonly em: EntityManager,
     private readonly analysisService: AnalysisService,
     private readonly topicLabelService: TopicLabelService,
+    private readonly accessService: AnalysisAccessService,
     private readonly scopeResolver: ScopeResolverService,
     private readonly currentUserService: CurrentUserService,
+    private readonly schedulerRegistry: SchedulerRegistry,
+    private readonly auditService: AuditService,
+    private readonly sentimentConfigService: SentimentConfigService,
     @InjectQueue(QueueName.SENTIMENT) private readonly sentimentQueue: Queue,
     @InjectQueue(QueueName.TOPIC_MODEL) private readonly topicModelQueue: Queue,
     @InjectQueue(QueueName.RECOMMENDATIONS)
@@ -113,15 +154,22 @@ export class PipelineOrchestratorService {
   async CreatePipeline(
     dto: CreatePipelineInput,
     triggeredById: string,
+    options?: { trigger?: PipelineTrigger },
   ): Promise<AnalysisPipeline> {
     const parsed = createPipelineSchema.parse(dto);
+
+    // Translate canonical {scopeType, scopeId} → internal legacy-field
+    // shape (facultyId/departmentId/campusId). `program`/`course` are no
+    // longer valid scope tiers for new pipelines — historical rows remain
+    // readable but can never be created from the new DTO surface.
+    const canonical = this.canonicalToInternal(parsed);
 
     // Belt-and-braces service-layer scope check. The controller-level
     // @UseJwtGuard + RolesGuard blocks STUDENT/FACULTY before reaching here,
     // but this guards against future guard misconfiguration (see AC-2a).
     // Returns input augmented with auto-filled scope when the caller has
     // exactly one assigned scope and didn't specify one explicitly.
-    const input = await this.assertCanCreatePipeline(parsed);
+    const input = await this.assertCanCreatePipeline(canonical);
 
     const fork = this.em.fork();
 
@@ -141,9 +189,11 @@ export class PipelineOrchestratorService {
       status: { $in: activeStatuses },
       faculty: input.facultyId ?? null,
       department: input.departmentId ?? null,
-      program: input.programId ?? null,
+      // New pipelines never populate program/course (aggregate-scope rework).
+      // Historical rows may have these set; listing/read paths tolerate that.
+      program: null,
       campus: input.campusId ?? null,
-      course: input.courseId ?? null,
+      course: null,
       questionnaireVersion: input.questionnaireVersionId ?? null,
     };
 
@@ -162,9 +212,7 @@ export class PipelineOrchestratorService {
     if (input.questionnaireVersionId)
       scope.questionnaireVersion = input.questionnaireVersionId;
     if (input.departmentId) scope.department = input.departmentId;
-    if (input.programId) scope.program = input.programId;
     if (input.campusId) scope.campus = input.campusId;
-    if (input.courseId) scope.course = input.courseId;
 
     const coverage = await this.ComputeCoverageStats(fork, scope);
     const warnings = this.BuildCoverageWarnings(coverage);
@@ -180,16 +228,12 @@ export class PipelineOrchestratorService {
       department: input.departmentId
         ? fork.getReference(Department, input.departmentId)
         : undefined,
-      program: input.programId
-        ? fork.getReference(Program, input.programId)
-        : undefined,
+      // program/course never populated on new aggregate-scope pipelines.
       campus: input.campusId
         ? fork.getReference(Campus, input.campusId)
         : undefined,
-      course: input.courseId
-        ? fork.getReference(Course, input.courseId)
-        : undefined,
       triggeredBy: fork.getReference(User, triggeredById),
+      trigger: options?.trigger ?? PipelineTrigger.USER,
       totalEnrolled: coverage.totalEnrolled,
       submissionCount: coverage.submissionCount,
       commentCount: coverage.commentCount,
@@ -232,31 +276,39 @@ export class PipelineOrchestratorService {
     query: ListPipelinesQueryInput,
   ): Promise<AnalysisPipeline[]> {
     const parsed = listPipelinesQuerySchema.parse(query);
-    const filled = await this.fillAndAssertListScope(parsed);
+    const internal = this.listQueryToInternal(parsed);
+    const filled = await this.fillAndAssertListScope(internal);
 
     const fork = this.em.fork();
+    // Filter shape mirrors CreatePipeline's `existingFilter`. Faculty-level
+    // queries (facultyId present) intentionally leave dept/campus unbound so
+    // a pipeline triggered by a DEAN stays visible to a CAMPUS_HEAD viewing
+    // the same faculty.
     const filter: Record<string, unknown> = {
       semester: filled.semesterId,
+      questionnaireVersion: filled.questionnaireVersionId ?? null,
     };
-    if (filled.facultyId) filter['faculty'] = filled.facultyId;
-    if (filled.questionnaireVersionId)
-      filter['questionnaireVersion'] = filled.questionnaireVersionId;
-    if (filled.courseId) filter['course'] = filled.courseId;
-    if (filled.programId) filter['program'] = filled.programId;
-    if (filled.campusId) filter['campus'] = filled.campusId;
 
-    // Default-filled departmentIds come through as string[] (via $in), a
-    // client-provided scalar departmentId still works.
-    if (filled.departmentIdSet) {
-      filter['department'] = { $in: filled.departmentIdSet };
-    } else if (filled.departmentId) {
-      filter['department'] = filled.departmentId;
-    }
-    if (filled.programIdSet) {
-      filter['program'] = { $in: filled.programIdSet };
-    }
-    if (filled.campusIdSet) {
-      filter['campus'] = { $in: filled.campusIdSet };
+    if (filled.facultyId) {
+      filter['faculty'] = filled.facultyId;
+    } else {
+      filter['faculty'] = null;
+
+      if (filled.departmentId) {
+        filter['department'] = filled.departmentId;
+      } else if (filled.departmentIdSet) {
+        filter['department'] = { $in: filled.departmentIdSet };
+      } else {
+        filter['department'] = null;
+      }
+
+      if (filled.campusId) {
+        filter['campus'] = filled.campusId;
+      } else if (filled.campusIdSet) {
+        filter['campus'] = { $in: filled.campusIdSet };
+      } else {
+        filter['campus'] = null;
+      }
     }
 
     return fork.find(AnalysisPipeline, filter, {
@@ -573,6 +625,8 @@ export class PipelineOrchestratorService {
     let warnings = pipeline.warnings;
     let lastEnrollmentSyncAt: Date | null = null;
 
+    const voiceBreakdown = await this.ComputeVoiceBreakdown(fork, scope);
+
     if (pipeline.status === PipelineStatus.AWAITING_CONFIRMATION) {
       const freshCoverage = await this.ComputeCoverageStats(fork, scope);
       totalEnrolled = freshCoverage.totalEnrolled;
@@ -659,6 +713,7 @@ export class PipelineOrchestratorService {
     return {
       id: pipeline.id,
       status: pipeline.status,
+      scopeLabel: deriveScopeLabel(pipeline),
       scope: {
         semesterId: pipeline.semester?.id ?? '',
         semesterCode: pipeline.semester?.code ?? '',
@@ -680,6 +735,7 @@ export class PipelineOrchestratorService {
         commentCount,
         responseRate,
         lastEnrollmentSyncAt: lastEnrollmentSyncAt?.toISOString() || null,
+        voiceBreakdown,
       },
       stages: {
         embeddings: buildStage(
@@ -714,6 +770,10 @@ export class PipelineOrchestratorService {
       updatedAt: pipeline.updatedAt.toISOString(),
       confirmedAt: pipeline.confirmedAt?.toISOString() || null,
       completedAt: pipeline.completedAt?.toISOString() || null,
+      nextScheduledRunAt: getNextScheduledRunAt(
+        this.schedulerRegistry,
+        tierFromPipelineScope(pipeline),
+      ),
     };
   }
 
@@ -744,6 +804,167 @@ export class PipelineOrchestratorService {
     return pipeline;
   }
 
+  // --- Scheduler-driven flow (FAC-135 Phase B) ---
+
+  /**
+   * Enumerates work items for a given tier across ALL active semesters.
+   *
+   * "Active semester" is intentionally fuzzy in this codebase — the
+   * `Semester` entity carries no `status` column, so the scheduler defines
+   * activity as "any submission posted in the last 30 days." Multi-semester
+   * handling is required because semester transition weeks have overlapping
+   * activity (old final submissions + new early submissions); single-
+   * semester assumption would skip one for ~14 days.
+   *
+   * For each active semester × tier, we enumerate distinct scope ids that
+   * have at least one submission, plus the most recent COMPLETED pipeline's
+   * `completedAt` for the (scope, semester) tuple — used by the scheduler's
+   * skip-check.
+   */
+  async FindActiveScopesForTier(
+    tier: ScopeType,
+  ): Promise<ActiveScopeForTier[]> {
+    const fork = this.em.fork();
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const tierColumn =
+      tier === 'FACULTY'
+        ? 'faculty_id'
+        : tier === 'DEPARTMENT'
+          ? 'facultyDepartment_id'
+          : 'campus_id';
+
+    // One query: distinct (scope_id, semester_id) tuples among "active"
+    // semesters (any submission ≤ 30 days old), LEFT JOINing the most
+    // recent COMPLETED pipeline for that exact (scope, semester) tuple.
+    const sql = `
+      WITH active_semesters AS (
+        SELECT DISTINCT semester_id
+          FROM questionnaire_submission
+         WHERE deleted_at IS NULL
+           AND created_at >= ?
+      ),
+      scopes AS (
+        SELECT DISTINCT qs.${tierColumn} AS scope_id, qs.semester_id
+          FROM questionnaire_submission qs
+          JOIN active_semesters a ON a.semester_id = qs.semester_id
+         WHERE qs.deleted_at IS NULL
+           AND qs.${tierColumn} IS NOT NULL
+      )
+      SELECT s.scope_id::text AS scope_id,
+             s.semester_id::text AS semester_id,
+             (
+               SELECT MAX(ap.completed_at)
+                 FROM analysis_pipeline ap
+                WHERE ap.deleted_at IS NULL
+                  AND ap.status = 'COMPLETED'
+                  AND ap.semester_id = s.semester_id
+                  AND ap.${this.tierColumnOnPipeline(tier)} = s.scope_id
+             ) AS last_completed_at
+        FROM scopes s
+    `;
+
+    const rows: {
+      scope_id: string;
+      semester_id: string;
+      last_completed_at: Date | string | null;
+    }[] = await fork.getConnection().execute(sql, [cutoff]);
+
+    return rows.map((r) => ({
+      scopeType: tier,
+      scopeId: r.scope_id,
+      semesterId: r.semester_id,
+      lastPipelineCompletedAt: r.last_completed_at
+        ? new Date(r.last_completed_at)
+        : null,
+    }));
+  }
+
+  private tierColumnOnPipeline(tier: ScopeType): string {
+    switch (tier) {
+      case 'FACULTY':
+        return 'faculty_id';
+      case 'DEPARTMENT':
+        return 'department_id';
+      case 'CAMPUS':
+        return 'campus_id';
+    }
+  }
+
+  /**
+   * Scheduler entry point. Bypasses the AWAITING_CONFIRMATION human gate —
+   * there is no human in the loop. If the scope has no qualitative comments
+   * at schedule time, the pipeline is persisted in COMPLETED state with
+   * `warnings: ['insufficient_coverage_at_schedule_time']` so the next
+   * Dean / Campus Head viewing pipeline history sees the no-op explicitly
+   * (rather than the row being silently absent or stuck).
+   *
+   * The skip-check (createdAt > lastCompletedAt) belongs in the scheduler,
+   * NOT here — manual `POST /analysis/pipelines` must always create a fresh
+   * pipeline regardless of last-run timestamp.
+   */
+  async CreateAndConfirmPipeline(input: {
+    scopeType: ScopeType;
+    scopeId: string;
+    semesterId: string;
+    triggeredById: string;
+    questionnaireVersionId?: string;
+  }): Promise<AnalysisPipeline> {
+    // Build a CreatePipelineInput-shaped payload + run through the canonical
+    // create path with `trigger: SCHEDULER`. The duplicate-check inside
+    // CreatePipeline returns the existing active pipeline if one exists, so
+    // schedulers firing on top of an in-flight pipeline are idempotent.
+    const dtoLike: CreatePipelineInput = {
+      semesterId: input.semesterId,
+      scopeType: input.scopeType,
+      scopeId: input.scopeId,
+      questionnaireVersionId: input.questionnaireVersionId,
+    };
+
+    // Bypass user-scope authorization — scheduler is system-trusted. We
+    // re-use the create flow by side-loading a minimal "system" current-user
+    // context via the SUPER_ADMIN role. assertCanCreatePipeline gates on
+    // SUPER_ADMIN with no further auto-fill.
+    const pipeline = await this.currentUserService.runAs(
+      {
+        id: input.triggeredById,
+        roles: [UserRole.SUPER_ADMIN],
+      },
+      () =>
+        this.CreatePipeline(dtoLike, input.triggeredById, {
+          trigger: PipelineTrigger.SCHEDULER,
+        }),
+    );
+
+    // If the freshly created pipeline already advanced past
+    // AWAITING_CONFIRMATION (the duplicate-check returned an existing row),
+    // leave it alone — concurrent confirmation will run.
+    if (pipeline.status !== PipelineStatus.AWAITING_CONFIRMATION) {
+      return pipeline;
+    }
+
+    // Coverage gate: no comments → no analysis is possible. Auto-complete
+    // with a structured warning so the row appears in history with intent.
+    if (pipeline.commentCount === 0) {
+      const fork = this.em.fork();
+      const fresh = await fork.findOneOrFail(AnalysisPipeline, pipeline.id);
+      fresh.status = PipelineStatus.COMPLETED;
+      fresh.completedAt = new Date();
+      fresh.warnings = [
+        ...(fresh.warnings ?? []),
+        'insufficient_coverage_at_schedule_time',
+      ];
+      await fork.flush();
+      this.logger.log(
+        `Scheduler created pipeline ${fresh.id} as COMPLETED (no qualitative comments at schedule time)`,
+      );
+      return fresh;
+    }
+
+    // Sufficient coverage — auto-confirm, which kicks off sentiment.
+    return this.ConfirmPipeline(pipeline.id);
+  }
+
   async OnStageFailed(
     pipelineId: string,
     stage: string,
@@ -759,94 +980,146 @@ export class PipelineOrchestratorService {
     await fork.flush();
 
     this.logger.error(`Pipeline ${pipelineId} failed at ${stage}: ${error}`);
+
+    this.emitPipelineFailAudit(pipeline, stage, error);
   }
 
-  // --- Scope Authorization (FAC-132) ---
+  // --- Scope Authorization (FAC-132, adapted for aggregate scope rework) ---
+
+  /**
+   * Maps the canonical DTO shape {scopeType, scopeId} to the internal
+   * legacy-field shape the authorization + duplicate-check paths operate
+   * on. Phase-A translation; when the entity is migrated to
+   * scope_type/scope_id columns this helper disappears.
+   */
+  private canonicalToInternal(input: CreatePipelineInput): InternalCreateInput {
+    const base: InternalCreateInput = {
+      semesterId: input.semesterId,
+      questionnaireVersionId: input.questionnaireVersionId,
+    };
+    if (!input.scopeType || !input.scopeId) return base;
+    switch (input.scopeType) {
+      case 'FACULTY':
+        return { ...base, facultyId: input.scopeId };
+      case 'DEPARTMENT':
+        return { ...base, departmentId: input.scopeId };
+      case 'CAMPUS':
+        return { ...base, campusId: input.scopeId };
+    }
+  }
+
+  private listQueryToInternal(
+    query: ListPipelinesQueryInput,
+  ): InternalCreateInput {
+    const base: InternalCreateInput = {
+      semesterId: query.semesterId,
+      questionnaireVersionId: query.questionnaireVersionId,
+    };
+    if (!query.scopeType || !query.scopeId) return base;
+    switch (query.scopeType) {
+      case 'FACULTY':
+        return { ...base, facultyId: query.scopeId };
+      case 'DEPARTMENT':
+        return { ...base, departmentId: query.scopeId };
+      case 'CAMPUS':
+        return { ...base, campusId: query.scopeId };
+    }
+  }
 
   private async assertCanCreatePipeline(
-    input: CreatePipelineInput,
-  ): Promise<CreatePipelineInput> {
+    input: InternalCreateInput,
+  ): Promise<InternalCreateInput> {
     const user = this.currentUserService.getOrFail();
 
     if (user.roles.includes(UserRole.SUPER_ADMIN)) {
+      if (!input.facultyId && !input.departmentId && !input.campusId) {
+        throw new BadRequestException(
+          'SUPER_ADMIN must specify scopeType and scopeId explicitly',
+        );
+      }
       return input;
     }
 
-    // Roles are not mutually exclusive — a Moodle user provisioned as
-    // DEAN is typically also FACULTY. Try the scoped roles in order of
-    // precedence; the catch-all `throw` at the bottom rejects users who
-    // have ONLY FACULTY/STUDENT (or no recognized role).
-    //
-    // Auto-fill rule: if the caller has exactly ONE assigned scope on
-    // their axis and didn't specify one explicitly, fill it in. This
-    // closes the UX gap where the dashboard's PipelineTriggerCard only
-    // knows {semesterId}. Multi-scope users still get 400 — they need to
-    // pick (future picker UI).
+    // Roles are not mutually exclusive. Auto-fill rule: if the caller has
+    // exactly ONE assigned scope on their axis and didn't specify one
+    // explicitly, fill it in. Multi-scope users must pick.
+    // Note: with the aggregate-scope rework, CHAIRPERSON no longer maps to
+    // a PROGRAM pipeline tier — they trigger FACULTY-scoped pipelines,
+    // authorized against faculty-in-program.
 
     if (user.roles.includes(UserRole.DEAN)) {
-      let departmentId = input.departmentId;
-      const allowed = await this.scopeResolver.ResolveDepartmentIds(
+      const allowedDepts = await this.scopeResolver.ResolveDepartmentIds(
         input.semesterId,
       );
+
+      // Explicit faculty scope: the faculty must teach ≥1 course in the dean's
+      // departments this semester (teaching footprint, not home department).
+      if (input.facultyId) {
+        await this.assertFacultyInUserScope(input.facultyId, input.semesterId);
+        return input;
+      }
+
+      let departmentId = input.departmentId;
       if (!departmentId) {
-        if (allowed === null) {
-          return input; // SUPER_ADMIN-equivalent, won't normally hit
-        }
-        if (allowed.length === 0) {
+        if (allowedDepts === null) return input;
+        if (allowedDepts.length === 0) {
           throw new ForbiddenException(
             'No departments assigned to your account for this semester',
           );
         }
-        if (allowed.length === 1) {
-          departmentId = allowed[0];
+        if (allowedDepts.length === 1) {
+          departmentId = allowedDepts[0];
         } else {
           throw new BadRequestException(
-            'Multiple departments assigned — please specify departmentId',
+            'Multiple departments assigned — please specify scopeType=DEPARTMENT and scopeId',
           );
         }
-      } else if (allowed !== null && !allowed.includes(departmentId)) {
+      } else if (
+        allowedDepts !== null &&
+        !allowedDepts.includes(departmentId)
+      ) {
         throw new ForbiddenException('scope not in your assigned access');
       }
       return { ...input, departmentId };
     }
 
     if (user.roles.includes(UserRole.CHAIRPERSON)) {
-      let programId = input.programId;
-      const allowed = await this.scopeResolver.ResolveProgramIds(
-        input.semesterId,
-      );
-      if (!programId) {
-        if (allowed === null) {
-          return input;
-        }
-        if (allowed.length === 0) {
-          throw new ForbiddenException(
-            'No programs assigned to your account for this semester',
-          );
-        }
-        if (allowed.length === 1) {
-          programId = allowed[0];
-        } else {
-          throw new BadRequestException(
-            'Multiple programs assigned — please specify programId',
-          );
-        }
-      } else if (allowed !== null && !allowed.includes(programId)) {
-        throw new ForbiddenException('scope not in your assigned access');
+      // Chairperson triggers FACULTY-scoped pipelines only in the new shape.
+      if (!input.facultyId) {
+        throw new BadRequestException(
+          'CHAIRPERSON must specify scopeType=FACULTY and scopeId',
+        );
       }
-      return { ...input, programId };
+      await this.assertFacultyInUserScope(input.facultyId, input.semesterId);
+      return input;
     }
 
     if (user.roles.includes(UserRole.CAMPUS_HEAD)) {
-      let campusId = input.campusId;
-      const departmentId = input.departmentId;
       const allowedCampuses = await this.scopeResolver.ResolveCampusIds(
         input.semesterId,
       );
-      if (!campusId && !departmentId) {
-        if (allowedCampuses === null) {
-          return input;
+
+      if (input.facultyId) {
+        await this.assertFacultyInUserScope(input.facultyId, input.semesterId);
+        return input;
+      }
+
+      if (input.departmentId) {
+        const allowedDepts = await this.scopeResolver.ResolveDepartmentIds(
+          input.semesterId,
+        );
+        if (
+          allowedDepts !== null &&
+          !allowedDepts.includes(input.departmentId)
+        ) {
+          throw new ForbiddenException('scope not in your assigned access');
         }
+        return input;
+      }
+
+      let campusId = input.campusId;
+      if (!campusId) {
+        if (allowedCampuses === null) return input;
         if (allowedCampuses.length === 0) {
           throw new ForbiddenException(
             'No campuses assigned to your account for this semester',
@@ -856,25 +1129,14 @@ export class PipelineOrchestratorService {
           campusId = allowedCampuses[0];
         } else {
           throw new BadRequestException(
-            'Multiple campuses assigned — please specify campusId or departmentId',
+            'Multiple campuses assigned — please specify scopeType and scopeId',
           );
         }
-      } else {
-        if (
-          campusId &&
-          allowedCampuses !== null &&
-          !allowedCampuses.includes(campusId)
-        ) {
-          throw new ForbiddenException('scope not in your assigned access');
-        }
-        if (departmentId) {
-          const allowedDepts = await this.scopeResolver.ResolveDepartmentIds(
-            input.semesterId,
-          );
-          if (allowedDepts !== null && !allowedDepts.includes(departmentId)) {
-            throw new ForbiddenException('scope not in your assigned access');
-          }
-        }
+      } else if (
+        allowedCampuses !== null &&
+        !allowedCampuses.includes(campusId)
+      ) {
+        throw new ForbiddenException('scope not in your assigned access');
       }
       return { ...input, campusId };
     }
@@ -882,10 +1144,9 @@ export class PipelineOrchestratorService {
     throw new ForbiddenException('scope not in your assigned access');
   }
 
-  private async fillAndAssertListScope(query: ListPipelinesQueryInput): Promise<
-    ListPipelinesQueryInput & {
+  private async fillAndAssertListScope(query: InternalCreateInput): Promise<
+    InternalCreateInput & {
       departmentIdSet?: string[];
-      programIdSet?: string[];
       campusIdSet?: string[];
     }
   > {
@@ -895,9 +1156,16 @@ export class PipelineOrchestratorService {
       return { ...query };
     }
 
-    // Try scoped roles BEFORE the FACULTY auto-override — a Moodle DEAN
-    // is typically also FACULTY, and the more-permissive DEAN behavior
-    // must win.
+    const isScopedRole =
+      user.roles.includes(UserRole.DEAN) ||
+      user.roles.includes(UserRole.CHAIRPERSON) ||
+      user.roles.includes(UserRole.CAMPUS_HEAD);
+    // Faculty-level queries short-circuit the set filters for scoped roles.
+    // Authorization via teaching footprint intersection with caller's scope.
+    if (query.facultyId && isScopedRole) {
+      await this.assertFacultyInUserScope(query.facultyId, query.semesterId);
+      return { ...query };
+    }
 
     if (user.roles.includes(UserRole.DEAN)) {
       const allowed = await this.scopeResolver.ResolveDepartmentIds(
@@ -914,17 +1182,10 @@ export class PipelineOrchestratorService {
     }
 
     if (user.roles.includes(UserRole.CHAIRPERSON)) {
-      const allowed = await this.scopeResolver.ResolveProgramIds(
-        query.semesterId,
-      );
-      if (allowed === null) return { ...query };
-      if (query.programId) {
-        if (!allowed.includes(query.programId)) {
-          throw new ForbiddenException('scope not in your assigned access');
-        }
-        return { ...query };
-      }
-      return { ...query, programIdSet: allowed };
+      // Chairperson only sees FACULTY-scoped pipelines in the new shape.
+      // With no facultyId filter, return nothing by scoping to an impossible
+      // departmentIdSet (empty). Callers should always provide facultyId.
+      return { ...query, departmentIdSet: [] };
     }
 
     if (user.roles.includes(UserRole.CAMPUS_HEAD)) {
@@ -943,10 +1204,7 @@ export class PipelineOrchestratorService {
 
     if (user.roles.includes(UserRole.FACULTY)) {
       // Silently override any facultyId in the query to the caller's own
-      // user id. Rationale: prevents enumeration of other faculty's
-      // pipelines via the list endpoint — a FACULTY querying
-      // `{ facultyId: 'other' }` must see their own list, not a 403
-      // (which would leak the existence of the foreign faculty's pipeline).
+      // user id. Prevents enumeration of other faculty's pipelines.
       return { ...query, facultyId: user.id };
     }
 
@@ -1030,10 +1288,168 @@ export class PipelineOrchestratorService {
       return;
     }
 
+    // FACULTY-scoped pipeline (only pipeline.faculty is set, no department/
+    // program/campus FKs per AC1): authorize via the caller's teaching-scope
+    // intersection with the faculty. Without this, dean/chair/campus-head
+    // cannot read back FACULTY-scoped pipelines they just created.
+    const isScopedRole =
+      user.roles.includes(UserRole.DEAN) ||
+      user.roles.includes(UserRole.CHAIRPERSON) ||
+      user.roles.includes(UserRole.CAMPUS_HEAD);
+    if (
+      isScopedRole &&
+      pipeline.faculty &&
+      !pipeline.department &&
+      !pipeline.program &&
+      !pipeline.campus
+    ) {
+      try {
+        await this.assertFacultyInUserScope(
+          pipeline.faculty.id,
+          pipeline.semester.id,
+        );
+        return;
+      } catch {
+        // fall through to final throw
+      }
+    }
+
     throw new ForbiddenException('scope not in your assigned access');
   }
 
   // --- Private Helpers ---
+
+  /**
+   * Authorize a FACULTY-scoped operation for the current user. Uses the
+   * faculty's teaching footprint (active `editingteacher`/`teacher`
+   * enrollments in the target semester) intersected with the caller's
+   * resolved scope per role:
+   *   - DEAN, CAMPUS_HEAD → intersect with allowed department IDs
+   *   - CHAIRPERSON       → intersect with allowed program IDs
+   * Roles are not mutually exclusive — if the user holds multiple scoped
+   * roles, access is granted if ANY role's scope contains a teaching
+   * enrollment. SUPER_ADMIN short-circuits. Throws 404 if the faculty
+   * doesn't exist, 403 otherwise.
+   */
+  private async assertFacultyInUserScope(
+    facultyId: string,
+    semesterId: string,
+  ): Promise<void> {
+    const user = this.currentUserService.getOrFail();
+
+    const fork = this.em.fork();
+    const existsRows: { id: string }[] = await fork
+      .getConnection()
+      .execute(
+        'SELECT u.id FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+        [facultyId],
+      );
+    if (existsRows.length === 0) {
+      throw new NotFoundException('Faculty not found');
+    }
+
+    if (user.roles.includes(UserRole.SUPER_ADMIN)) return;
+
+    const checks: Array<
+      | { axis: 'department'; ids: string[] | null }
+      | { axis: 'program'; ids: string[] | null }
+    > = [];
+    if (
+      user.roles.includes(UserRole.DEAN) ||
+      user.roles.includes(UserRole.CAMPUS_HEAD)
+    ) {
+      checks.push({
+        axis: 'department',
+        ids: await this.scopeResolver.ResolveDepartmentIds(semesterId),
+      });
+    }
+    if (user.roles.includes(UserRole.CHAIRPERSON)) {
+      checks.push({
+        axis: 'program',
+        ids: await this.scopeResolver.ResolveProgramIds(semesterId),
+      });
+    }
+
+    if (checks.length === 0) {
+      throw new ForbiddenException('scope not in your assigned access');
+    }
+
+    for (const check of checks) {
+      if (
+        await this.facultyTeachesInScope(
+          facultyId,
+          semesterId,
+          check.axis,
+          check.ids,
+        )
+      ) {
+        return;
+      }
+    }
+
+    throw new ForbiddenException('scope not in your assigned access');
+  }
+
+  /**
+   * Returns true if the faculty has any active teaching enrollment in
+   * `semesterId` whose course's owning department/program is in `allowedIds`.
+   * `allowedIds === null` means unrestricted on that axis (super-admin-
+   * equivalent) — always true. Empty array = no access.
+   */
+  private async facultyTeachesInScope(
+    facultyId: string,
+    semesterId: string,
+    axis: 'department' | 'program',
+    allowedIds: string[] | null,
+  ): Promise<boolean> {
+    if (allowedIds === null) return true;
+    if (allowedIds.length === 0) return false;
+
+    const column = axis === 'department' ? 'd.id' : 'p.id';
+    const placeholders = allowedIds.map(() => '?').join(', ');
+    const fork = this.em.fork();
+    const rows: { hit: number }[] = await fork.getConnection().execute(
+      `SELECT 1 AS hit
+         FROM enrollment e
+         INNER JOIN course c ON c.id = e.course_id
+         INNER JOIN program p ON p.id = c.program_id
+         INNER JOIN department d ON d.id = p.department_id
+        WHERE e.user_id = ?
+          AND e.role IN ('editingteacher', 'teacher')
+          AND e.is_active = true
+          AND e.deleted_at IS NULL
+          AND c.is_active = true
+          AND c.deleted_at IS NULL
+          AND p.deleted_at IS NULL
+          AND d.deleted_at IS NULL
+          AND d.semester_id = ?
+          AND ${column} IN (${placeholders})
+        LIMIT 1`,
+      [facultyId, semesterId, ...allowedIds],
+    );
+    return rows.length > 0;
+  }
+
+  private async resolveLatestActiveVersionId(
+    typeCode: string,
+  ): Promise<string | null> {
+    const fork = this.em.fork();
+    const rows: { id: string }[] = await fork.getConnection().execute(
+      `SELECT qv.id
+           FROM questionnaire_version qv
+           JOIN questionnaire q ON q.id = qv.questionnaire_id
+           JOIN questionnaire_type qt ON qt.id = q.type_id
+          WHERE qt.code = ?
+            AND qv.status = 'ACTIVE'
+            AND qv.deleted_at IS NULL
+            AND q.deleted_at IS NULL
+            AND qt.deleted_at IS NULL
+          ORDER BY qv.version_number DESC
+          LIMIT 1`,
+      [typeCode],
+    );
+    return rows[0]?.id ?? null;
+  }
 
   private BuildScopeFromPipeline(pipeline: AnalysisPipeline): ScopeFilter {
     const scope: ScopeFilter = { semester: pipeline.semester.id };
@@ -1147,6 +1563,82 @@ export class PipelineOrchestratorService {
     };
   }
 
+  /**
+   * AC36: single SQL aggregation grouping submissions by questionnaire-type
+   * code. No per-type loops or N+1. Scope filter mirrors the predicate used
+   * by ComputeCoverageStats so counts are directly comparable.
+   */
+  private async ComputeVoiceBreakdown(
+    em: EntityManager,
+    scope: ScopeFilter,
+  ): Promise<VoiceBreakdownDto> {
+    const whereClauses: string[] = [
+      'qs.deleted_at IS NULL',
+      'qs.semester_id = ?',
+    ];
+    const params: (string | null)[] = [scope.semester];
+
+    if (scope.faculty) {
+      whereClauses.push('qs.faculty_id = ?');
+      params.push(scope.faculty);
+    }
+    if (scope.department) {
+      whereClauses.push('qs.department_id = ?');
+      params.push(scope.department);
+    }
+    if (scope.campus) {
+      whereClauses.push('qs.campus_id = ?');
+      params.push(scope.campus);
+    }
+    if (scope.program) {
+      whereClauses.push('qs.program_id = ?');
+      params.push(scope.program);
+    }
+    if (scope.course) {
+      whereClauses.push('qs.course_id = ?');
+      params.push(scope.course);
+    }
+    if (scope.questionnaireVersion) {
+      whereClauses.push('qs.questionnaire_version_id = ?');
+      params.push(scope.questionnaireVersion);
+    }
+
+    const sql = `
+      SELECT qt.code AS type_code,
+             COUNT(*)::int AS submission_count,
+             SUM(CASE WHEN qs.qualitative_comment IS NOT NULL THEN 1 ELSE 0 END)::int AS comment_count
+      FROM questionnaire_submission qs
+      JOIN questionnaire_version qv ON qv.id = qs.questionnaire_version_id
+      JOIN questionnaire q ON q.id = qv.questionnaire_id
+      JOIN questionnaire_type qt ON qt.id = q.type_id
+      WHERE ${whereClauses.join(' AND ')}
+      GROUP BY qt.code
+    `;
+
+    const rows: {
+      type_code: string;
+      submission_count: number;
+      comment_count: number;
+    }[] = await em.getConnection().execute(sql, params);
+
+    const breakdown: VoiceBreakdownDto = {
+      facultyFeedback: { submissionCount: 0, commentCount: 0 },
+      inClassroom: { submissionCount: 0, commentCount: 0 },
+      outOfClassroom: { submissionCount: 0, commentCount: 0 },
+      other: { submissionCount: 0, commentCount: 0 },
+    };
+
+    for (const row of rows) {
+      const facet: Exclude<Facet, 'overall'> | undefined =
+        PRIMARY_QUESTIONNAIRE_CODE_TO_FACET[row.type_code];
+      const slot = facet ?? 'other';
+      breakdown[slot].submissionCount += Number(row.submission_count) || 0;
+      breakdown[slot].commentCount += Number(row.comment_count) || 0;
+    }
+
+    return breakdown;
+  }
+
   private async getUnembeddedSubmissions(
     em: EntityManager,
     submissionIds: string[],
@@ -1188,42 +1680,63 @@ export class PipelineOrchestratorService {
       return;
     }
 
+    const chunks = chunkSubmissionsForSentiment(
+      submissions,
+      env.SENTIMENT_CHUNK_SIZE,
+    );
+
+    // Snapshot the vLLM config ONCE per dispatch so every chunk in a single
+    // batch sees the same URL/model — avoids mid-batch drift if an operator
+    // rotates the URL while dispatch is in flight.
+    const vllmConfigSnapshot = await this.sentimentConfigService.readConfig();
+    const dispatchVllmConfig =
+      vllmConfigSnapshot.enabled && vllmConfigSnapshot.url
+        ? vllmConfigSnapshot
+        : undefined;
+
+    // `run.jobId` under chunking names the BullMQ jobId *prefix* shared by all this run's chunks;
+    // per-chunk jobIds are derived as `${run.jobId}--<paddedChunkIndex>`.
     const run = em.create(SentimentRun, {
       pipeline,
       submissionCount: submissions.length,
+      expectedChunks: chunks.length,
+      completedChunks: 0,
       status: RunStatus.PROCESSING,
-    });
-    await em.flush();
-
-    const jobId = v4();
-    const envelope: BatchAnalysisJobMessage = {
-      jobId,
-      version: '1.0',
-      type: QueueName.SENTIMENT,
-      items: submissions.map((s) => ({
-        submissionId: s.id,
-        text: s.cleanedComment!,
-      })),
-      metadata: {
-        pipelineId: pipeline.id,
-        runId: run.id,
-      },
-      publishedAt: new Date().toISOString(),
-    };
-
-    batchAnalysisJobSchema.parse(envelope);
-
-    run.jobId = jobId;
-    await em.flush();
-
-    await this.sentimentQueue.add(QueueName.SENTIMENT, envelope, {
       jobId: `${pipeline.id}--sentiment`,
-      attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
-      backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
     });
+    await em.flush();
+
+    const addOps = chunks.map(async (chunkItems, chunkIndex) => {
+      const envelope: BatchAnalysisJobMessage = {
+        jobId: v4(),
+        version: '1.0',
+        type: QueueName.SENTIMENT,
+        items: chunkItems.map((s) => ({
+          submissionId: s.id,
+          text: s.cleanedComment!,
+        })),
+        metadata: {
+          pipelineId: pipeline.id,
+          runId: run.id,
+          chunkIndex,
+          chunkCount: chunks.length,
+        },
+        publishedAt: new Date().toISOString(),
+        ...(dispatchVllmConfig ? { vllmConfig: dispatchVllmConfig } : {}),
+      };
+      batchAnalysisJobSchema.parse(envelope);
+
+      const paddedIndex = String(chunkIndex).padStart(4, '0');
+      await this.sentimentQueue.add(QueueName.SENTIMENT, envelope, {
+        jobId: `${run.jobId}--${paddedIndex}`,
+        attempts: env.BULLMQ_DEFAULT_ATTEMPTS,
+        backoff: { type: 'exponential', delay: env.BULLMQ_DEFAULT_BACKOFF_MS },
+      });
+    });
+    await Promise.all(addOps);
 
     this.logger.log(
-      `Dispatched sentiment batch job for pipeline ${pipeline.id} (${submissions.length} items)`,
+      `Dispatched sentiment batch for pipeline ${pipeline.id}: ${submissions.length} items in ${chunks.length} chunk(s) of up to ${env.SENTIMENT_CHUNK_SIZE}`,
     );
   }
 
@@ -1350,7 +1863,16 @@ export class PipelineOrchestratorService {
       { orderBy: { createdAt: 'DESC' }, populate: ['actions'] },
     );
 
-    return RecommendationsResponseDto.Map(pipelineId, run ?? null);
+    const response = RecommendationsResponseDto.Map(pipelineId, run ?? null);
+
+    // Faculty self-view: strip verbatim quotes from response before returning.
+    // Single enforcement point — see AnalysisAccessService AUDIT comment.
+    const requester = this.currentUserService.getOrFail();
+    return this.accessService.RedactIfFacultySelfView(
+      response,
+      pipeline,
+      requester,
+    );
   }
 
   private async dispatchRecommendations(
@@ -1413,6 +1935,47 @@ export class PipelineOrchestratorService {
     pipeline.errorMessage = error;
     await em.flush();
     this.logger.error(`Pipeline ${pipeline.id} failed: ${error}`);
+
+    // `failPipeline` carries a single error string without an explicit stage
+    // (unlike OnStageFailed). Parse a leading "<stage>: <message>" prefix when
+    // the caller followed that convention; otherwise flag the stage as unknown
+    // so audit analytics can still aggregate these rows.
+    const match = /^([a-z_]+):\s+(.*)$/s.exec(error);
+    const [stage, message] = match ? [match[1], match[2]] : ['unknown', error];
+    this.emitPipelineFailAudit(pipeline, stage, message);
+  }
+
+  private emitPipelineFailAudit(
+    pipeline: AnalysisPipeline,
+    stage: string,
+    errorMessage: string,
+  ): void {
+    const metadata: Record<string, unknown> = {
+      stage,
+      errorMessage,
+      trigger: pipeline.trigger,
+      totalEnrolled: pipeline.totalEnrolled,
+      submissionCount: pipeline.submissionCount,
+      commentCount: pipeline.commentCount,
+      responseRate: Number(pipeline.responseRate),
+      semesterId: pipeline.semester.id,
+    };
+    if (pipeline.faculty) metadata.facultyId = pipeline.faculty.id;
+    if (pipeline.department) metadata.departmentId = pipeline.department.id;
+    if (pipeline.program) metadata.programId = pipeline.program.id;
+    if (pipeline.campus) metadata.campusId = pipeline.campus.id;
+    if (pipeline.course) metadata.courseId = pipeline.course.id;
+    if (pipeline.questionnaireVersion) {
+      metadata.questionnaireVersionId = pipeline.questionnaireVersion.id;
+    }
+
+    void this.auditService.Emit({
+      action: AuditAction.ANALYSIS_PIPELINE_FAIL,
+      actorId: pipeline.triggeredBy?.id,
+      resourceType: 'analysis_pipeline',
+      resourceId: pipeline.id,
+      metadata,
+    });
   }
 
   private getEmbeddingStageStatus(

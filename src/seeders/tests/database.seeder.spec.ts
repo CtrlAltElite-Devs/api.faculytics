@@ -63,9 +63,10 @@ describe('DatabaseSeeders', () => {
 
       await seeder.run(em);
 
-      // APP_NAME, MAINTENANCE_MODE, MOODLE_SYNC_INTERVAL_MINUTES
+      // APP_NAME, MAINTENANCE_MODE, MOODLE_SYNC_INTERVAL_MINUTES,
+      // SENTIMENT_VLLM_CONFIG
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(em.persist).toHaveBeenCalledTimes(3);
+      expect(em.persist).toHaveBeenCalledTimes(4);
     });
 
     it('should not seed duplicates for existing configurations', async () => {

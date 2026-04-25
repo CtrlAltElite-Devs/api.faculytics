@@ -23,6 +23,12 @@ export class SentimentRun extends CustomBaseEntity {
   @Property()
   submissionCount!: number;
 
+  @Property({ default: 0 })
+  expectedChunks: number & Opt = 0;
+
+  @Property({ default: 0 })
+  completedChunks: number & Opt = 0;
+
   @Property({ nullable: true })
   workerVersion?: string;
 

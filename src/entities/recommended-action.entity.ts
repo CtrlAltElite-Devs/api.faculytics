@@ -2,6 +2,7 @@ import { Entity, Enum, Index, ManyToOne, Property } from '@mikro-orm/core';
 import { CustomBaseEntity } from './base.entity';
 import { RecommendedActionRepository } from '../repositories/recommended-action.repository';
 import { ActionPriority, ActionCategory } from '../modules/analysis/enums';
+import type { Facet } from '../modules/analysis/dto/facet.dto';
 import { RecommendationRun } from './recommendation-run.entity';
 
 @Entity({ repository: () => RecommendedActionRepository })
@@ -24,6 +25,9 @@ export class RecommendedAction extends CustomBaseEntity {
 
   @Enum(() => ActionPriority)
   priority!: ActionPriority;
+
+  @Property({ length: 32, default: 'overall' })
+  facet: Facet = 'overall';
 
   @Property({ type: 'jsonb' })
   supportingEvidence!: Record<string, unknown>;

@@ -1,15 +1,25 @@
 import {
   Injectable,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
+import { UserRole } from 'src/modules/auth/roles.enum';
 import {
   QuestionnaireSchemaSnapshot,
   SectionNode,
 } from 'src/modules/questionnaires/lib/questionnaire.types';
 import { getInterpretation } from './lib/interpretation.util';
+import {
+  COMPOSITE_TYPE_ORDER,
+  COMPOSITE_WEIGHTS,
+  CompositeCoverageStatus,
+  CompositeQuestionnaireTypeCode,
+  round2,
+} from './lib/composite-rating.constants';
 import {
   DepartmentOverviewQueryDto,
   AttentionListQueryDto,
@@ -17,6 +27,9 @@ import {
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
   BaseFacultyReportQueryDto,
+  FacultyOverviewQueryDto,
+  QualitativeSummaryQueryDto,
+  SentimentLabel,
 } from './dto/analytics-query.dto';
 import { ReportCommentDto } from './dto/responses/faculty-report-comments.response.dto';
 import {
@@ -33,8 +46,28 @@ import {
   FacultyTrendDto,
 } from './dto/responses/faculty-trends.response.dto';
 import { FacultyReportResponseDto } from './dto/responses/faculty-report.response.dto';
+import {
+  FacultyOverviewResponseDto,
+  FacultyOverviewContributionDto,
+} from './dto/responses/faculty-overview.response.dto';
 import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report-comments.response.dto';
+import {
+  FacultyQuestionnaireTypeOptionDto,
+  FacultyQuestionnaireTypesResponseDto,
+} from './dto/responses/faculty-questionnaire-types.response.dto';
+import {
+  QualitativeSummaryResponseDto,
+  QualitativeThemeDto,
+} from './dto/responses/qualitative-summary.response.dto';
 import { PaginationMeta } from 'src/modules/common/dto/pagination.dto';
+import { AnalysisPipeline } from 'src/entities/analysis-pipeline.entity';
+import { SentimentRun } from 'src/entities/sentiment-run.entity';
+import { SentimentResult } from 'src/entities/sentiment-result.entity';
+import { TopicModelRun } from 'src/entities/topic-model-run.entity';
+import { Topic } from 'src/entities/topic.entity';
+import { TopicAssignment } from 'src/entities/topic-assignment.entity';
+import { QuestionnaireSubmission } from 'src/entities/questionnaire-submission.entity';
+import { PipelineStatus } from 'src/modules/analysis/enums';
 
 interface QuestionMeta {
   text: string;
@@ -64,11 +97,33 @@ const ATTENTION_THRESHOLDS = {
   MIN_R2_FOR_TREND: 0.5,
 } as const;
 
+const QUALITATIVE_SUMMARY_LIMITS = {
+  MAX_SAMPLE_QUOTES_PER_THEME: 3,
+  QUOTE_MAX_LENGTH: 280,
+} as const;
+
+const SENTIMENT_LABEL_VALUES: SentimentLabel[] = [
+  'positive',
+  'neutral',
+  'negative',
+];
+
+function scrubQuote(raw: string): string {
+  const truncated =
+    raw.length > QUALITATIVE_SUMMARY_LIMITS.QUOTE_MAX_LENGTH
+      ? `${raw.slice(0, QUALITATIVE_SUMMARY_LIMITS.QUOTE_MAX_LENGTH)}…`
+      : raw;
+  return truncated.replace(/[A-Z][a-z]+\s[A-Z][a-z]+/g, '[name]');
+}
+
 @Injectable()
 export class AnalyticsService {
+  private readonly logger = new Logger(AnalyticsService.name);
+
   constructor(
     private readonly em: EntityManager,
     private readonly scopeResolver: ScopeResolverService,
+    private readonly currentUserService: CurrentUserService,
   ) {}
 
   async GetDepartmentOverview(
@@ -96,9 +151,9 @@ export class AnalyticsService {
     const prevSemRows: { id: string }[] = await this.em.execute(
       `SELECT s2.id FROM semester s2
          WHERE s2.campus_id = (SELECT s1.campus_id FROM semester s1 WHERE s1.id = ?)
-           AND s2.created_at < (SELECT s1.created_at FROM semester s1 WHERE s1.id = ?)
+           AND s2.start_date < (SELECT s1.start_date FROM semester s1 WHERE s1.id = ?)
            AND s2.deleted_at IS NULL
-         ORDER BY s2.created_at DESC LIMIT 1`,
+         ORDER BY s2.start_date DESC LIMIT 1`,
       [semesterId, semesterId],
     );
     const prevSemesterId = prevSemRows[0]?.id ?? null;
@@ -436,10 +491,12 @@ export class AnalyticsService {
     const minR2 = query.minR2 ?? 0.5;
 
     // Resolve scope — use provided semesterId or fall back to latest semester
+    // (ordered by academic start_date, not DB insertion time, so backfilled
+    // past semesters don't masquerade as the current term).
     let scopeSemesterId = query.semesterId;
     if (!scopeSemesterId) {
       const rows: { id: string }[] = await this.em.execute(
-        'SELECT id FROM semester WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1',
+        'SELECT id FROM semester WHERE deleted_at IS NULL ORDER BY start_date DESC LIMIT 1',
       );
       scopeSemesterId = rows[0]?.id;
     }
@@ -555,127 +612,39 @@ export class AnalyticsService {
     );
   }
 
-  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
-  async GetAllFacultyReportComments(
+  /**
+   * Composite overall rating across the three faculty questionnaire types
+   * (50% FEEDBACK / 25% OUT / 25% IN). Reuses GetFacultyReportUnscoped three
+   * times inside a single transaction for parity with /report and snapshot
+   * consistency across the per-type pulls.
+   */
+  async GetFacultyOverview(
     facultyId: string,
-    query: BaseFacultyReportQueryDto,
-  ): Promise<ReportCommentDto[]> {
-    const { versionIds } = await this.resolveVersionIds(
-      facultyId,
-      query.semesterId,
-      query.questionnaireTypeCode,
-    );
-
-    if (versionIds.length === 0) {
-      return [];
-    }
-
-    return this.queryComments(facultyId, versionIds, query);
-  }
-
-  async GetFacultyReportComments(
-    facultyId: string,
-    query: FacultyReportCommentsQueryDto,
-  ): Promise<FacultyReportCommentsResponseDto> {
+    query: FacultyOverviewQueryDto,
+  ): Promise<FacultyOverviewResponseDto> {
+    // Called for the auth side-effect only; the return value intentionally
+    // unused — metadata (incl. profilePicture) is fetched directly below.
     await this.validateFacultyScope(facultyId, query.semesterId);
 
-    const { versionIds } = await this.resolveVersionIds(
-      facultyId,
-      query.semesterId,
-      query.questionnaireTypeCode,
-    );
-
-    if (versionIds.length === 0) {
-      return {
-        items: [],
-        meta: {
-          totalItems: 0,
-          itemCount: 0,
-          itemsPerPage: query.limit!,
-          totalPages: 0,
-          currentPage: query.page!,
-        } as PaginationMeta,
-      };
-    }
-
-    const baseParams: unknown[] = [
-      facultyId,
-      query.semesterId,
-      pgArray(versionIds),
-    ];
-    let courseFilter = '';
-    if (query.courseId) {
-      courseFilter = ` AND qs.course_id = ?`;
-      baseParams.push(query.courseId);
-    }
-
-    const whereClause = `
-      WHERE qs.faculty_id = ?
-        AND qs.semester_id = ?
-        AND qs.questionnaire_version_id = ANY(?)
-        AND qs.qualitative_comment IS NOT NULL
-        AND TRIM(qs.qualitative_comment) != ''
-        AND qs.deleted_at IS NULL${courseFilter}
-    `;
-
-    const countSql = `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`;
-
-    const page = query.page!;
-    const limit = query.limit!;
-    const offset = (page - 1) * limit;
-
-    const paginatedParams = [...baseParams, limit, offset];
-    const paginatedSql = `
-      SELECT qs.qualitative_comment AS text, qs.submitted_at
-      FROM questionnaire_submission qs
-      ${whereClause}
-      ORDER BY qs.submitted_at DESC
-      LIMIT ? OFFSET ?
-    `;
-
-    const [countRows, commentRows] = await Promise.all([
-      this.em.execute(countSql, baseParams),
-      this.em.execute(paginatedSql, paginatedParams),
-    ]);
-
-    const totalItems = Number(countRows[0]?.total ?? 0);
-    const items = commentRows.map((r) => ({
-      text: r.text as string,
-      submittedAt: new Date(r.submitted_at as string).toISOString(),
-    }));
-
-    const totalPages = Math.ceil(totalItems / limit) || 0;
-
-    return {
-      items,
-      meta: {
-        totalItems,
-        itemCount: items.length,
-        itemsPerPage: limit,
-        totalPages,
-        currentPage: page,
-      } as PaginationMeta,
-    };
-  }
-
-  private async BuildFacultyReportData(
-    facultyId: string,
-    versionIds: string[],
-    canonicalSchema: QuestionnaireSchemaSnapshot | null,
-    questionnaireTypeName: string,
-    query: FacultyReportQueryDto,
-  ): Promise<FacultyReportResponseDto> {
     const [facultyRow, semesterRow] = await Promise.all([
       this.em
         .execute(
-          'SELECT u.first_name, u.last_name FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+          'SELECT u.first_name, u.last_name, u.user_profile_picture FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
           [facultyId],
         )
-        .then((rows: { first_name: string; last_name: string }[]) => {
-          if (rows.length === 0)
-            throw new NotFoundException('Faculty not found');
-          return rows[0];
-        }),
+        .then(
+          (
+            rows: {
+              first_name: string;
+              last_name: string;
+              user_profile_picture: string | null;
+            }[],
+          ) => {
+            if (rows.length === 0)
+              throw new NotFoundException('Faculty not found');
+            return rows[0];
+          },
+        ),
       this.em
         .execute(
           'SELECT s.id, s.code, s.label, s.academic_year FROM semester s WHERE s.id = ? AND s.deleted_at IS NULL',
@@ -700,6 +669,764 @@ export class AnalyticsService {
     const facultyDto = {
       id: facultyId,
       name: `${facultyRow.first_name} ${facultyRow.last_name}`,
+      profilePicture: facultyRow.user_profile_picture || null,
+    };
+    const semesterDto = {
+      id: semesterRow.id,
+      code: semesterRow.code,
+      label: semesterRow.label,
+      academicYear: semesterRow.academic_year,
+    };
+
+    const ratingsMap = await this.computeFacultyPerTypeRatings(
+      facultyId,
+      query.semesterId,
+      query.courseId,
+    );
+
+    const typeRows: { code: string; name: string }[] = await this.em.execute(
+      `SELECT qt.code, qt.name
+         FROM questionnaire_type qt
+         WHERE qt.code = ANY(?)
+           AND qt.deleted_at IS NULL`,
+      [pgArray([...COMPOSITE_TYPE_ORDER])],
+    );
+    const typeNameMap = new Map<string, string>(
+      typeRows.map((r) => [r.code, r.name]),
+    );
+
+    const contributions: FacultyOverviewContributionDto[] =
+      COMPOSITE_TYPE_ORDER.map((code) => {
+        const entry = ratingsMap.get(code) ?? {
+          rating: null,
+          submissionCount: 0,
+        };
+        return {
+          questionnaireTypeCode: code,
+          questionnaireTypeName: typeNameMap.get(code) ?? code,
+          rating: entry.rating,
+          weight: COMPOSITE_WEIGHTS[code],
+          effectiveWeight: 0,
+          contribution: null,
+          submissionCount: entry.submissionCount,
+        };
+      });
+
+    const coverageStatus = this.resolveCompositeCoverageStatus(contributions);
+    const coverageWeight = round2(
+      contributions
+        .filter((c) => c.rating !== null)
+        .reduce((sum, c) => sum + c.weight, 0),
+    );
+
+    let compositeRating: number | null;
+    if (
+      coverageStatus === 'NO_DATA' ||
+      coverageStatus === 'INSUFFICIENT' ||
+      coverageStatus === 'PARTIAL_NO_FEEDBACK'
+    ) {
+      compositeRating = null;
+    } else {
+      for (const c of contributions) {
+        if (c.rating === null) continue;
+        c.effectiveWeight =
+          coverageStatus === 'FULL' ? c.weight : c.weight / coverageWeight;
+        c.contribution = round2(c.rating * c.effectiveWeight);
+      }
+      const sum = contributions.reduce(
+        (acc, c) => acc + (c.contribution ?? 0),
+        0,
+      );
+      compositeRating = round2(sum);
+    }
+
+    const compositeInterpretation =
+      compositeRating === null ? null : getInterpretation(compositeRating);
+
+    this.logger.debug(
+      `Composite overview computed (facultyId=${facultyId}, semesterId=${query.semesterId}, coverageStatus=${coverageStatus}, coverageWeight=${coverageWeight}, courseId=${query.courseId ?? 'none'})`,
+    );
+
+    return {
+      faculty: facultyDto,
+      semester: semesterDto,
+      composite: {
+        rating: compositeRating,
+        interpretation: compositeInterpretation,
+        coverageStatus,
+        coverageWeight,
+      },
+      contributions,
+    };
+  }
+
+  /**
+   * Runs GetFacultyReportUnscoped once per canonical questionnaire type
+   * (FEEDBACK, OUT, IN) in parallel. Parity with the per-type /report endpoint
+   * is guaranteed by code-path reuse — both endpoints compute overallRating
+   * through the same BuildFacultyReportData pipeline. Cross-type snapshot
+   * consistency is best-effort (MikroORM's request-scoped EM batches all
+   * queries onto one connection, so three parallel pulls share the same
+   * read view under normal NestJS request context).
+   */
+  private async computeFacultyPerTypeRatings(
+    facultyId: string,
+    semesterId: string,
+    courseId?: string,
+  ): Promise<
+    Map<
+      CompositeQuestionnaireTypeCode,
+      { rating: number | null; submissionCount: number }
+    >
+  > {
+    const entries = await Promise.all(
+      COMPOSITE_TYPE_ORDER.map(async (typeCode) => {
+        try {
+          const report = await this.GetFacultyReportUnscoped(facultyId, {
+            semesterId,
+            questionnaireTypeCode: typeCode,
+            courseId,
+          });
+          return [
+            typeCode,
+            {
+              rating: report.overallRating,
+              submissionCount: report.submissionCount,
+            },
+          ] as const;
+        } catch (e) {
+          // Narrow: only the "type not found" NotFoundException maps to
+          // "this type absent from the composite". Faculty/semester-missing
+          // NotFoundExceptions are real 404s — propagate them unchanged.
+          if (
+            e instanceof NotFoundException &&
+            e.message === 'Questionnaire type not found'
+          ) {
+            return [typeCode, { rating: null, submissionCount: 0 }] as const;
+          }
+          throw e;
+        }
+      }),
+    );
+    return new Map(entries);
+  }
+
+  /**
+   * Lookup table mapping (hasFeedback, presentCount) → coverageStatus.
+   * Explicit instead of an if/else ladder so every case is inspectable.
+   */
+  private resolveCompositeCoverageStatus(
+    contributions: FacultyOverviewContributionDto[],
+  ): CompositeCoverageStatus {
+    const present = contributions.filter((c) => c.rating !== null);
+    const presentCount = present.length;
+    const hasFeedback = present.some(
+      (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+    );
+
+    if (presentCount === 0) return 'NO_DATA';
+    if (presentCount === 3) return 'FULL';
+    if (hasFeedback && presentCount === 1) return 'FEEDBACK_ONLY';
+    if (hasFeedback && presentCount === 2) return 'PARTIAL';
+    if (!hasFeedback && presentCount === 2) return 'PARTIAL_NO_FEEDBACK';
+    // !hasFeedback && presentCount === 1 → only IN or only OUT
+    return 'INSUFFICIENT';
+  }
+
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetAllFacultyReportComments(
+    facultyId: string,
+    query: BaseFacultyReportQueryDto,
+  ): Promise<ReportCommentDto[]> {
+    const { versionIds } = await this.resolveVersionIds(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+    );
+
+    if (versionIds.length === 0) {
+      return [];
+    }
+
+    return this.queryComments(facultyId, versionIds, query);
+  }
+
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetAllFacultyReportCommentsAnnotatedUnscoped(
+    facultyId: string,
+    query: BaseFacultyReportQueryDto,
+  ): Promise<ReportCommentDto[]> {
+    const { versionIds } = await this.resolveVersionIds(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+    );
+
+    if (versionIds.length === 0) {
+      return [];
+    }
+
+    const { sentimentRunId, topicModelRunId } =
+      await this.resolveCommentAnnotationRunIds(facultyId, query);
+
+    return this.queryAnnotatedComments(
+      facultyId,
+      versionIds,
+      query,
+      sentimentRunId,
+      topicModelRunId,
+    );
+  }
+
+  async GetFacultyReportComments(
+    facultyId: string,
+    query: FacultyReportCommentsQueryDto,
+  ): Promise<FacultyReportCommentsResponseDto> {
+    await this.validateFacultyScope(facultyId, query.semesterId);
+
+    const { versionIds } = await this.resolveVersionIds(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+    );
+
+    const page = query.page!;
+    const limit = query.limit!;
+
+    if (versionIds.length === 0) {
+      return this.emptyCommentsResponse(page, limit);
+    }
+
+    const { sentimentRunId, topicModelRunId, hasPipeline } =
+      await this.resolveCommentAnnotationRunIds(facultyId, query);
+
+    // If filters require a pipeline but none exists, return empty.
+    if (!hasPipeline && (query.sentiment || query.themeId)) {
+      return this.emptyCommentsResponse(page, limit);
+    }
+
+    // Filters whose runs are missing → empty (cannot satisfy filter).
+    if (query.sentiment && !sentimentRunId) {
+      return this.emptyCommentsResponse(page, limit);
+    }
+    if (query.themeId && !topicModelRunId) {
+      return this.emptyCommentsResponse(page, limit);
+    }
+
+    const { countSql, countParams, selectSql, selectParams } =
+      this.buildAnnotatedCommentsQueryParts(
+        facultyId,
+        versionIds,
+        query,
+        sentimentRunId,
+        topicModelRunId,
+        limit,
+        (page - 1) * limit,
+      );
+    const [countRows, commentRows] = await Promise.all([
+      this.em.execute(countSql, countParams),
+      this.em.execute(selectSql, selectParams),
+    ]);
+
+    const totalItems = Number(countRows[0]?.total ?? 0);
+    const items = this.mapAnnotatedCommentRows(commentRows);
+
+    const totalPages = Math.ceil(totalItems / limit) || 0;
+
+    return {
+      items,
+      meta: {
+        totalItems,
+        itemCount: items.length,
+        itemsPerPage: limit,
+        totalPages,
+        currentPage: page,
+      } as PaginationMeta,
+    };
+  }
+
+  async GetQualitativeSummary(
+    facultyId: string,
+    query: QualitativeSummaryQueryDto,
+  ): Promise<QualitativeSummaryResponseDto> {
+    await this.validateFacultyScope(facultyId, query.semesterId);
+
+    return this.BuildQualitativeSummary(facultyId, query);
+  }
+
+  /** @internal Called by report processor only — scope validation was performed at enqueue time. Do NOT expose via HTTP. */
+  async GetQualitativeSummaryUnscoped(
+    facultyId: string,
+    query: QualitativeSummaryQueryDto,
+  ): Promise<QualitativeSummaryResponseDto> {
+    return this.BuildQualitativeSummary(facultyId, query);
+  }
+
+  private async BuildQualitativeSummary(
+    facultyId: string,
+    query: QualitativeSummaryQueryDto,
+  ): Promise<QualitativeSummaryResponseDto> {
+    const emptyResponse: QualitativeSummaryResponseDto = {
+      sentimentDistribution: { positive: 0, neutral: 0, negative: 0 },
+      themes: [],
+    };
+
+    const pipeline = await this.findLatestCompletedPipelineByScope(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+      query.courseId,
+    );
+
+    if (!pipeline) {
+      return emptyResponse;
+    }
+
+    const { sentimentRun, topicModelRun } = await this.resolvePipelineRuns(
+      pipeline.id,
+    );
+
+    // Global sentiment distribution from all SentimentResults of the run.
+    const sentimentDistribution = { positive: 0, neutral: 0, negative: 0 };
+    const sentimentBySubmission = new Map<
+      string,
+      { label: string; strength: number }
+    >();
+    if (sentimentRun) {
+      const sentimentResults = await this.em.find(
+        SentimentResult,
+        { run: sentimentRun.id },
+        { populate: ['submission'] },
+      );
+      for (const sr of sentimentResults) {
+        if (sr.label === 'positive') sentimentDistribution.positive++;
+        else if (sr.label === 'neutral') sentimentDistribution.neutral++;
+        else if (sr.label === 'negative') sentimentDistribution.negative++;
+        sentimentBySubmission.set(sr.submission.id, {
+          label: sr.label,
+          strength: Math.abs(
+            Number(sr.positiveScore) - Number(sr.negativeScore),
+          ),
+        });
+      }
+    }
+
+    if (!topicModelRun) {
+      return { sentimentDistribution, themes: [] };
+    }
+
+    const topics = await this.em.find(
+      Topic,
+      { run: topicModelRun.id },
+      { orderBy: { docCount: 'DESC' } },
+    );
+
+    if (topics.length === 0) {
+      return { sentimentDistribution, themes: [] };
+    }
+
+    const topicIds = topics.map((t) => t.id);
+    const dominantAssignments = await this.em.find(
+      TopicAssignment,
+      { topic: { $in: topicIds }, isDominant: true },
+      { populate: ['submission'] },
+    );
+
+    // Group dominant assignments by topic id.
+    const assignmentsByTopic = new Map<string, TopicAssignment[]>();
+    for (const ta of dominantAssignments) {
+      const list = assignmentsByTopic.get(ta.topic.id) ?? [];
+      list.push(ta);
+      assignmentsByTopic.set(ta.topic.id, list);
+    }
+
+    // Collect submission ids whose comments we need for sample quotes.
+    const quoteSubmissionIds = new Set<string>();
+    const selectionsByTopic = new Map<
+      string,
+      { submissionId: string; strength: number }[]
+    >();
+    for (const topic of topics) {
+      const assignments = assignmentsByTopic.get(topic.id) ?? [];
+      const ranked = assignments
+        .map((a) => {
+          const senti = sentimentBySubmission.get(a.submission.id);
+          return senti
+            ? { submissionId: a.submission.id, strength: senti.strength }
+            : null;
+        })
+        .filter(
+          (
+            x,
+          ): x is {
+            submissionId: string;
+            strength: number;
+          } => x !== null,
+        )
+        .sort((a, b) => b.strength - a.strength)
+        .slice(0, QUALITATIVE_SUMMARY_LIMITS.MAX_SAMPLE_QUOTES_PER_THEME);
+      selectionsByTopic.set(topic.id, ranked);
+      for (const r of ranked) quoteSubmissionIds.add(r.submissionId);
+    }
+
+    const submissionTextMap = new Map<string, string>();
+    if (quoteSubmissionIds.size > 0) {
+      const subs = await this.em.find(QuestionnaireSubmission, {
+        id: { $in: Array.from(quoteSubmissionIds) },
+      });
+      for (const s of subs) {
+        const text = s.cleanedComment ?? s.qualitativeComment ?? '';
+        if (text) submissionTextMap.set(s.id, text);
+      }
+    }
+
+    const themes: QualitativeThemeDto[] = topics
+      .map((topic) => {
+        const assignments = assignmentsByTopic.get(topic.id) ?? [];
+        const split = { positive: 0, neutral: 0, negative: 0 };
+        for (const ta of assignments) {
+          const senti = sentimentBySubmission.get(ta.submission.id);
+          if (!senti) continue;
+          if (senti.label === 'positive') split.positive++;
+          else if (senti.label === 'neutral') split.neutral++;
+          else if (senti.label === 'negative') split.negative++;
+        }
+
+        const selection = selectionsByTopic.get(topic.id) ?? [];
+        const sampleQuotes = selection
+          .map((s) => submissionTextMap.get(s.submissionId))
+          .filter((t): t is string => !!t)
+          .map((t) => scrubQuote(t));
+
+        return {
+          themeId: topic.id,
+          label: topic.label ?? topic.rawLabel,
+          count: assignments.length,
+          sentimentSplit: split,
+          sampleQuotes: sampleQuotes.length > 0 ? sampleQuotes : undefined,
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      sentimentDistribution,
+      themes,
+    };
+  }
+
+  private async resolveCommentAnnotationRunIds(
+    facultyId: string,
+    query: BaseFacultyReportQueryDto,
+  ): Promise<{
+    sentimentRunId: string | null;
+    topicModelRunId: string | null;
+    hasPipeline: boolean;
+  }> {
+    const pipeline = await this.findLatestCompletedPipelineByScope(
+      facultyId,
+      query.semesterId,
+      query.questionnaireTypeCode,
+      query.courseId,
+    );
+    if (!pipeline) {
+      return {
+        sentimentRunId: null,
+        topicModelRunId: null,
+        hasPipeline: false,
+      };
+    }
+
+    const { sentimentRun, topicModelRun } = await this.resolvePipelineRuns(
+      pipeline.id,
+    );
+    return {
+      sentimentRunId: sentimentRun?.id ?? null,
+      topicModelRunId: topicModelRun?.id ?? null,
+      hasPipeline: true,
+    };
+  }
+
+  private buildAnnotatedCommentsQueryParts(
+    facultyId: string,
+    versionIds: string[],
+    query: BaseFacultyReportQueryDto & {
+      sentiment?: SentimentLabel;
+      themeId?: string;
+    },
+    sentimentRunId: string | null,
+    topicModelRunId: string | null,
+    limit?: number,
+    offset?: number,
+  ): {
+    countSql: string;
+    countParams: unknown[];
+    selectSql: string;
+    selectParams: unknown[];
+  } {
+    const baseParams: unknown[] = [
+      facultyId,
+      query.semesterId,
+      pgArray(versionIds),
+    ];
+    let courseFilter = '';
+    if (query.courseId) {
+      courseFilter = ` AND qs.course_id = ?`;
+      baseParams.push(query.courseId);
+    }
+
+    let sentimentFilterSql = '';
+    if (query.sentiment) {
+      sentimentFilterSql = ` AND EXISTS (
+        SELECT 1 FROM sentiment_result sr
+        WHERE sr.submission_id = qs.id
+          AND sr.run_id = ?
+          AND sr.label = ?
+          AND sr.deleted_at IS NULL
+      )`;
+      baseParams.push(sentimentRunId!, query.sentiment);
+    }
+
+    let themeFilterSql = '';
+    if (query.themeId) {
+      themeFilterSql = ` AND EXISTS (
+        SELECT 1 FROM topic_assignment ta_f
+        JOIN topic t_f ON t_f.id = ta_f.topic_id
+        WHERE ta_f.submission_id = qs.id
+          AND ta_f.topic_id = ?
+          AND ta_f.is_dominant = true
+          AND ta_f.deleted_at IS NULL
+          AND t_f.run_id = ?
+          AND t_f.deleted_at IS NULL
+      )`;
+      baseParams.push(query.themeId, topicModelRunId!);
+    }
+
+    const whereClause = `
+      WHERE qs.faculty_id = ?
+        AND qs.semester_id = ?
+        AND qs.questionnaire_version_id = ANY(?)
+        AND qs.qualitative_comment IS NOT NULL
+        AND TRIM(qs.qualitative_comment) != ''
+        AND qs.deleted_at IS NULL${courseFilter}${sentimentFilterSql}${themeFilterSql}
+    `;
+
+    let annotationSelect = '';
+    let annotationJoins = '';
+    const annotationParams: unknown[] = [];
+    if (sentimentRunId) {
+      annotationSelect += `, sr_ann.label AS sentiment`;
+      annotationJoins += `
+        LEFT JOIN LATERAL (
+          SELECT sr.label FROM sentiment_result sr
+          WHERE sr.submission_id = qs.id
+            AND sr.run_id = ?
+            AND sr.deleted_at IS NULL
+          ORDER BY sr.processed_at DESC
+          LIMIT 1
+        ) sr_ann ON true`;
+      annotationParams.push(sentimentRunId);
+    }
+    if (topicModelRunId) {
+      annotationSelect += `, ta_ann.theme_ids AS theme_ids`;
+      annotationJoins += `
+        LEFT JOIN LATERAL (
+          SELECT array_agg(DISTINCT ta.topic_id) AS theme_ids
+          FROM topic_assignment ta
+          JOIN topic t ON t.id = ta.topic_id
+          WHERE ta.submission_id = qs.id
+            AND ta.is_dominant = true
+            AND ta.deleted_at IS NULL
+            AND t.run_id = ?
+            AND t.deleted_at IS NULL
+        ) ta_ann ON true`;
+      annotationParams.push(topicModelRunId);
+    }
+
+    let paginationSql = '';
+    const selectParams = [...annotationParams, ...baseParams];
+    if (limit != null && offset != null) {
+      paginationSql = `
+      LIMIT ? OFFSET ?`;
+      selectParams.push(limit, offset);
+    }
+
+    return {
+      countSql: `SELECT COUNT(*) AS total FROM questionnaire_submission qs ${whereClause}`,
+      countParams: baseParams,
+      selectSql: `
+      SELECT qs.qualitative_comment AS text, qs.submitted_at${annotationSelect}
+      FROM questionnaire_submission qs
+      ${annotationJoins}
+      ${whereClause}
+      ORDER BY qs.submitted_at DESC${paginationSql}
+    `,
+      selectParams,
+    };
+  }
+
+  private async queryAnnotatedComments(
+    facultyId: string,
+    versionIds: string[],
+    query: BaseFacultyReportQueryDto,
+    sentimentRunId: string | null,
+    topicModelRunId: string | null,
+  ): Promise<ReportCommentDto[]> {
+    const { selectSql, selectParams } = this.buildAnnotatedCommentsQueryParts(
+      facultyId,
+      versionIds,
+      query,
+      sentimentRunId,
+      topicModelRunId,
+    );
+    const rows = await this.em.execute(selectSql, selectParams);
+    return this.mapAnnotatedCommentRows(rows);
+  }
+
+  private mapAnnotatedCommentRows(rows: unknown[]): ReportCommentDto[] {
+    return rows.map((r) => {
+      const row = r as {
+        text: string;
+        submitted_at: string;
+        sentiment?: string | null;
+        theme_ids?: string[] | null;
+      };
+      const dto: ReportCommentDto = {
+        text: row.text,
+        submittedAt: new Date(row.submitted_at).toISOString(),
+      };
+      if (
+        row.sentiment &&
+        SENTIMENT_LABEL_VALUES.includes(row.sentiment as SentimentLabel)
+      ) {
+        dto.sentiment = row.sentiment as SentimentLabel;
+      }
+      if (row.theme_ids && row.theme_ids.length > 0) {
+        dto.themeIds = row.theme_ids;
+      }
+      return dto;
+    });
+  }
+
+  private emptyCommentsResponse(
+    page: number,
+    limit: number,
+  ): FacultyReportCommentsResponseDto {
+    return {
+      items: [],
+      meta: {
+        totalItems: 0,
+        itemCount: 0,
+        itemsPerPage: limit,
+        totalPages: 0,
+        currentPage: page,
+      } as PaginationMeta,
+    };
+  }
+
+  private async findLatestCompletedPipelineByScope(
+    facultyId: string,
+    semesterId: string,
+    questionnaireTypeCode: string,
+    courseId?: string,
+  ): Promise<AnalysisPipeline | null> {
+    const filter: Record<string, unknown> = {
+      status: PipelineStatus.COMPLETED,
+      faculty: facultyId,
+      semester: semesterId,
+      // Post-FAC-135 Phase A: aggregate-scope pipelines have
+      // questionnaireVersion = null and cover ALL questionnaire types.
+      // Legacy per-type pipelines have a specific questionnaireVersion.
+      // Match either; orderBy createdAt DESC naturally prefers the newest.
+      $or: [
+        { questionnaireVersion: null },
+        {
+          questionnaireVersion: {
+            questionnaire: { type: { code: questionnaireTypeCode } },
+          },
+        },
+      ],
+    };
+    if (courseId) {
+      filter.course = courseId;
+    } else {
+      filter.course = null;
+    }
+
+    return this.em.findOne(AnalysisPipeline, filter, {
+      orderBy: { createdAt: 'DESC' },
+    });
+  }
+
+  private async resolvePipelineRuns(pipelineId: string): Promise<{
+    sentimentRun: SentimentRun | null;
+    topicModelRun: TopicModelRun | null;
+  }> {
+    const [sentimentRun, topicModelRun] = await Promise.all([
+      this.em.findOne(
+        SentimentRun,
+        { pipeline: pipelineId },
+        { orderBy: { createdAt: 'DESC' } },
+      ),
+      this.em.findOne(
+        TopicModelRun,
+        { pipeline: pipelineId },
+        { orderBy: { createdAt: 'DESC' } },
+      ),
+    ]);
+    return { sentimentRun, topicModelRun };
+  }
+
+  private async BuildFacultyReportData(
+    facultyId: string,
+    versionIds: string[],
+    canonicalSchema: QuestionnaireSchemaSnapshot | null,
+    questionnaireTypeName: string,
+    query: FacultyReportQueryDto,
+  ): Promise<FacultyReportResponseDto> {
+    const [facultyRow, semesterRow] = await Promise.all([
+      this.em
+        .execute(
+          'SELECT u.first_name, u.last_name, u.user_profile_picture FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+          [facultyId],
+        )
+        .then(
+          (
+            rows: {
+              first_name: string;
+              last_name: string;
+              user_profile_picture: string | null;
+            }[],
+          ) => {
+            if (rows.length === 0)
+              throw new NotFoundException('Faculty not found');
+            return rows[0];
+          },
+        ),
+      this.em
+        .execute(
+          'SELECT s.id, s.code, s.label, s.academic_year FROM semester s WHERE s.id = ? AND s.deleted_at IS NULL',
+          [query.semesterId],
+        )
+        .then(
+          (
+            rows: {
+              id: string;
+              code: string;
+              label: string;
+              academic_year: string;
+            }[],
+          ) => {
+            if (rows.length === 0)
+              throw new NotFoundException('Semester not found');
+            return rows[0];
+          },
+        ),
+    ]);
+
+    const facultyDto = {
+      id: facultyId,
+      name: `${facultyRow.first_name} ${facultyRow.last_name}`,
+      profilePicture: facultyRow.user_profile_picture || null,
     };
     const semesterDto = {
       id: semesterRow.id,
@@ -722,6 +1449,7 @@ export class AnalyticsService {
         sections: [],
         overallRating: null,
         overallInterpretation: null,
+        dimensions: [],
       };
     }
 
@@ -755,6 +1483,20 @@ export class AnalyticsService {
       GROUP BY qa.question_id, qa.section_id
     `;
 
+    const ratingDistSql = `
+      SELECT qa.question_id, qa.section_id,
+             qa.numeric_value AS rating,
+             COUNT(*) AS cnt
+      FROM questionnaire_answer qa
+      JOIN questionnaire_submission qs ON qs.id = qa.submission_id
+      WHERE qs.faculty_id = ?
+        AND qs.semester_id = ?
+        AND qs.questionnaire_version_id = ANY(?)
+        AND qs.deleted_at IS NULL
+        AND qa.deleted_at IS NULL${courseFilter}
+      GROUP BY qa.question_id, qa.section_id, qa.numeric_value
+    `;
+
     const countSql = `
       SELECT COUNT(DISTINCT qs.id) AS count
       FROM questionnaire_submission qs
@@ -764,9 +1506,21 @@ export class AnalyticsService {
         AND qs.deleted_at IS NULL${courseFilter}
     `;
 
-    const [aggRows, countRows] = await Promise.all([
+    const dimensionRegistrySql = `
+      SELECT d.code, d.display_name
+      FROM dimension d
+      JOIN questionnaire_type qt ON qt.id = d.questionnaire_type_id
+      WHERE qt.code = ?
+        AND d.active = true
+        AND d.deleted_at IS NULL
+        AND qt.deleted_at IS NULL
+    `;
+
+    const [aggRows, ratingRows, countRows, dimensionRows] = await Promise.all([
       this.em.execute(aggSql, aggParams),
+      this.em.execute(ratingDistSql, aggParams),
       this.em.execute(countSql, aggParams),
+      this.em.execute(dimensionRegistrySql, [query.questionnaireTypeCode]),
     ]);
 
     const submissionCount = Number(countRows[0]?.count ?? 0);
@@ -781,6 +1535,26 @@ export class AnalyticsService {
         average: Number(row.average),
         responseCount: Number(row.response_count),
       });
+    }
+
+    // Build rating distribution lookup: key = "questionId::sectionId" →
+    // ratingCounts keyed by the stringified numeric_value ("0"/"1" for
+    // YES_NO, "1".."5" for Likert).
+    const ratingCountsMap = new Map<string, Record<string, number>>();
+    for (const row of ratingRows) {
+      const key = `${row.question_id}::${row.section_id}`;
+      const ratingKey = String(Number(row.rating));
+      const existing = ratingCountsMap.get(key) ?? {};
+      existing[ratingKey] = (existing[ratingKey] ?? 0) + Number(row.cnt);
+      ratingCountsMap.set(key, existing);
+    }
+
+    const dimensionDisplayNames = new Map<string, string>();
+    for (const row of dimensionRows as {
+      code: string;
+      display_name: string;
+    }[]) {
+      dimensionDisplayNames.set(row.code, row.display_name);
     }
 
     // Assemble sections
@@ -805,6 +1579,8 @@ export class AnalyticsService {
               average: score.average,
               responseCount: score.responseCount,
               interpretation: getInterpretation(score.average),
+              ratingCounts:
+                ratingCountsMap.get(`${questionId}::${sectionId}`) ?? {},
             };
           })
           .filter((q): q is NonNullable<typeof q> => q !== null);
@@ -818,6 +1594,11 @@ export class AnalyticsService {
               100,
           ) / 100;
 
+        const responseCount = questions.reduce(
+          (sum, q) => sum + q.responseCount,
+          0,
+        );
+
         return {
           sectionId,
           title: meta.title,
@@ -826,9 +1607,45 @@ export class AnalyticsService {
           questions,
           sectionAverage,
           sectionInterpretation: getInterpretation(sectionAverage),
+          responseCount,
         };
       })
       .filter((s): s is NonNullable<typeof s> => s !== null);
+
+    // Per-dimension aggregation: response-count-weighted mean of per-question
+    // averages, which is mathematically identical to AVG(numeric_value) over
+    // all answers in the dimension. Skip dimensions with 0 responses.
+    const dimensionAggregate = new Map<
+      string,
+      { weightedSum: number; responseCount: number }
+    >();
+    for (const row of aggRows) {
+      const qm = questionMap.get(row.question_id as string);
+      if (!qm || !qm.dimensionCode) continue;
+      const avg = Number(row.average);
+      const count = Number(row.response_count);
+      if (!Number.isFinite(avg) || count <= 0) continue;
+      const existing = dimensionAggregate.get(qm.dimensionCode) ?? {
+        weightedSum: 0,
+        responseCount: 0,
+      };
+      existing.weightedSum += avg * count;
+      existing.responseCount += count;
+      dimensionAggregate.set(qm.dimensionCode, existing);
+    }
+
+    const dimensions = [...dimensionAggregate.entries()]
+      .map(([code, { weightedSum, responseCount }]) => {
+        const average = round2(weightedSum / responseCount);
+        return {
+          code,
+          displayName: dimensionDisplayNames.get(code) ?? code,
+          average,
+          responseCount,
+          interpretation: getInterpretation(average),
+        };
+      })
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
     // Overall weighted rating
     let overallRating: number | null = null;
@@ -841,7 +1658,7 @@ export class AnalyticsService {
       );
       const totalWeight = sections.reduce((sum, s) => sum + s.weight, 0);
       if (totalWeight > 0) {
-        overallRating = Math.round((weightedSum / totalWeight) * 100) / 100;
+        overallRating = round2(weightedSum / totalWeight);
         overallInterpretation = getInterpretation(overallRating);
       }
     }
@@ -879,6 +1696,7 @@ export class AnalyticsService {
       sections,
       overallRating,
       overallInterpretation,
+      dimensions,
     };
   }
 
@@ -922,6 +1740,38 @@ export class AnalyticsService {
     facultyId: string,
     semesterId: string,
   ): Promise<{ first_name: string; last_name: string } | null> {
+    // Faculty self-view: controller-level assertFacultySelfScope already
+    // confirmed user.id === facultyId. Skip the elevated-role department
+    // check (which would throw for FACULTY) and just hydrate name fields.
+    const currentUser = this.currentUserService.get();
+    const isFacultySelf =
+      currentUser != null &&
+      currentUser.id === facultyId &&
+      currentUser.roles.includes(UserRole.FACULTY) &&
+      !currentUser.roles.some((r) =>
+        [
+          UserRole.SUPER_ADMIN,
+          UserRole.DEAN,
+          UserRole.CHAIRPERSON,
+          UserRole.CAMPUS_HEAD,
+        ].includes(r),
+      );
+
+    if (isFacultySelf) {
+      const selfRows: { first_name: string; last_name: string }[] =
+        await this.em.execute(
+          'SELECT u.first_name, u.last_name FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+          [facultyId],
+        );
+      if (selfRows.length === 0) {
+        throw new NotFoundException('Faculty not found');
+      }
+      return {
+        first_name: selfRows[0].first_name,
+        last_name: selfRows[0].last_name,
+      };
+    }
+
     const deptIds = await this.scopeResolver.ResolveDepartmentIds(semesterId);
 
     if (deptIds === null) {
@@ -1067,6 +1917,40 @@ export class AnalyticsService {
       await this.scopeResolver.ResolveProgramCodes(semesterId);
     if (allowedCodes === null) return true;
     return allowedCodes.includes(programCode);
+  }
+
+  async GetAvailableFacultyQuestionnaireTypes(
+    facultyId: string,
+    semesterId: string,
+  ): Promise<FacultyQuestionnaireTypesResponseDto> {
+    await this.validateFacultyScope(facultyId, semesterId);
+
+    const rows: { code: string; name: string; submission_count: string }[] =
+      await this.em.execute(
+        `SELECT qt.code, qt.name, COUNT(qs.id)::text AS submission_count
+         FROM questionnaire_submission qs
+         JOIN questionnaire_version qv ON qv.id = qs.questionnaire_version_id
+         JOIN questionnaire q ON q.id = qv.questionnaire_id
+         JOIN questionnaire_type qt ON qt.id = q.type_id
+         WHERE qs.faculty_id = ?
+           AND qs.semester_id = ?
+           AND qs.deleted_at IS NULL
+           AND qv.deleted_at IS NULL
+           AND q.deleted_at IS NULL
+           AND qt.deleted_at IS NULL
+         GROUP BY qt.code, qt.name
+         HAVING COUNT(qs.id) > 0
+         ORDER BY COUNT(qs.id) DESC, qt.code ASC`,
+        [facultyId, semesterId],
+      );
+
+    const items: FacultyQuestionnaireTypeOptionDto[] = rows.map((r) => ({
+      code: r.code,
+      name: r.name,
+      submissionCount: Number(r.submission_count),
+    }));
+
+    return { items };
   }
 
   private async ResolveDepartmentCodes(

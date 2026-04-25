@@ -10,19 +10,27 @@ import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { UseJwtGuard } from 'src/security/decorators';
 import { UserRole } from 'src/modules/auth/roles.enum';
 import { CurrentUserInterceptor } from 'src/modules/common/interceptors/current-user.interceptor';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { AnalyticsService } from './analytics.service';
+import { assertFacultySelfScope } from './lib/faculty-scope.util';
 import {
   DepartmentOverviewQueryDto,
   AttentionListQueryDto,
   FacultyTrendsQueryDto,
   FacultyReportQueryDto,
   FacultyReportCommentsQueryDto,
+  FacultyOverviewQueryDto,
+  QualitativeSummaryQueryDto,
+  FacultyQuestionnaireTypesQueryDto,
 } from './dto/analytics-query.dto';
 import { DepartmentOverviewResponseDto } from './dto/responses/department-overview.response.dto';
 import { AttentionListResponseDto } from './dto/responses/attention-list.response.dto';
 import { FacultyTrendsResponseDto } from './dto/responses/faculty-trends.response.dto';
 import { FacultyReportResponseDto } from './dto/responses/faculty-report.response.dto';
+import { FacultyOverviewResponseDto } from './dto/responses/faculty-overview.response.dto';
 import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report-comments.response.dto';
+import { QualitativeSummaryResponseDto } from './dto/responses/qualitative-summary.response.dto';
+import { FacultyQuestionnaireTypesResponseDto } from './dto/responses/faculty-questionnaire-types.response.dto';
 
 @ApiTags('Analytics')
 @Controller('analytics')
@@ -34,7 +42,10 @@ import { FacultyReportCommentsResponseDto } from './dto/responses/faculty-report
 )
 @UseInterceptors(CurrentUserInterceptor)
 export class AnalyticsController {
-  constructor(private readonly analyticsService: AnalyticsService) {}
+  constructor(
+    private readonly analyticsService: AnalyticsService,
+    private readonly currentUserService: CurrentUserService,
+  ) {}
 
   @Get('overview')
   @ApiOperation({ summary: 'Get department overview with faculty stats' })
@@ -73,6 +84,13 @@ export class AnalyticsController {
   }
 
   @Get('faculty/:facultyId/report')
+  @UseJwtGuard(
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+    UserRole.CAMPUS_HEAD,
+    UserRole.SUPER_ADMIN,
+    UserRole.FACULTY,
+  )
   @ApiOperation({
     summary: 'Get per-question faculty evaluation report',
   })
@@ -84,10 +102,45 @@ export class AnalyticsController {
     @Param('facultyId', ParseUUIDPipe) facultyId: string,
     @Query() query: FacultyReportQueryDto,
   ): Promise<FacultyReportResponseDto> {
+    assertFacultySelfScope(this.currentUserService.getOrFail(), facultyId);
     return this.analyticsService.GetFacultyReport(facultyId, query);
   }
 
+  @Get('faculty/:facultyId/overview')
+  @UseJwtGuard(
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+    UserRole.CAMPUS_HEAD,
+    UserRole.SUPER_ADMIN,
+    UserRole.FACULTY,
+  )
+  @ApiOperation({
+    summary:
+      'Composite overall rating across all 3 questionnaire types (50/25/25)',
+    description:
+      'Accepts semesterId (required) and optional courseId (propagates into per-type scope).',
+  })
+  @ApiQuery({ name: 'semesterId', required: true, type: String })
+  @ApiQuery({ name: 'courseId', required: false, type: String })
+  @ApiResponse({ status: 200, type: FacultyOverviewResponseDto })
+  @ApiResponse({ status: 403, description: 'Out of scope for requesting user' })
+  @ApiResponse({ status: 404, description: 'Faculty or semester not found' })
+  async GetFacultyOverview(
+    @Param('facultyId', ParseUUIDPipe) facultyId: string,
+    @Query() query: FacultyOverviewQueryDto,
+  ): Promise<FacultyOverviewResponseDto> {
+    assertFacultySelfScope(this.currentUserService.getOrFail(), facultyId);
+    return this.analyticsService.GetFacultyOverview(facultyId, query);
+  }
+
   @Get('faculty/:facultyId/report/comments')
+  @UseJwtGuard(
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+    UserRole.CAMPUS_HEAD,
+    UserRole.SUPER_ADMIN,
+    UserRole.FACULTY,
+  )
   @ApiOperation({
     summary: 'Get paginated qualitative comments for faculty report',
   })
@@ -96,11 +149,70 @@ export class AnalyticsController {
   @ApiQuery({ name: 'courseId', required: false, type: String })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({
+    name: 'sentiment',
+    required: false,
+    enum: ['positive', 'neutral', 'negative'],
+  })
+  @ApiQuery({ name: 'themeId', required: false, type: String })
   @ApiResponse({ status: 200, type: FacultyReportCommentsResponseDto })
   async GetFacultyReportComments(
     @Param('facultyId', ParseUUIDPipe) facultyId: string,
     @Query() query: FacultyReportCommentsQueryDto,
   ): Promise<FacultyReportCommentsResponseDto> {
+    assertFacultySelfScope(this.currentUserService.getOrFail(), facultyId);
     return this.analyticsService.GetFacultyReportComments(facultyId, query);
+  }
+
+  @Get('faculty/:facultyId/qualitative-summary')
+  @UseJwtGuard(
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+    UserRole.CAMPUS_HEAD,
+    UserRole.SUPER_ADMIN,
+    UserRole.FACULTY,
+  )
+  @ApiOperation({
+    summary:
+      'Get aggregated qualitative summary (sentiment distribution + themes) for faculty',
+  })
+  @ApiQuery({ name: 'semesterId', required: true, type: String })
+  @ApiQuery({ name: 'questionnaireTypeCode', required: true, type: String })
+  @ApiQuery({ name: 'courseId', required: false, type: String })
+  @ApiResponse({ status: 200, type: QualitativeSummaryResponseDto })
+  @ApiResponse({ status: 403, description: 'Out of scope for requesting user' })
+  @ApiResponse({ status: 404, description: 'Faculty not found' })
+  async GetQualitativeSummary(
+    @Param('facultyId', ParseUUIDPipe) facultyId: string,
+    @Query() query: QualitativeSummaryQueryDto,
+  ): Promise<QualitativeSummaryResponseDto> {
+    assertFacultySelfScope(this.currentUserService.getOrFail(), facultyId);
+    return this.analyticsService.GetQualitativeSummary(facultyId, query);
+  }
+
+  @Get('faculty/:facultyId/questionnaire-types')
+  @UseJwtGuard(
+    UserRole.DEAN,
+    UserRole.CHAIRPERSON,
+    UserRole.CAMPUS_HEAD,
+    UserRole.SUPER_ADMIN,
+    UserRole.FACULTY,
+  )
+  @ApiOperation({
+    summary:
+      'List questionnaire types (with submission counts) for a faculty in a given semester',
+  })
+  @ApiQuery({ name: 'semesterId', required: true, type: String })
+  @ApiResponse({ status: 200, type: FacultyQuestionnaireTypesResponseDto })
+  @ApiResponse({ status: 403, description: 'Out of scope for requesting user' })
+  async GetFacultyQuestionnaireTypes(
+    @Param('facultyId', ParseUUIDPipe) facultyId: string,
+    @Query() query: FacultyQuestionnaireTypesQueryDto,
+  ): Promise<FacultyQuestionnaireTypesResponseDto> {
+    assertFacultySelfScope(this.currentUserService.getOrFail(), facultyId);
+    return this.analyticsService.GetAvailableFacultyQuestionnaireTypes(
+      facultyId,
+      query.semesterId,
+    );
   }
 }

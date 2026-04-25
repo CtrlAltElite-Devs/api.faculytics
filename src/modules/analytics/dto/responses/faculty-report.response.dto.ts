@@ -6,6 +6,9 @@ export class ReportFacultyDto {
 
   @ApiProperty()
   name!: string;
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  profilePicture?: string | null;
 }
 
 export class ReportSemesterDto {
@@ -59,6 +62,14 @@ export class ReportQuestionDto {
 
   @ApiProperty()
   interpretation!: string;
+
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: { type: 'number' },
+    description:
+      'Counts of responses keyed by numeric value (e.g. "1"..."5" for Likert-5, "0"/"1" for YES_NO).',
+  })
+  ratingCounts!: Record<string, number>;
 }
 
 export class ReportSectionDto {
@@ -82,6 +93,26 @@ export class ReportSectionDto {
 
   @ApiProperty()
   sectionInterpretation!: string;
+
+  @ApiProperty({ description: 'Total answered responses across the section.' })
+  responseCount!: number;
+}
+
+export class ReportDimensionDto {
+  @ApiProperty()
+  code!: string;
+
+  @ApiProperty()
+  displayName!: string;
+
+  @ApiProperty()
+  average!: number;
+
+  @ApiProperty()
+  responseCount!: number;
+
+  @ApiProperty()
+  interpretation!: string;
 }
 
 export class FacultyReportResponseDto {
@@ -108,4 +139,7 @@ export class FacultyReportResponseDto {
 
   @ApiPropertyOptional({ type: String, nullable: true })
   overallInterpretation!: string | null;
+
+  @ApiProperty({ type: [ReportDimensionDto] })
+  dimensions!: ReportDimensionDto[];
 }

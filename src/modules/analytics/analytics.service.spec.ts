@@ -3,11 +3,14 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { AnalyticsService } from './analytics.service';
 import { ScopeResolverService } from 'src/modules/common/services/scope-resolver.service';
+import { CurrentUserService } from 'src/modules/common/cls/current-user.service';
 import { QuestionnaireSchemaSnapshot } from 'src/modules/questionnaires/lib/questionnaire.types';
 
 describe('AnalyticsService', () => {
   let service: AnalyticsService;
   let mockExecute: jest.Mock;
+  let mockFindOne: jest.Mock;
+  let mockFind: jest.Mock;
   let mockScopeResolver: {
     ResolveDepartmentIds: jest.Mock;
     ResolveProgramCodes: jest.Mock;
@@ -15,10 +18,15 @@ describe('AnalyticsService', () => {
 
   beforeEach(async () => {
     mockExecute = jest.fn().mockResolvedValue([]);
+    mockFindOne = jest.fn().mockResolvedValue(null);
+    mockFind = jest.fn().mockResolvedValue([]);
 
     const mockEm = {
       execute: mockExecute,
+      findOne: mockFindOne,
+      find: mockFind,
       getConnection: jest.fn().mockReturnValue({ execute: mockExecute }),
+      transactional: jest.fn().mockImplementation((cb: () => unknown) => cb()),
     };
 
     mockScopeResolver = {
@@ -26,11 +34,22 @@ describe('AnalyticsService', () => {
       ResolveProgramCodes: jest.fn().mockResolvedValue(null),
     };
 
+    // FACULTY-self short-circuit checks `currentUserService.get()`. Default
+    // returns null so existing tests fall through to the department-scope
+    // path; FACULTY-self tests can override per-test.
+    const mockCurrentUserService = {
+      get: jest.fn().mockReturnValue(null),
+      getOrFail: jest.fn(),
+      getUserId: jest.fn(),
+      set: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
         { provide: EntityManager, useValue: mockEm },
         { provide: ScopeResolverService, useValue: mockScopeResolver },
+        { provide: CurrentUserService, useValue: mockCurrentUserService },
       ],
     }).compile();
 
@@ -624,11 +643,13 @@ describe('AnalyticsService', () => {
       schema: QuestionnaireSchemaSnapshot,
       aggRows: Record<string, unknown>[],
       countResult: number,
+      ratingRows: Record<string, unknown>[] = [],
+      dimensionRows: Record<string, unknown>[] = [],
     ) {
       // Super admin: scope returns null (no validateFacultyScope execute call)
       // 1. resolveVersionIds: phase 1 (type check), phase 2 (versions)
       // 2. BuildFacultyReportData: faculty metadata + semester metadata (parallel)
-      // 3. aggregation + submission count (parallel)
+      // 3. agg + ratingDist + count + dimensionRegistry (parallel)
       mockExecute
         // phase 1: type check
         .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
@@ -653,8 +674,12 @@ describe('AnalyticsService', () => {
         ])
         // aggregation query
         .mockResolvedValueOnce(aggRows)
+        // rating distribution query
+        .mockResolvedValueOnce(ratingRows)
         // submission count
-        .mockResolvedValueOnce([{ count: countResult }]);
+        .mockResolvedValueOnce([{ count: countResult }])
+        // dimension registry
+        .mockResolvedValueOnce(dimensionRows);
     }
 
     it('should return full report for super admin', async () => {
@@ -1249,6 +1274,832 @@ describe('AnalyticsService', () => {
       // Verify courseId was passed in SQL params
       const countCall = mockExecute.mock.calls[2] as [string, unknown[]];
       expect(countCall[1]).toContain(courseId);
+    });
+
+    describe('filters (sentiment + themeId)', () => {
+      const sentimentRunId = 'sr-run-1';
+      const topicModelRunId = 'tm-run-1';
+      const pipelineId = 'pipe-1';
+      const themeId = '550e8400-e29b-41d4-a716-446655440050';
+
+      const mockPipelineResolved = () => {
+        // findLatestCompletedPipelineByScope, resolvePipelineRuns(sentiment + topic)
+        mockFindOne
+          .mockResolvedValueOnce({ id: pipelineId })
+          .mockResolvedValueOnce({ id: sentimentRunId })
+          .mockResolvedValueOnce({ id: topicModelRunId });
+      };
+
+      it('returns empty when sentiment filter requested but no pipeline found', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ]);
+        // findOne returns null by default (no pipeline)
+
+        const result = await service.GetFacultyReportComments(facultyId, {
+          ...baseQuery,
+          sentiment: 'negative',
+        });
+
+        expect(result.items).toHaveLength(0);
+        expect(result.meta.totalItems).toBe(0);
+      });
+
+      it('applies sentiment filter in SQL params when pipeline exists', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ])
+          .mockResolvedValueOnce([{ total: '1' }])
+          .mockResolvedValueOnce([
+            {
+              text: 'A negative comment',
+              submitted_at: '2026-03-20T10:00:00.000Z',
+              sentiment: 'negative',
+              theme_ids: [themeId],
+            },
+          ]);
+        mockPipelineResolved();
+
+        const result = await service.GetFacultyReportComments(facultyId, {
+          ...baseQuery,
+          sentiment: 'negative',
+        });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0].sentiment).toBe('negative');
+        expect(result.items[0].themeIds).toEqual([themeId]);
+
+        // Verify sentiment/run ids were included in count SQL params
+        const countCall = mockExecute.mock.calls[2] as [string, unknown[]];
+        expect(countCall[1]).toContain(sentimentRunId);
+        expect(countCall[1]).toContain('negative');
+      });
+
+      it('applies themeId filter via topic_assignment join', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ])
+          .mockResolvedValueOnce([{ total: '3' }])
+          .mockResolvedValueOnce([
+            {
+              text: 'Theme comment',
+              submitted_at: '2026-03-20T10:00:00.000Z',
+              sentiment: 'positive',
+              theme_ids: [themeId],
+            },
+          ]);
+        mockPipelineResolved();
+
+        const result = await service.GetFacultyReportComments(facultyId, {
+          ...baseQuery,
+          themeId,
+        });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.meta.totalItems).toBe(3);
+        const countCall = mockExecute.mock.calls[2] as [string, unknown[]];
+        expect(countCall[1]).toContain(themeId);
+        expect(countCall[1]).toContain(topicModelRunId);
+      });
+
+      it('composes both filters with AND semantics', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ])
+          .mockResolvedValueOnce([{ total: '1' }])
+          .mockResolvedValueOnce([
+            {
+              text: 'Neg+theme',
+              submitted_at: '2026-03-20T10:00:00.000Z',
+              sentiment: 'negative',
+              theme_ids: [themeId],
+            },
+          ]);
+        mockPipelineResolved();
+
+        const result = await service.GetFacultyReportComments(facultyId, {
+          ...baseQuery,
+          sentiment: 'negative',
+          themeId,
+        });
+
+        expect(result.items).toHaveLength(1);
+        expect(result.meta.totalItems).toBe(1);
+        const countSql = (mockExecute.mock.calls[2] as [string, unknown[]])[0];
+        expect(countSql).toContain('sentiment_result');
+        expect(countSql).toContain('topic_assignment');
+        expect(countSql).toContain('is_dominant = true');
+      });
+
+      it('populates per-row annotations unconditionally when pipeline exists', async () => {
+        mockExecute
+          .mockResolvedValueOnce([{ id: 'type-1', name: 'Student Evaluation' }])
+          .mockResolvedValueOnce([
+            {
+              id: 'v-1',
+              version_number: 1,
+              schema_snapshot: { meta: {}, sections: [] },
+            },
+          ])
+          .mockResolvedValueOnce([{ total: '1' }])
+          .mockResolvedValueOnce([
+            {
+              text: 'Annotated',
+              submitted_at: '2026-03-20T10:00:00.000Z',
+              sentiment: 'positive',
+              theme_ids: [themeId],
+            },
+          ]);
+        mockPipelineResolved();
+
+        const result = await service.GetFacultyReportComments(
+          facultyId,
+          baseQuery,
+        );
+
+        expect(result.items[0].sentiment).toBe('positive');
+        expect(result.items[0].themeIds).toEqual([themeId]);
+      });
+    });
+  });
+
+  describe('GetQualitativeSummary', () => {
+    const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+    const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+    const baseQuery = {
+      semesterId,
+      questionnaireTypeCode: 'STUDENT_EVAL',
+    };
+
+    it('returns empty DTO when no completed pipeline exists', async () => {
+      // findOne returns null by default
+      const result = await service.GetQualitativeSummary(facultyId, baseQuery);
+
+      expect(result.sentimentDistribution).toEqual({
+        positive: 0,
+        neutral: 0,
+        negative: 0,
+      });
+      expect(result.themes).toEqual([]);
+    });
+
+    it('throws ForbiddenException when scope validation fails', async () => {
+      mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([
+        'dept-allowed',
+      ]);
+      mockExecute.mockResolvedValueOnce([
+        {
+          id: facultyId,
+          department_id: 'dept-other',
+          first_name: 'John',
+          last_name: 'Doe',
+        },
+      ]);
+
+      await expect(
+        service.GetQualitativeSummary(facultyId, baseQuery),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('aggregates sentiment distribution and themes sorted by descending count', async () => {
+      const pipelineId = 'pipe-x';
+      const sentimentRunId = 'sr-x';
+      const topicModelRunId = 'tm-x';
+
+      mockFindOne
+        .mockResolvedValueOnce({ id: pipelineId }) // pipeline
+        .mockResolvedValueOnce({ id: sentimentRunId }) // sentiment run
+        .mockResolvedValueOnce({ id: topicModelRunId }); // topic model run
+
+      mockFind
+        // sentiment results
+        .mockResolvedValueOnce([
+          {
+            label: 'positive',
+            positiveScore: 0.9,
+            negativeScore: 0.05,
+            submission: { id: 's1' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.8,
+            submission: { id: 's2' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.15,
+            negativeScore: 0.75,
+            submission: { id: 's3' },
+          },
+        ])
+        // topics (sorted desc docCount — returned in DB order)
+        .mockResolvedValueOnce([
+          {
+            id: 't-pacing',
+            label: 'Pacing',
+            rawLabel: 'Pacing',
+            docCount: 2,
+          },
+          {
+            id: 't-content',
+            label: null,
+            rawLabel: 'Content Quality',
+            docCount: 1,
+          },
+        ])
+        // topic assignments (dominant-only)
+        .mockResolvedValueOnce([
+          {
+            topic: { id: 't-pacing' },
+            submission: { id: 's2' },
+            isDominant: true,
+          },
+          {
+            topic: { id: 't-pacing' },
+            submission: { id: 's3' },
+            isDominant: true,
+          },
+          {
+            topic: { id: 't-content' },
+            submission: { id: 's1' },
+            isDominant: true,
+          },
+        ])
+        // quote submissions
+        .mockResolvedValueOnce([
+          { id: 's1', cleanedComment: 'Great teacher John Smith here' },
+          { id: 's2', cleanedComment: 'Pacing was off' },
+          { id: 's3', cleanedComment: 'Too fast to follow' },
+        ]);
+
+      const result = await service.GetQualitativeSummary(facultyId, baseQuery);
+
+      expect(result.sentimentDistribution).toEqual({
+        positive: 1,
+        neutral: 0,
+        negative: 2,
+      });
+      expect(result.themes).toHaveLength(2);
+      expect(result.themes[0].label).toBe('Pacing');
+      expect(result.themes[0].count).toBe(2);
+      expect(result.themes[0].sentimentSplit).toEqual({
+        positive: 0,
+        neutral: 0,
+        negative: 2,
+      });
+      expect(result.themes[1].label).toBe('Content Quality');
+      expect(result.themes[1].count).toBe(1);
+      // PII scrub: "John Smith" -> "[name]"
+      expect(result.themes[1].sampleQuotes?.[0]).toContain('[name]');
+    });
+
+    it('caps sample quotes at 3 per theme and applies length truncation', async () => {
+      const longText = 'x'.repeat(500);
+      mockFindOne
+        .mockResolvedValueOnce({ id: 'p' })
+        .mockResolvedValueOnce({ id: 'sr' })
+        .mockResolvedValueOnce({ id: 'tm' });
+      mockFind
+        // sentiment for 5 submissions
+        .mockResolvedValueOnce([
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.8,
+            submission: { id: 'a' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.85,
+            submission: { id: 'b' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.9,
+            submission: { id: 'c' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.92,
+            submission: { id: 'd' },
+          },
+          {
+            label: 'negative',
+            positiveScore: 0.1,
+            negativeScore: 0.95,
+            submission: { id: 'e' },
+          },
+        ])
+        // one topic
+        .mockResolvedValueOnce([
+          { id: 't1', label: 'Topic1', rawLabel: 'Topic1', docCount: 5 },
+        ])
+        // assignments
+        .mockResolvedValueOnce([
+          { topic: { id: 't1' }, submission: { id: 'a' }, isDominant: true },
+          { topic: { id: 't1' }, submission: { id: 'b' }, isDominant: true },
+          { topic: { id: 't1' }, submission: { id: 'c' }, isDominant: true },
+          { topic: { id: 't1' }, submission: { id: 'd' }, isDominant: true },
+          { topic: { id: 't1' }, submission: { id: 'e' }, isDominant: true },
+        ])
+        // quote submissions (3 picked: top 3 strongest-signal = e, d, c)
+        .mockResolvedValueOnce([
+          { id: 'c', cleanedComment: longText },
+          { id: 'd', cleanedComment: 'short' },
+          { id: 'e', cleanedComment: 'another short one' },
+        ]);
+
+      const result = await service.GetQualitativeSummary(facultyId, baseQuery);
+
+      expect(result.themes[0].sampleQuotes).toHaveLength(3);
+      const truncated = result.themes[0].sampleQuotes!.find((q) =>
+        q.endsWith('…'),
+      );
+      expect(truncated).toBeDefined();
+      expect(truncated!.length).toBeLessThanOrEqual(281);
+    });
+
+    it('returns partial response when topic model run missing (sentiment only)', async () => {
+      mockFindOne
+        .mockResolvedValueOnce({ id: 'p' })
+        .mockResolvedValueOnce({ id: 'sr' })
+        .mockResolvedValueOnce(null); // no topic model run
+      mockFind.mockResolvedValueOnce([
+        {
+          label: 'positive',
+          positiveScore: 0.9,
+          negativeScore: 0.05,
+          submission: { id: 's1' },
+        },
+      ]);
+
+      const result = await service.GetQualitativeSummary(facultyId, baseQuery);
+
+      expect(result.sentimentDistribution.positive).toBe(1);
+      expect(result.themes).toEqual([]);
+    });
+  });
+
+  describe('findLatestCompletedPipelineByScope', () => {
+    it('is invoked via GetQualitativeSummary with $or for aggregate and legacy pipelines', async () => {
+      const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+      const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+      const courseId = '550e8400-e29b-41d4-a716-446655440022';
+
+      await service.GetQualitativeSummary(facultyId, {
+        semesterId,
+        questionnaireTypeCode: 'STUDENT_EVAL',
+        courseId,
+      });
+
+      expect(mockFindOne).toHaveBeenCalled();
+      const call = mockFindOne.mock.calls[0] as unknown as [
+        unknown,
+        Record<string, unknown>,
+        Record<string, unknown>,
+      ];
+      const filter = call[1];
+      expect(filter.status).toBe('COMPLETED');
+      expect(filter.faculty).toBe(facultyId);
+      expect(filter.semester).toBe(semesterId);
+      expect(filter.course).toBe(courseId);
+      // Post-FAC-135 Phase A: matches aggregate (null) OR legacy per-type.
+      const orClause = filter.$or as Record<string, unknown>[];
+      expect(orClause).toHaveLength(2);
+      expect(orClause[0]).toEqual({ questionnaireVersion: null });
+      expect(orClause[1]).toHaveProperty('questionnaireVersion');
+      const opts = call[2];
+      expect(opts.orderBy).toEqual({ createdAt: 'DESC' });
+    });
+
+    it('uses course=null in filter when courseId not provided', async () => {
+      const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+      const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+
+      await service.GetQualitativeSummary(facultyId, {
+        semesterId,
+        questionnaireTypeCode: 'STUDENT_EVAL',
+      });
+
+      const call = mockFindOne.mock.calls[0] as unknown as [
+        unknown,
+        Record<string, unknown>,
+      ];
+      const filter = call[1];
+      expect(filter.course).toBeNull();
+    });
+  });
+
+  describe('GetFacultyOverview', () => {
+    const facultyId = '550e8400-e29b-41d4-a716-446655440001';
+    const semesterId = '550e8400-e29b-41d4-a716-446655440000';
+    const courseId = '550e8400-e29b-41d4-a716-4466554400aa';
+
+    const facultyMetadataRow = {
+      first_name: 'John',
+      last_name: 'Doe',
+      user_profile_picture: 'https://cdn/profile.png',
+    };
+    const semesterMetadataRow = {
+      id: semesterId,
+      code: '1S2526',
+      label: '1st Semester',
+      academic_year: '2025-2026',
+    };
+    const typeNameRows = [
+      { code: 'FACULTY_FEEDBACK', name: 'Faculty Feedback' },
+      { code: 'FACULTY_OUT_OF_CLASSROOM', name: 'Out-of-Classroom' },
+      { code: 'FACULTY_IN_CLASSROOM', name: 'In-Classroom' },
+    ];
+
+    function stubReport(overallRating: number | null, submissionCount: number) {
+      return {
+        faculty: { id: facultyId, name: 'John Doe', profilePicture: null },
+        semester: {
+          id: semesterId,
+          code: '1S2526',
+          label: '1st Semester',
+          academicYear: '2025-2026',
+        },
+        questionnaireType: { code: 'X', name: 'X' },
+        courseFilter: null,
+        submissionCount,
+        sections: [],
+        overallRating,
+        overallInterpretation: null,
+        dimensions: [],
+      };
+    }
+
+    function setupMetadata() {
+      // Super admin path: validateFacultyScope short-circuits via ResolveDepartmentIds=null
+      // Metadata queries (faculty + semester) and finally the type-name lookup.
+      mockExecute
+        .mockResolvedValueOnce([facultyMetadataRow]) // faculty
+        .mockResolvedValueOnce([semesterMetadataRow]) // semester
+        .mockResolvedValueOnce(typeNameRows); // type-name lookup
+    }
+
+    function spyUnscoped(
+      ratings: Partial<
+        Record<
+          | 'FACULTY_FEEDBACK'
+          | 'FACULTY_IN_CLASSROOM'
+          | 'FACULTY_OUT_OF_CLASSROOM',
+          { rating: number | null; submissionCount: number }
+        >
+      >,
+    ): jest.SpyInstance {
+      return jest
+        .spyOn(service, 'GetFacultyReportUnscoped')
+        .mockImplementation(
+          (_id: string, q: { questionnaireTypeCode: string }) => {
+            const entry =
+              ratings[q.questionnaireTypeCode as keyof typeof ratings];
+            if (!entry) return Promise.resolve(stubReport(null, 0));
+            return Promise.resolve(
+              stubReport(entry.rating, entry.submissionCount),
+            );
+          },
+        );
+    }
+
+    describe('parity with GetFacultyReportUnscoped (F32)', () => {
+      // This test asserts wiring parity — the helper extracts overallRating
+      // from GetFacultyReportUnscoped and must surface the same value per
+      // type. Functional parity of the aggregation itself is guaranteed by
+      // code-path reuse (the helper calls the real method), not by this
+      // test. A future refactor that swaps the helper for duplicated
+      // aggregation SQL would need its own integration coverage.
+      it('every per-type rating in the composite equals GetFacultyReportUnscoped.overallRating for same inputs', async () => {
+        setupMetadata();
+        const spy = spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.12, submissionCount: 10 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 3.48, submissionCount: 5 },
+          FACULTY_IN_CLASSROOM: { rating: 4.76, submissionCount: 7 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(spy).toHaveBeenCalledTimes(3);
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        );
+        const out = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_OUT_OF_CLASSROOM',
+        );
+        const inc = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_IN_CLASSROOM',
+        );
+        expect(feedback?.rating).toBe(4.12);
+        expect(out?.rating).toBe(3.48);
+        expect(inc?.rating).toBe(4.76);
+      });
+    });
+
+    describe('coverage states', () => {
+      it('FULL: all three ratings non-null → weighted composite with coverageWeight=1.00', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.0, submissionCount: 10 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 3.0, submissionCount: 5 },
+          FACULTY_IN_CLASSROOM: { rating: 5.0, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('FULL');
+        expect(result.composite.coverageWeight).toBeCloseTo(1.0, 5);
+        // contributions: round2(4*0.5)=2, round2(3*0.25)=0.75, round2(5*0.25)=1.25
+        // composite = round2(2 + 0.75 + 1.25) = 4.00
+        expect(result.composite.rating).toBe(4.0);
+        expect(result.composite.interpretation).toBe(
+          'VERY SATISFACTORY PERFORMANCE',
+        );
+
+        // Chain-of-rounding invariant
+        const sum = result.contributions.reduce(
+          (acc, c) => acc + (c.contribution ?? 0),
+          0,
+        );
+        expect(Math.round(sum * 100) / 100).toBe(result.composite.rating);
+
+        // No effective-weight renormalization in FULL
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        );
+        expect(feedback?.effectiveWeight).toBe(0.5);
+      });
+
+      it('PARTIAL: FEEDBACK + IN only → renormalized composite, coverageWeight=0.75', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.0, submissionCount: 10 },
+          FACULTY_IN_CLASSROOM: { rating: 5.0, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('PARTIAL');
+        expect(result.composite.coverageWeight).toBeCloseTo(0.75, 5);
+
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        )!;
+        const inc = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_IN_CLASSROOM',
+        )!;
+        const out = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_OUT_OF_CLASSROOM',
+        )!;
+
+        // effectiveWeight(FEEDBACK) = 0.5/0.75 ≈ 0.6667
+        // effectiveWeight(IN) = 0.25/0.75 ≈ 0.3333
+        expect(feedback.effectiveWeight).toBeCloseTo(0.6667, 3);
+        expect(inc.effectiveWeight).toBeCloseTo(0.3333, 3);
+        expect(out.effectiveWeight).toBe(0);
+        expect(out.contribution).toBeNull();
+        expect(out.rating).toBeNull();
+        expect(result.composite.rating).not.toBeNull();
+      });
+
+      it('PARTIAL_NO_FEEDBACK: IN + OUT only, FEEDBACK missing → composite is null (Dean-respecting)', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_OUT_OF_CLASSROOM: { rating: 4.5, submissionCount: 5 },
+          FACULTY_IN_CLASSROOM: { rating: 3.5, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('PARTIAL_NO_FEEDBACK');
+        expect(result.composite.coverageWeight).toBeCloseTo(0.5, 5);
+        expect(result.composite.rating).toBeNull();
+        expect(result.composite.interpretation).toBeNull();
+
+        // All rows: effectiveWeight=0, contribution=null — but ratings preserved for transparency
+        for (const c of result.contributions) {
+          expect(c.effectiveWeight).toBe(0);
+          expect(c.contribution).toBeNull();
+        }
+        const out = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_OUT_OF_CLASSROOM',
+        )!;
+        const inc = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_IN_CLASSROOM',
+        )!;
+        expect(out.rating).toBe(4.5);
+        expect(inc.rating).toBe(3.5);
+      });
+
+      it('FEEDBACK_ONLY: composite = FEEDBACK rating, coverageWeight=0.50', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.33, submissionCount: 10 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('FEEDBACK_ONLY');
+        expect(result.composite.coverageWeight).toBeCloseTo(0.5, 5);
+        expect(result.composite.rating).toBe(4.33);
+
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        )!;
+        expect(feedback.effectiveWeight).toBe(1);
+        expect(feedback.contribution).toBe(4.33);
+      });
+
+      it('INSUFFICIENT (IN only): composite is null, coverageWeight=0.25', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_IN_CLASSROOM: { rating: 3.5, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('INSUFFICIENT');
+        expect(result.composite.coverageWeight).toBeCloseTo(0.25, 5);
+        expect(result.composite.rating).toBeNull();
+
+        const inc = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_IN_CLASSROOM',
+        )!;
+        expect(inc.rating).toBe(3.5);
+        expect(inc.effectiveWeight).toBe(0);
+        expect(inc.contribution).toBeNull();
+      });
+
+      it('INSUFFICIENT (OUT only): composite is null, coverageWeight=0.25', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_OUT_OF_CLASSROOM: { rating: 3.5, submissionCount: 8 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('INSUFFICIENT');
+        expect(result.composite.rating).toBeNull();
+      });
+
+      it('NO_DATA: all ratings null, coverageWeight=0', async () => {
+        setupMetadata();
+        spyUnscoped({});
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(result.composite.coverageStatus).toBe('NO_DATA');
+        expect(result.composite.coverageWeight).toBe(0);
+        expect(result.composite.rating).toBeNull();
+        for (const c of result.contributions) {
+          expect(c.rating).toBeNull();
+          expect(c.contribution).toBeNull();
+          expect(c.effectiveWeight).toBe(0);
+        }
+      });
+    });
+
+    describe('edge cases', () => {
+      it('rating===null with submissionCount>0: treated as not-present, submissionCount preserved', async () => {
+        setupMetadata();
+        spyUnscoped({
+          // Degenerate: type has 5 submissions but zero scored answers
+          FACULTY_FEEDBACK: { rating: null, submissionCount: 5 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 4.0, submissionCount: 3 },
+          FACULTY_IN_CLASSROOM: { rating: 3.0, submissionCount: 2 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        // FEEDBACK absent (rating null) → coverage excludes it
+        expect(result.composite.coverageStatus).toBe('PARTIAL_NO_FEEDBACK');
+        const feedback = result.contributions.find(
+          (c) => c.questionnaireTypeCode === 'FACULTY_FEEDBACK',
+        )!;
+        expect(feedback.rating).toBeNull();
+        expect(feedback.submissionCount).toBe(5); // preserved for "No scored data" popover label
+      });
+
+      it('contributions are returned in canonical order (FEEDBACK, OUT, IN)', async () => {
+        setupMetadata();
+        spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.0, submissionCount: 1 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 3.0, submissionCount: 1 },
+          FACULTY_IN_CLASSROOM: { rating: 5.0, submissionCount: 1 },
+        });
+
+        const result = await service.GetFacultyOverview(facultyId, {
+          semesterId,
+        });
+
+        expect(
+          result.contributions.map((c) => c.questionnaireTypeCode),
+        ).toEqual([
+          'FACULTY_FEEDBACK',
+          'FACULTY_OUT_OF_CLASSROOM',
+          'FACULTY_IN_CLASSROOM',
+        ]);
+      });
+
+      it('faculty metadata missing → NotFoundException (does not silently return NO_DATA)', async () => {
+        mockExecute
+          .mockResolvedValueOnce([]) // faculty lookup — empty
+          .mockResolvedValueOnce([semesterMetadataRow]); // semester lookup
+
+        await expect(
+          service.GetFacultyOverview(facultyId, { semesterId }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('semester metadata missing → NotFoundException', async () => {
+        mockExecute
+          .mockResolvedValueOnce([facultyMetadataRow]) // faculty lookup
+          .mockResolvedValueOnce([]); // semester lookup — empty
+
+        await expect(
+          service.GetFacultyOverview(facultyId, { semesterId }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('GetFacultyReportUnscoped throwing a non-type NotFoundException propagates (not swallowed as NO_DATA)', async () => {
+        setupMetadata();
+        jest
+          .spyOn(service, 'GetFacultyReportUnscoped')
+          .mockRejectedValue(new NotFoundException('Faculty not found'));
+
+        await expect(
+          service.GetFacultyOverview(facultyId, { semesterId }),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('courseId propagation: forwards the same courseId to every GetFacultyReportUnscoped call', async () => {
+        setupMetadata();
+        const spy = spyUnscoped({
+          FACULTY_FEEDBACK: { rating: 4.0, submissionCount: 1 },
+          FACULTY_OUT_OF_CLASSROOM: { rating: 4.0, submissionCount: 1 },
+          FACULTY_IN_CLASSROOM: { rating: 4.0, submissionCount: 1 },
+        });
+
+        await service.GetFacultyOverview(facultyId, {
+          semesterId,
+          courseId,
+        });
+
+        expect(spy).toHaveBeenCalledTimes(3);
+        for (const [, query] of spy.mock.calls as unknown as [
+          string,
+          { courseId: string },
+        ][]) {
+          expect(query.courseId).toBe(courseId);
+        }
+      });
     });
   });
 });

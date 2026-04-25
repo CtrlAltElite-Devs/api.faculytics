@@ -18,7 +18,7 @@ export class SemestersService {
 
     const semesters = await this.em.find(Semester, filter, {
       populate: ['campus'],
-      orderBy: { createdAt: 'DESC' },
+      orderBy: { startDate: 'DESC' },
     });
 
     return {
@@ -27,6 +27,8 @@ export class SemestersService {
         code: s.code,
         label: s.label,
         academicYear: s.academicYear,
+        startDate: s.startDate,
+        endDate: s.endDate,
         campus: {
           id: s.campus.id,
           code: s.campus.code,

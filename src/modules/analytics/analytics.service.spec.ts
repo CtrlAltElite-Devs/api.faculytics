@@ -14,6 +14,7 @@ describe('AnalyticsService', () => {
   let mockScopeResolver: {
     ResolveDepartmentIds: jest.Mock;
     ResolveProgramCodes: jest.Mock;
+    IsFacultyInSemesterScope: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -32,6 +33,7 @@ describe('AnalyticsService', () => {
     mockScopeResolver = {
       ResolveDepartmentIds: jest.fn().mockResolvedValue(null),
       ResolveProgramCodes: jest.fn().mockResolvedValue(null),
+      IsFacultyInSemesterScope: jest.fn().mockResolvedValue(true),
     };
 
     // FACULTY-self short-circuit checks `currentUserService.get()`. Default
@@ -827,15 +829,11 @@ describe('AnalyticsService', () => {
       mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([
         'dept-allowed',
       ]);
-      // validateFacultyScope: user query (includes name fields now)
+      // Faculty exists, but no in-scope enrollments for this semester.
       mockExecute.mockResolvedValueOnce([
-        {
-          id: facultyId,
-          department_id: 'dept-other',
-          first_name: 'John',
-          last_name: 'Doe',
-        },
+        { id: facultyId, first_name: 'John', last_name: 'Doe' },
       ]);
+      mockScopeResolver.IsFacultyInSemesterScope.mockResolvedValueOnce(false);
 
       await expect(
         service.GetFacultyReport(facultyId, baseQuery),
@@ -1218,15 +1216,10 @@ describe('AnalyticsService', () => {
       mockScopeResolver.ResolveDepartmentIds.mockResolvedValue([
         'dept-allowed',
       ]);
-      // validateFacultyScope: user query
       mockExecute.mockResolvedValueOnce([
-        {
-          id: facultyId,
-          department_id: 'dept-other',
-          first_name: 'John',
-          last_name: 'Doe',
-        },
+        { id: facultyId, first_name: 'John', last_name: 'Doe' },
       ]);
+      mockScopeResolver.IsFacultyInSemesterScope.mockResolvedValueOnce(false);
 
       await expect(
         service.GetFacultyReportComments(facultyId, baseQuery),
@@ -1472,13 +1465,9 @@ describe('AnalyticsService', () => {
         'dept-allowed',
       ]);
       mockExecute.mockResolvedValueOnce([
-        {
-          id: facultyId,
-          department_id: 'dept-other',
-          first_name: 'John',
-          last_name: 'Doe',
-        },
+        { id: facultyId, first_name: 'John', last_name: 'Doe' },
       ]);
+      mockScopeResolver.IsFacultyInSemesterScope.mockResolvedValueOnce(false);
 
       await expect(
         service.GetQualitativeSummary(facultyId, baseQuery),

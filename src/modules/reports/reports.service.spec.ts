@@ -22,7 +22,10 @@ describe('ReportsService', () => {
     findOne: jest.Mock;
     find: jest.Mock;
   };
-  let mockScopeResolver: { ResolveDepartmentIds: jest.Mock };
+  let mockScopeResolver: {
+    ResolveDepartmentIds: jest.Mock;
+    IsFacultyInSemesterScope: jest.Mock;
+  };
   let mockEntityManager: {
     fork: jest.Mock;
     nativeDelete: jest.Mock;
@@ -74,6 +77,7 @@ describe('ReportsService', () => {
     };
     mockScopeResolver = {
       ResolveDepartmentIds: jest.fn().mockResolvedValue(null),
+      IsFacultyInSemesterScope: jest.fn().mockResolvedValue(true),
     };
     mockConnection.execute = jest.fn().mockResolvedValue([]);
     mockEntityManager = {
@@ -138,14 +142,13 @@ describe('ReportsService', () => {
           return [{ id: semesterId }];
         }
         if (sql.includes('FROM "user"')) {
-          return [
-            { department_id: 'dept-001', first_name: 'John', last_name: 'Doe' },
-          ];
+          return [{ id: facultyId, first_name: 'John', last_name: 'Doe' }];
         }
         return [];
       });
       // Scope: dean with access
       mockScopeResolver.ResolveDepartmentIds.mockResolvedValue(['dept-001']);
+      mockScopeResolver.IsFacultyInSemesterScope.mockResolvedValue(true);
     });
 
     it('should create entity, enqueue job, and return jobId', async () => {
@@ -196,31 +199,40 @@ describe('ReportsService', () => {
       expect(opts.removeOnFail).toBe(100);
     });
 
-    it('should throw ForbiddenException when faculty is out of scope', async () => {
-      // Faculty belongs to dept-002 but dean only has access to dept-001
+    it('should throw ForbiddenException when faculty has no in-scope enrollments for the semester', async () => {
+      // Dean's scope is dept-001 but faculty has no TEACHER enrollments in
+      // dept-001 courses for this semester (carryover-faculty-aware check).
       mockScopeResolver.ResolveDepartmentIds.mockResolvedValue(['dept-001']);
-      mockConnection.execute.mockImplementation((sql: string) => {
-        if (sql.includes('FROM semester')) {
-          return [{ id: semesterId }];
-        }
-        if (sql.includes('FROM "user"')) {
-          return [
-            {
-              department_id: 'dept-002',
-              first_name: 'Jane',
-              last_name: 'Smith',
-            },
-          ];
-        }
-        return [];
-      });
+      mockScopeResolver.IsFacultyInSemesterScope.mockResolvedValueOnce(false);
 
       await expect(service.GenerateSingle(dto, userId)).rejects.toThrow(
         ForbiddenException,
       );
+      expect(mockScopeResolver.IsFacultyInSemesterScope).toHaveBeenCalledWith(
+        facultyId,
+        semesterId,
+        ['dept-001'],
+      );
       // Should never reach entity creation or enqueue
       expect(mockForkEm.create).not.toHaveBeenCalled();
       expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('should pass scope check for carryover faculty (home dept in different semester)', async () => {
+      // Faculty's User.department points to a previous semester's Department,
+      // but they have an active TEACHER enrollment in this semester's courses.
+      // IsFacultyInSemesterScope sees the enrollment join → true.
+      mockScopeResolver.ResolveDepartmentIds.mockResolvedValue(['dept-001']);
+      mockScopeResolver.IsFacultyInSemesterScope.mockResolvedValueOnce(true);
+
+      const result = await service.GenerateSingle(dto, userId);
+
+      expect(result).toEqual({ jobId: 'report-job-001' });
+      expect(mockScopeResolver.IsFacultyInSemesterScope).toHaveBeenCalledWith(
+        facultyId,
+        semesterId,
+        ['dept-001'],
+      );
     });
 
     it('should return existing jobId when duplicate pending job exists (dedup)', async () => {

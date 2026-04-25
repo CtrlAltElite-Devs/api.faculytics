@@ -473,8 +473,8 @@ export class ReportsService {
       return; // super admin — unrestricted
     }
 
-    const userRows: { department_id: string }[] = await this.em.execute(
-      'SELECT u.department_id FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
+    const userRows: { id: string }[] = await this.em.execute(
+      'SELECT u.id FROM "user" u WHERE u.id = ? AND u.deleted_at IS NULL',
       [facultyId],
     );
 
@@ -482,7 +482,13 @@ export class ReportsService {
       throw new NotFoundException('Faculty not found');
     }
 
-    if (!deptIds.includes(userRows[0].department_id)) {
+    const inScope = await this.scopeResolver.IsFacultyInSemesterScope(
+      facultyId,
+      semesterId,
+      deptIds,
+    );
+
+    if (!inScope) {
       throw new ForbiddenException(
         'You do not have access to this faculty member',
       );

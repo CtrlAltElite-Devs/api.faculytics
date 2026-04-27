@@ -521,7 +521,19 @@ export class PipelineOrchestratorService {
     pipeline.status = PipelineStatus.TOPIC_MODELING;
     await fork.flush();
 
-    await this.dispatchTopicModeling(fork, pipeline, sentimentRun);
+    try {
+      await this.dispatchTopicModeling(fork, pipeline, sentimentRun);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Failed to dispatch topic modeling for pipeline ${pipeline.id}: ${message}`,
+      );
+      await this.failPipeline(
+        fork,
+        pipeline,
+        `topic_modeling: failed to dispatch topic modeling job: ${message}`,
+      );
+    }
   }
 
   async OnTopicModelComplete(pipelineId: string): Promise<void> {
@@ -545,7 +557,19 @@ export class PipelineOrchestratorService {
     pipeline.status = PipelineStatus.GENERATING_RECOMMENDATIONS;
     await fork.flush();
 
-    await this.dispatchRecommendations(fork, pipeline);
+    try {
+      await this.dispatchRecommendations(fork, pipeline);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Failed to dispatch recommendations for pipeline ${pipeline.id}: ${message}`,
+      );
+      await this.failPipeline(
+        fork,
+        pipeline,
+        `generating_recommendations: failed to dispatch recommendations job: ${message}`,
+      );
+    }
   }
 
   async OnRecommendationsComplete(pipelineId: string): Promise<void> {

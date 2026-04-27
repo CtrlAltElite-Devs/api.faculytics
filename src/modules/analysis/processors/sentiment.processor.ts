@@ -237,14 +237,13 @@ export class SentimentProcessor extends RunPodBatchProcessor {
           });
         }
 
-        try {
-          await tx.flush();
-        } catch (err) {
-          if (err instanceof UniqueConstraintViolationException) {
-            return { kind: 'duplicate-swallowed' as const };
-          }
-          throw err;
-        }
+        // Let errors propagate out of the callback. Catching a 23505 here
+        // and returning normally tells MikroORM to COMMIT on top of an
+        // already-aborted Postgres transaction, which then fails with
+        // 25P02 ("current transaction is aborted, commands ignored until
+        // end of transaction block"). The duplicate-swallow translation
+        // lives in the outer .catch() so MikroORM rolls back first.
+        await tx.flush();
 
         // Pass tx context so the raw UPDATE runs inside the active transaction.
         // Without it, AbstractSqlConnection.execute uses a pooled Knex connection
@@ -297,6 +296,9 @@ export class SentimentProcessor extends RunPodBatchProcessor {
       .catch((err: unknown) => {
         if (err instanceof SupersededChunkError) {
           return { kind: 'superseded' as const, reason: '' };
+        }
+        if (err instanceof UniqueConstraintViolationException) {
+          return { kind: 'duplicate-swallowed' as const };
         }
         throw err;
       });

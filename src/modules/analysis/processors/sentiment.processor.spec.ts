@@ -457,6 +457,43 @@ describe('SentimentProcessor', () => {
       mockEm.fork = originalFork;
     });
 
+    it('lets UniqueConstraintViolation propagate out of the transactional callback so MikroORM rolls back before translation', async () => {
+      // Regression: catching 23505 inside the transactional callback and
+      // returning normally tells MikroORM to COMMIT on top of an
+      // already-aborted Postgres txn, which then fails with 25P02
+      // ("current transaction is aborted, commands ignored until end of
+      // transaction block"). The catch must live in the OUTER .catch() so
+      // the rollback happens first.
+      tx.flush.mockRejectedValue(
+        new UniqueConstraintViolationException(
+          new Error('duplicate key value violates unique constraint'),
+        ),
+      );
+
+      let callbackRejected = false;
+      mockEm.transactional.mockImplementation(
+        async (fn: (tx: unknown) => Promise<unknown>) => {
+          try {
+            return await fn(tx);
+          } catch (err) {
+            callbackRejected = true;
+            throw err;
+          }
+        },
+      );
+
+      const logSpy = jest
+        .spyOn(processor['logger'], 'log')
+        .mockImplementation();
+
+      await processor.Persist(createMockBatchJob(), buildResult());
+
+      expect(callbackRejected).toBe(true);
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'duplicate-swallowed' }),
+      );
+    });
+
     it('reports counter-saturated reason when UPDATE matches zero rows and run is saturated', async () => {
       execute.mockResolvedValue([]);
 

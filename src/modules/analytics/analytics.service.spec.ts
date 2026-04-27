@@ -1563,8 +1563,9 @@ describe('AnalyticsService', () => {
       });
       expect(result.themes[1].label).toBe('Content Quality');
       expect(result.themes[1].count).toBe(1);
-      // PII scrub: "John Smith" -> "[name]"
-      expect(result.themes[1].sampleQuotes?.[0]).toContain('[name]');
+      expect(result.themes[1].sampleQuotes?.[0]).toBe(
+        'Great teacher John Smith here',
+      );
     });
 
     it('caps sample quotes at 3 per theme and applies length truncation', async () => {

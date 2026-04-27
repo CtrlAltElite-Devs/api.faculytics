@@ -115,6 +115,18 @@ export const TERMINAL_STATUSES = [
   PipelineStatus.CANCELLED,
 ];
 
+// Stage name -> the pipeline status during which a failure for that stage
+// is meaningful. A failure reported when the pipeline is already past the
+// expected status is stale (the stage has saturated and the pipeline has
+// moved on) and must NOT stomp the pipeline. Common cause: BullMQ
+// stalled-job retries firing on a chunk whose first attempt had already
+// committed and saturated the run counter.
+const STAGE_TO_STATUS: Readonly<Record<string, PipelineStatus>> = {
+  sentiment_analysis: PipelineStatus.SENTIMENT_ANALYSIS,
+  topic_modeling: PipelineStatus.TOPIC_MODELING,
+  generating_recommendations: PipelineStatus.GENERATING_RECOMMENDATIONS,
+};
+
 // Populate list for endpoints that return a PipelineSummary to the
 // frontend. Covers every scope FK + the faculty name used in the summary
 // DTO. Keeping this centralized prevents drift between Create/Confirm/
@@ -509,7 +521,19 @@ export class PipelineOrchestratorService {
     pipeline.status = PipelineStatus.TOPIC_MODELING;
     await fork.flush();
 
-    await this.dispatchTopicModeling(fork, pipeline, sentimentRun);
+    try {
+      await this.dispatchTopicModeling(fork, pipeline, sentimentRun);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Failed to dispatch topic modeling for pipeline ${pipeline.id}: ${message}`,
+      );
+      await this.failPipeline(
+        fork,
+        pipeline,
+        `topic_modeling: failed to dispatch topic modeling job: ${message}`,
+      );
+    }
   }
 
   async OnTopicModelComplete(pipelineId: string): Promise<void> {
@@ -533,7 +557,19 @@ export class PipelineOrchestratorService {
     pipeline.status = PipelineStatus.GENERATING_RECOMMENDATIONS;
     await fork.flush();
 
-    await this.dispatchRecommendations(fork, pipeline);
+    try {
+      await this.dispatchRecommendations(fork, pipeline);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Failed to dispatch recommendations for pipeline ${pipeline.id}: ${message}`,
+      );
+      await this.failPipeline(
+        fork,
+        pipeline,
+        `generating_recommendations: failed to dispatch recommendations job: ${message}`,
+      );
+    }
   }
 
   async OnRecommendationsComplete(pipelineId: string): Promise<void> {
@@ -974,6 +1010,17 @@ export class PipelineOrchestratorService {
     const pipeline = await fork.findOne(AnalysisPipeline, pipelineId);
 
     if (!pipeline || TERMINAL_STATUSES.includes(pipeline.status)) return;
+
+    // Forward-progress guard: ignore stale stage failures that arrive after
+    // the pipeline has already advanced past the failing stage. See
+    // STAGE_TO_STATUS for the rationale.
+    const expectedStatus = STAGE_TO_STATUS[stage];
+    if (expectedStatus && pipeline.status !== expectedStatus) {
+      this.logger.warn(
+        `Ignoring stale ${stage} failure for pipeline ${pipelineId}: pipeline is now in ${pipeline.status} (expected ${expectedStatus}). ${error}`,
+      );
+      return;
+    }
 
     pipeline.status = PipelineStatus.FAILED;
     pipeline.errorMessage = `${stage}: ${error}`;

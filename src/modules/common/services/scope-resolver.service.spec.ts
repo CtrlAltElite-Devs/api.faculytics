@@ -8,7 +8,7 @@ import { User } from 'src/entities/user.entity';
 
 describe('ScopeResolverService', () => {
   let service: ScopeResolverService;
-  let em: { find: jest.Mock; findOne: jest.Mock };
+  let em: { find: jest.Mock; findOne: jest.Mock; execute: jest.Mock };
   let currentUserService: { getOrFail: jest.Mock };
 
   const semesterId = 'semester-1';
@@ -17,7 +17,7 @@ describe('ScopeResolverService', () => {
     ({ id, roles }) as unknown as User;
 
   beforeEach(async () => {
-    em = { find: jest.fn(), findOne: jest.fn() };
+    em = { find: jest.fn(), findOne: jest.fn(), execute: jest.fn() };
     currentUserService = {
       getOrFail: jest.fn(),
     };
@@ -388,6 +388,65 @@ describe('ScopeResolverService', () => {
 
       expect(result).toBeNull();
       expect(em.find).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── IsFacultyInSemesterScope ────────────────────────────────────
+
+  describe('IsFacultyInSemesterScope', () => {
+    const facultyId = 'faculty-1';
+
+    it('returns true for super-admin (null allowedDepartmentIds) without hitting the DB', async () => {
+      const result = await service.IsFacultyInSemesterScope(
+        facultyId,
+        semesterId,
+        null,
+      );
+
+      expect(result).toBe(true);
+      expect(em.execute).not.toHaveBeenCalled();
+    });
+
+    it('returns false for empty allowedDepartmentIds without hitting the DB', async () => {
+      const result = await service.IsFacultyInSemesterScope(
+        facultyId,
+        semesterId,
+        [],
+      );
+
+      expect(result).toBe(false);
+      expect(em.execute).not.toHaveBeenCalled();
+    });
+
+    it('returns true when the enrollment-join query yields any row', async () => {
+      em.execute.mockResolvedValueOnce([{ hit: 1 }]);
+
+      const result = await service.IsFacultyInSemesterScope(
+        facultyId,
+        semesterId,
+        ['dept-a', 'dept-b'],
+      );
+
+      expect(result).toBe(true);
+      expect(em.execute).toHaveBeenCalledTimes(1);
+      const [sql, params] = em.execute.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain('FROM enrollment e');
+      expect(sql).toContain("e.role IN ('editingteacher', 'teacher')");
+      expect(sql).toContain('d.semester_id = ?');
+      expect(sql).toContain('d.id IN (?, ?)');
+      expect(params).toEqual([facultyId, semesterId, 'dept-a', 'dept-b']);
+    });
+
+    it('returns false when the enrollment-join query yields no rows', async () => {
+      em.execute.mockResolvedValueOnce([]);
+
+      const result = await service.IsFacultyInSemesterScope(
+        facultyId,
+        semesterId,
+        ['dept-a'],
+      );
+
+      expect(result).toBe(false);
     });
   });
 });

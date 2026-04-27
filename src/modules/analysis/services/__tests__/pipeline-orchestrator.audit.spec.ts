@@ -171,6 +171,87 @@ describe('PipelineOrchestratorService — pipeline failure audit', () => {
 
       expect(emit).not.toHaveBeenCalled();
     });
+
+    it('ignores stale sentiment_analysis failure when pipeline is already in SENTIMENT_GATE', async () => {
+      // Reproduces the production case: chunk 19/20 retried after its first
+      // attempt had already saturated the run counter and OnSentimentComplete
+      // had advanced the pipeline through the gate. The late onFailed must
+      // NOT stomp the pipeline back to FAILED.
+      const pipeline = buildPipeline({ status: PipelineStatus.SENTIMENT_GATE });
+      const { service, emit, flush } = makeService({
+        findOne: jest.fn().mockResolvedValue(pipeline),
+      });
+
+      await service.OnStageFailed(
+        pipeline.id,
+        'sentiment_analysis',
+        'chunk 19/20 failed after 3 retries: insert into ...',
+      );
+
+      expect(flush).not.toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalled();
+      expect(pipeline.status).toBe(PipelineStatus.SENTIMENT_GATE);
+      expect(pipeline.errorMessage).toBeUndefined();
+    });
+
+    it('ignores stale sentiment_analysis failure when pipeline has advanced to TOPIC_MODELING', async () => {
+      const pipeline = buildPipeline({ status: PipelineStatus.TOPIC_MODELING });
+      const { service, emit, flush } = makeService({
+        findOne: jest.fn().mockResolvedValue(pipeline),
+      });
+
+      await service.OnStageFailed(pipeline.id, 'sentiment_analysis', 'late');
+
+      expect(flush).not.toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalled();
+      expect(pipeline.status).toBe(PipelineStatus.TOPIC_MODELING);
+    });
+
+    it('ignores stale topic_modeling failure when pipeline has advanced to GENERATING_RECOMMENDATIONS', async () => {
+      const pipeline = buildPipeline({
+        status: PipelineStatus.GENERATING_RECOMMENDATIONS,
+      });
+      const { service, emit, flush } = makeService({
+        findOne: jest.fn().mockResolvedValue(pipeline),
+      });
+
+      await service.OnStageFailed(pipeline.id, 'topic_modeling', 'late');
+
+      expect(flush).not.toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalled();
+      expect(pipeline.status).toBe(PipelineStatus.GENERATING_RECOMMENDATIONS);
+    });
+
+    it('still stomps when stage matches current status (sentiment_analysis on SENTIMENT_ANALYSIS)', async () => {
+      const pipeline = buildPipeline({
+        status: PipelineStatus.SENTIMENT_ANALYSIS,
+      });
+      const { service, emit, flush } = makeService({
+        findOne: jest.fn().mockResolvedValue(pipeline),
+      });
+
+      await service.OnStageFailed(pipeline.id, 'sentiment_analysis', 'real');
+
+      expect(flush).toHaveBeenCalledTimes(1);
+      expect(emit).toHaveBeenCalledTimes(1);
+      expect(pipeline.status).toBe(PipelineStatus.FAILED);
+      expect(pipeline.errorMessage).toBe('sentiment_analysis: real');
+    });
+
+    it('falls through to FAILED on unknown stage name (no mapping → no guard)', async () => {
+      const pipeline = buildPipeline({
+        status: PipelineStatus.SENTIMENT_ANALYSIS,
+      });
+      const { service, emit, flush } = makeService({
+        findOne: jest.fn().mockResolvedValue(pipeline),
+      });
+
+      await service.OnStageFailed(pipeline.id, 'mystery_stage', 'huh');
+
+      expect(flush).toHaveBeenCalledTimes(1);
+      expect(emit).toHaveBeenCalledTimes(1);
+      expect(pipeline.status).toBe(PipelineStatus.FAILED);
+    });
   });
 
   describe('emitPipelineFailAudit (private)', () => {

@@ -25,7 +25,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy noeviction
+    command: redis-server --maxmemory 1gb --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
     healthcheck:
@@ -36,7 +36,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          memory: 1280m
 
   api-production:
     image: faculytics-api:production

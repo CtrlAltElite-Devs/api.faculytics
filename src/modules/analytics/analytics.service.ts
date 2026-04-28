@@ -1102,6 +1102,8 @@ export class AnalyticsService {
           count: assignments.length,
           sentimentSplit: split,
           sampleQuotes: sampleQuotes.length > 0 ? sampleQuotes : undefined,
+          rawLabel: topic.rawLabel,
+          keywords: topic.keywords ?? [],
         };
       })
       .sort((a, b) => b.count - a.count);

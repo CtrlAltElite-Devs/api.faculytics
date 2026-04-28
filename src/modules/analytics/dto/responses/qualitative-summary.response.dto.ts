@@ -29,6 +29,18 @@ export class QualitativeThemeDto {
     description: 'Up to 3 representative, PII-scrubbed, length-capped quotes',
   })
   sampleQuotes?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'BERTopic raw slug label, e.g. "0_pacing_speed_explain". Useful for diagnosing why a theme was named the way it was.',
+  })
+  rawLabel?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Top BERTopic keywords representing this topic',
+  })
+  keywords?: string[];
 }
 
 export class QualitativeSummaryResponseDto {

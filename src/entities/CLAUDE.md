@@ -28,6 +28,7 @@ MikroORM entity definitions. All domain state lives here.
 - Adding a new entity requires registering it in `index.entity.ts` AND creating a migration (`npx mikro-orm migration:create`). Forgetting the migration silently diverges the dev DB from production.
 - Relation decorators (`@ManyToOne`, `@OneToMany`) need matching inverse sides or MikroORM will silently drop joins.
 - When writing new repos, prefer `em.fork()` + query builder inside the repo — don't leak query building into services.
+- **`uq_analysis_pipeline_active_scope` is a recurring CLI suggestion trap.** This partial unique index (FAC-132, see `Migration20260414155236_fac-132-pipeline-scope-unique-index.ts`) uses `COALESCE(...,'NONE')` over nullable scope FKs and a `WHERE status NOT IN (...)` clause. MikroORM decorators can't represent it, so `migration:create` will propose dropping it on every run. **Never accept that drop** — it reopens the bug FAC-132 fixed (duplicate active pipelines for the same scope). Always strip the `drop index "uq_analysis_pipeline_active_scope"` line from generated migrations before committing.
 
 ## Pointers
 

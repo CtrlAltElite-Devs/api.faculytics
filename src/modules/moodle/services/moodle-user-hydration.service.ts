@@ -342,7 +342,11 @@ export class MoodleUserHydrationService {
       }
     }
 
-    // Step 3: Clean up redundant CHAIRPERSON roles where a manual DEAN covers the parent dept
+    // Step 3: Clean up redundant CHAIRPERSON roles where a manual DEAN covers the parent dept.
+    // `moodleCategory` is technically a NOT NULL FK, but populate can resolve to null when the
+    // related row is hidden by the global soft-delete filter or has drifted out of the local
+    // mirror after a Moodle restructure. Guard every access — losing such a stale row to a
+    // null deref is exactly the (DEAN ∧ CHAIRPERSON) login-500 path.
     const allExistingRoles = await tx.find(
       UserInstitutionalRole,
       { user },
@@ -356,19 +360,21 @@ export class MoodleUserHydrationService {
             ir.role === (UserRole.DEAN as string) &&
             ir.source === (InstitutionalRoleSource.MANUAL as string),
         )
-        .map((ir) => ir.moodleCategory.moodleCategoryId),
+        .map((ir) => ir.moodleCategory?.moodleCategoryId)
+        .filter((id): id is number => id != null),
     );
 
     for (const existing of allExistingRoles) {
       if (existing.role !== (UserRole.CHAIRPERSON as string)) continue;
-      const parentDeptId = programToDeptMap.get(
-        existing.moodleCategory.moodleCategoryId,
-      );
+      const existingCatId = existing.moodleCategory?.moodleCategoryId;
+      if (existingCatId == null) continue;
+
+      const parentDeptId = programToDeptMap.get(existingCatId);
       const deptId =
         parentDeptId ??
         (
           await tx.findOne(MoodleCategory, {
-            moodleCategoryId: existing.moodleCategory.moodleCategoryId,
+            moodleCategoryId: existingCatId,
           })
         )?.parentMoodleCategoryId;
 
@@ -387,9 +393,9 @@ export class MoodleUserHydrationService {
     );
 
     const existingAutoKeys = new Set(
-      existingAutoRoles.map(
-        (ir) => `${ir.role}:${ir.moodleCategory.moodleCategoryId}`,
-      ),
+      existingAutoRoles
+        .filter((ir) => ir.moodleCategory?.moodleCategoryId != null)
+        .map((ir) => `${ir.role}:${ir.moodleCategory.moodleCategoryId}`),
     );
 
     const detectedKeys = new Set(
@@ -398,7 +404,13 @@ export class MoodleUserHydrationService {
 
     // Remove stale auto roles
     for (const existing of existingAutoRoles) {
-      const key = `${existing.role}:${existing.moodleCategory.moodleCategoryId}`;
+      const existingCatId = existing.moodleCategory?.moodleCategoryId;
+      if (existingCatId == null) {
+        // Orphaned auto row pointing at a category that's been pruned — drop it.
+        tx.remove(existing);
+        continue;
+      }
+      const key = `${existing.role}:${existingCatId}`;
       if (!detectedKeys.has(key)) {
         tx.remove(existing);
       }
@@ -412,13 +424,16 @@ export class MoodleUserHydrationService {
     );
     // Categories with any manual role (program-level)
     const manualCategoryIds = new Set(
-      existingManualRoles.map((ir) => ir.moodleCategory.moodleCategoryId),
+      existingManualRoles
+        .map((ir) => ir.moodleCategory?.moodleCategoryId)
+        .filter((id): id is number => id != null),
     );
     // Department categories with a manual DEAN (parent-level)
     const manualDeanDeptIds = new Set(
       existingManualRoles
         .filter((ir) => ir.role === (UserRole.DEAN as string))
-        .map((ir) => ir.moodleCategory.moodleCategoryId),
+        .map((ir) => ir.moodleCategory?.moodleCategoryId)
+        .filter((id): id is number => id != null),
     );
 
     for (const programCatId of detectedPrograms) {

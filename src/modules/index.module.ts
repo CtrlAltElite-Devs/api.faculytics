@@ -22,6 +22,7 @@ import { FacultyModule } from './faculty/faculty.module';
 import { CurriculumModule } from './curriculum/curriculum.module';
 import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
+import { SystemErrorsModule } from './system-errors/system-errors.module';
 import { SemestersModule } from './semesters/semesters.module';
 import { ReportsModule } from './reports/reports.module';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -47,6 +48,7 @@ export const ApplicationModules = [
   CurriculumModule,
   AdminModule,
   AuditModule,
+  SystemErrorsModule,
   SemestersModule,
   ReportsModule,
 ];

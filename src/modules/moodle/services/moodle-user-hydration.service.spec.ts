@@ -210,3 +210,120 @@ describe('MoodleUserHydrationService scope derivation', () => {
     expect(user.campus).toBe(initialCampus);
   });
 });
+
+describe('MoodleUserHydrationService institutional role cleanup', () => {
+  // Regression: multi-role user (faculty + chairperson + dean) hits 500 on
+  // login because resolveInstitutionalRoles dereferences `ir.moodleCategory`
+  // without a null guard. populate('moodleCategory') can return null when the
+  // referenced category was soft-deleted or drifted out of the local mirror.
+  // Single-role users skip the (DEAN ∧ CHAIRPERSON) cleanup branch entirely,
+  // which is why the issue only manifests for the intersection.
+  const setupWithInstRoles = async (instRoles: UserInstitutionalRole[]) => {
+    const user = {
+      id: 'u1',
+      moodleUserId: 42,
+      userName: 'jdoe',
+      departmentSource: InstitutionalRoleSource.AUTO,
+      programSource: InstitutionalRoleSource.AUTO,
+      roles: [],
+      updateRolesFromEnrollments: jest.fn(),
+    } as unknown as User;
+
+    const dept = { id: 'd1', name: 'dept-d1' } as Department;
+    const program = {
+      id: 'p1',
+      moodleCategoryId: 100,
+      department: dept,
+    } as unknown as Program;
+    const course = { id: 'course-1', program } as unknown as Course;
+
+    const tx: FakeTx = {
+      findOneOrFail: jest.fn((entity: unknown) => {
+        if (entity === User) return Promise.resolve(user);
+        return Promise.reject(
+          new Error(`unexpected findOneOrFail for ${String(entity)}`),
+        );
+      }),
+      findOne: jest.fn((entity: unknown) => {
+        if (entity === Program) return Promise.resolve(program);
+        return Promise.resolve(null);
+      }),
+      find: jest.fn((entity: unknown, _filter: unknown) => {
+        if (entity === Enrollment) return Promise.resolve([]);
+        if (entity === UserInstitutionalRole) return Promise.resolve(instRoles);
+        return Promise.resolve([]);
+      }),
+      upsert: jest.fn((entity: unknown, data: unknown) => {
+        if (entity === Course) return Promise.resolve(course);
+        if (entity === Section) return Promise.resolve(data);
+        if (entity === Enrollment) return Promise.resolve(data);
+        return Promise.resolve(data);
+      }),
+      populate: jest.fn(() => Promise.resolve(undefined)),
+      persist: jest.fn(),
+      flush: jest.fn(() => Promise.resolve(undefined)),
+      remove: jest.fn(),
+      create: jest.fn((_entity: unknown, data: unknown) => data),
+    };
+
+    const unitOfWork = {
+      runInTransaction: jest.fn((work: (em: unknown) => Promise<void>) =>
+        work(tx),
+      ),
+    } as unknown as UnitOfWork;
+
+    const moodleService = buildMoodleService(course);
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MoodleUserHydrationService,
+        { provide: MoodleService, useValue: moodleService },
+        { provide: UnitOfWork, useValue: unitOfWork },
+      ],
+    }).compile();
+
+    const service = module.get(MoodleUserHydrationService);
+    return { service, user, tx };
+  };
+
+  it('does not throw when a CHAIRPERSON role has a null moodleCategory (orphaned by drift)', async () => {
+    // ucmn-t-67092 scenario: user has DEAN + CHAIRPERSON, and the chairperson's
+    // related moodle_category was either soft-deleted or filtered out by the
+    // global soft-delete filter, so populate returns null for that relation.
+    const deanRole = {
+      role: 'DEAN',
+      source: InstitutionalRoleSource.MANUAL,
+      moodleCategory: { moodleCategoryId: 200, parentMoodleCategoryId: 150 },
+    } as unknown as UserInstitutionalRole;
+    const chairpersonOrphan = {
+      role: 'CHAIRPERSON',
+      source: InstitutionalRoleSource.MANUAL,
+      moodleCategory: null,
+    } as unknown as UserInstitutionalRole;
+
+    const { service } = await setupWithInstRoles([deanRole, chairpersonOrphan]);
+
+    await expect(
+      service.hydrateUserCourses(42, 'token'),
+    ).resolves.not.toThrow();
+  });
+
+  it('does not throw when a DEAN role has a null moodleCategory (drifted manual assignment)', async () => {
+    const deanOrphan = {
+      role: 'DEAN',
+      source: InstitutionalRoleSource.MANUAL,
+      moodleCategory: null,
+    } as unknown as UserInstitutionalRole;
+    const chairperson = {
+      role: 'CHAIRPERSON',
+      source: InstitutionalRoleSource.AUTO,
+      moodleCategory: { moodleCategoryId: 100, parentMoodleCategoryId: 200 },
+    } as unknown as UserInstitutionalRole;
+
+    const { service } = await setupWithInstRoles([deanOrphan, chairperson]);
+
+    await expect(
+      service.hydrateUserCourses(42, 'token'),
+    ).resolves.not.toThrow();
+  });
+});

@@ -1512,12 +1512,14 @@ describe('AnalyticsService', () => {
             id: 't-pacing',
             label: 'Pacing',
             rawLabel: 'Pacing',
+            keywords: ['pace', 'speed', 'fast'],
             docCount: 2,
           },
           {
             id: 't-content',
             label: null,
             rawLabel: 'Content Quality',
+            keywords: ['content', 'quality', 'depth'],
             docCount: 1,
           },
         ])
@@ -1563,8 +1565,17 @@ describe('AnalyticsService', () => {
       });
       expect(result.themes[1].label).toBe('Content Quality');
       expect(result.themes[1].count).toBe(1);
-      // PII scrub: "John Smith" -> "[name]"
-      expect(result.themes[1].sampleQuotes?.[0]).toContain('[name]');
+      expect(result.themes[1].sampleQuotes?.[0]).toBe(
+        'Great teacher John Smith here',
+      );
+      expect(result.themes[0].rawLabel).toBe('Pacing');
+      expect(result.themes[0].keywords).toEqual(['pace', 'speed', 'fast']);
+      expect(result.themes[1].rawLabel).toBe('Content Quality');
+      expect(result.themes[1].keywords).toEqual([
+        'content',
+        'quality',
+        'depth',
+      ]);
     });
 
     it('caps sample quotes at 3 per theme and applies length truncation', async () => {
@@ -1609,7 +1620,13 @@ describe('AnalyticsService', () => {
         ])
         // one topic
         .mockResolvedValueOnce([
-          { id: 't1', label: 'Topic1', rawLabel: 'Topic1', docCount: 5 },
+          {
+            id: 't1',
+            label: 'Topic1',
+            rawLabel: 'Topic1',
+            keywords: ['k1', 'k2', 'k3'],
+            docCount: 5,
+          },
         ])
         // assignments
         .mockResolvedValueOnce([

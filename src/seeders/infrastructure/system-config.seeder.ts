@@ -21,6 +21,11 @@ export class SystemConfigSeeder extends Seeder {
         description: 'Interval for Moodle synchronization in minutes.',
       },
       {
+        key: 'MOODLE_SYNC_ENABLED',
+        value: 'true',
+        description: 'Whether the Moodle sync cron job is enabled.',
+      },
+      {
         key: 'SENTIMENT_VLLM_CONFIG',
         value: JSON.stringify({ url: '', model: '', enabled: false }),
         description:

@@ -31,6 +31,7 @@ import { Section } from './section.entity';
 import { TopicModelRun } from './topic-model-run.entity';
 import { SyncLog } from './sync-log.entity';
 import { AuditLog } from './audit-log.entity';
+import { ErrorLog } from './error-log.entity';
 import { ReportJob } from './report-job.entity';
 
 export {
@@ -67,6 +68,7 @@ export {
   TopicModelRun,
   SyncLog,
   AuditLog,
+  ErrorLog,
   ReportJob,
 };
 
@@ -104,5 +106,6 @@ export const entities = [
   TopicModelRun,
   SyncLog,
   AuditLog,
+  ErrorLog,
   ReportJob,
 ];

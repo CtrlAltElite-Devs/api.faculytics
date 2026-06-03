@@ -109,11 +109,9 @@ const SENTIMENT_LABEL_VALUES: SentimentLabel[] = [
 ];
 
 function scrubQuote(raw: string): string {
-  const truncated =
-    raw.length > QUALITATIVE_SUMMARY_LIMITS.QUOTE_MAX_LENGTH
-      ? `${raw.slice(0, QUALITATIVE_SUMMARY_LIMITS.QUOTE_MAX_LENGTH)}…`
-      : raw;
-  return truncated.replace(/[A-Z][a-z]+\s[A-Z][a-z]+/g, '[name]');
+  return raw.length > QUALITATIVE_SUMMARY_LIMITS.QUOTE_MAX_LENGTH
+    ? `${raw.slice(0, QUALITATIVE_SUMMARY_LIMITS.QUOTE_MAX_LENGTH)}…`
+    : raw;
 }
 
 @Injectable()
@@ -1104,6 +1102,8 @@ export class AnalyticsService {
           count: assignments.length,
           sentimentSplit: split,
           sampleQuotes: sampleQuotes.length > 0 ? sampleQuotes : undefined,
+          rawLabel: topic.rawLabel,
+          keywords: topic.keywords ?? [],
         };
       })
       .sort((a, b) => b.count - a.count);

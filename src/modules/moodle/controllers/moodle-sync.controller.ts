@@ -218,7 +218,23 @@ export class MoodleSyncController {
   async UpdateSyncSchedule(
     @Body() dto: UpdateSyncScheduleDto,
   ): Promise<SyncScheduleResponseDto> {
-    await this.syncScheduler.updateSchedule(dto.intervalMinutes);
+    if (dto.intervalMinutes === undefined && dto.enabled === undefined) {
+      throw new HttpException(
+        {
+          error: 'At least one of intervalMinutes or enabled must be provided',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (dto.intervalMinutes !== undefined) {
+      await this.syncScheduler.updateSchedule(dto.intervalMinutes);
+    }
+
+    if (dto.enabled !== undefined) {
+      await this.syncScheduler.setEnabled(dto.enabled);
+    }
+
     return this.syncScheduler.getSchedule();
   }
 }

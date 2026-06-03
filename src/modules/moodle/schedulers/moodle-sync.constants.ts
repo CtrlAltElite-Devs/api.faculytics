@@ -2,6 +2,8 @@ export const MOODLE_SYNC_JOB_NAME = 'moodle-sync-cron';
 
 export const MOODLE_SYNC_CONFIG_KEY = 'MOODLE_SYNC_INTERVAL_MINUTES';
 
+export const MOODLE_SYNC_ENABLED_CONFIG_KEY = 'MOODLE_SYNC_ENABLED';
+
 export const MOODLE_SYNC_MIN_INTERVAL_MINUTES = 30;
 
 export const MOODLE_SYNC_INTERVAL_DEFAULTS: Record<string, number> = {

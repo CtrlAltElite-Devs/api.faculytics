@@ -10,6 +10,7 @@ import { env } from 'src/configurations/env';
 import {
   MOODLE_SYNC_JOB_NAME,
   MOODLE_SYNC_CONFIG_KEY,
+  MOODLE_SYNC_ENABLED_CONFIG_KEY,
   MOODLE_SYNC_INTERVAL_DEFAULTS,
   MOODLE_SYNC_MIN_INTERVAL_MINUTES,
   minutesToCron,
@@ -20,6 +21,7 @@ export class MoodleSyncScheduler implements OnModuleInit {
   private readonly logger = new Logger(MoodleSyncScheduler.name);
   private currentIntervalMinutes: number;
   private currentCronExpression: string;
+  private isEnabled: boolean;
 
   constructor(
     @InjectQueue(QueueName.MOODLE_SYNC) private readonly syncQueue: Queue,
@@ -29,18 +31,20 @@ export class MoodleSyncScheduler implements OnModuleInit {
 
   async onModuleInit() {
     const interval = await this.resolveInterval();
+    const enabled = await this.resolveEnabled();
     this.currentIntervalMinutes = interval;
     this.currentCronExpression = minutesToCron(interval);
+    this.isEnabled = enabled;
 
     const job = CronJob.from({
       cronTime: this.currentCronExpression,
       onTick: () => this.handleScheduledSync(),
-      start: true,
+      start: enabled,
     });
 
     this.schedulerRegistry.addCronJob(MOODLE_SYNC_JOB_NAME, job);
     this.logger.log(
-      `Sync scheduler initialized: every ${interval}min (${this.currentCronExpression})`,
+      `Sync scheduler initialized: every ${interval}min (${this.currentCronExpression}), enabled=${enabled}`,
     );
   }
 
@@ -56,7 +60,7 @@ export class MoodleSyncScheduler implements OnModuleInit {
     const job = CronJob.from({
       cronTime: cronExpression,
       onTick: () => this.handleScheduledSync(),
-      start: true,
+      start: this.isEnabled,
     });
 
     this.schedulerRegistry.addCronJob(MOODLE_SYNC_JOB_NAME, job);
@@ -89,6 +93,7 @@ export class MoodleSyncScheduler implements OnModuleInit {
     intervalMinutes: number;
     cronExpression: string;
     nextExecution: string | null;
+    enabled: boolean;
   } {
     const job = this.schedulerRegistry.getCronJob(MOODLE_SYNC_JOB_NAME);
     const nextDate = job.nextDate();
@@ -96,8 +101,39 @@ export class MoodleSyncScheduler implements OnModuleInit {
     return {
       intervalMinutes: this.currentIntervalMinutes,
       cronExpression: this.currentCronExpression,
-      nextExecution: nextDate?.toISO() ?? null,
+      nextExecution: this.isEnabled ? (nextDate?.toISO() ?? null) : null,
+      enabled: this.isEnabled,
     };
+  }
+
+  async setEnabled(enabled: boolean): Promise<void> {
+    const job = this.schedulerRegistry.getCronJob(MOODLE_SYNC_JOB_NAME);
+
+    if (enabled && !this.isEnabled) {
+      job.start();
+      this.logger.log('Sync cron job enabled');
+    } else if (!enabled && this.isEnabled) {
+      await job.stop();
+      this.logger.log('Sync cron job disabled');
+    }
+
+    const fork = this.em.fork();
+    const config = await fork.findOne(SystemConfig, {
+      key: MOODLE_SYNC_ENABLED_CONFIG_KEY,
+    });
+
+    if (config) {
+      config.value = String(enabled);
+    } else {
+      const newConfig = new SystemConfig();
+      newConfig.key = MOODLE_SYNC_ENABLED_CONFIG_KEY;
+      newConfig.value = String(enabled);
+      newConfig.description = 'Whether the Moodle sync cron job is enabled';
+      fork.persist(newConfig);
+    }
+    await fork.flush();
+
+    this.isEnabled = enabled;
   }
 
   private async handleScheduledSync() {
@@ -163,5 +199,22 @@ export class MoodleSyncScheduler implements OnModuleInit {
       `Using default sync interval for ${env.NODE_ENV}: ${defaultInterval} minutes`,
     );
     return defaultInterval;
+  }
+
+  private async resolveEnabled(): Promise<boolean> {
+    try {
+      const fork = this.em.fork();
+      const config = await fork.findOne(SystemConfig, {
+        key: MOODLE_SYNC_ENABLED_CONFIG_KEY,
+      });
+      if (config?.value) {
+        return config.value === 'true';
+      }
+    } catch {
+      this.logger.warn(
+        'Could not read sync enabled state from database, defaulting to enabled',
+      );
+    }
+    return true;
   }
 }

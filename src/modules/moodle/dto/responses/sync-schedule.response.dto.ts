@@ -9,4 +9,7 @@ export class SyncScheduleResponseDto {
 
   @ApiPropertyOptional()
   nextExecution: string | null;
+
+  @ApiProperty({ description: 'Whether the sync cron job is enabled' })
+  enabled: boolean;
 }

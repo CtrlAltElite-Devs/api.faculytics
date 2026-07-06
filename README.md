@@ -12,6 +12,67 @@ Faculytics is an analytics platform designed to integrate seamlessly with Moodle
 - **Caching:** Redis via `@keyv/redis`
 - **Documentation:** [Swagger/OpenAPI](https://swagger.io/)
 
+## Architecture
+
+This API is the hub of the Faculytics system. It serves two frontends over REST, owns the
+PostgreSQL and Redis datastores, calls external APIs (Moodle, OpenAI), stores generated reports in
+Cloudflare R2, and dispatches asynchronous AI analysis to RunPod-hosted workers via BullMQ.
+
+```mermaid
+flowchart LR
+  APP["app.faculytics<br/>(Next.js · :3000)"] -->|REST| API
+  ADM["admin.faculytics<br/>(React/Vite · :4100)"] -->|REST| API
+
+  API["Faculytics API<br/>(NestJS · :5200)"]
+
+  API --> PG[("PostgreSQL<br/>+ pgvector")]
+  API --> REDIS[("Redis<br/>cache + BullMQ")]
+  API -->|REST| MOODLE["Moodle LMS"]
+  API -->|HTTPS| OPENAI["OpenAI"]
+  API -->|S3 API| R2[("Cloudflare R2")]
+
+  API -.->|BullMQ · HTTP| SENT["Sentiment worker"]
+  API -.->|BullMQ · HTTP| TOPIC["Topic-model worker"]
+  API -.->|BullMQ · HTTP| EMBED["Embeddings worker"]
+```
+
+### Connected Services
+
+Analysis workers get their own subsection below; this table covers datastores, external APIs, and
+inbound clients. Sibling repos live under the [`CtrlAltElite-Devs`](https://github.com/CtrlAltElite-Devs) org.
+
+| Service                                                                   | Type                           | Connection                                                                                    | Purpose                                                   |
+| ------------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| [app.faculytics](https://github.com/CtrlAltElite-Devs/app.faculytics)     | Frontend (Next.js SPA)         | REST over HTTP, allowed via `CORS_ORIGINS`                                                    | Student / faculty / dean UI                               |
+| [admin.faculytics](https://github.com/CtrlAltElite-Devs/admin.faculytics) | Admin console (React/Vite SPA) | REST over HTTP, allowed via `CORS_ORIGINS`                                                    | Questionnaire & system administration                     |
+| PostgreSQL                                                                | Datastore                      | MikroORM via `DATABASE_URL`; pgvector extension (Neon-managed)                                | Primary relational store (768-dim embeddings)             |
+| Redis                                                                     | Datastore / broker             | `REDIS_URL`, key prefix `faculytics:`                                                         | Caching + BullMQ job-queue backend                        |
+| Moodle LMS                                                                | External API                   | REST (`MOODLE_BASE_URL`, `MOODLE_MASTER_KEY`)                                                 | User / course / enrollment sync + token login             |
+| OpenAI                                                                    | External API                   | `OPENAI_API_KEY`                                                                              | ChatKit agents, recommendation generation, topic labeling |
+| Cloudflare R2                                                             | Object storage                 | S3-compatible (`CF_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`) | Generated report files, served via presigned URLs         |
+
+### Analysis Workers
+
+AI analysis is dispatched asynchronously: each type has its own BullMQ queue and processor that
+POSTs to an external, RunPod-hosted worker over HTTP, with responses validated by Zod. Domain
+errors return `status: "failed"` (no retry); infrastructure errors raise and BullMQ retries. Worker
+URLs are optional — the app boots without them, and `docker compose up` starts a Hono mock worker
+(port 3001) that returns fake results for offline dev.
+
+| Worker          | Repo                                                                                                      | BullMQ queue      | Env var                  | Purpose                                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Sentiment       | [sentiment.worker.temp.faculytics](https://github.com/CtrlAltElite-Devs/sentiment.worker.temp.faculytics) | `sentiment`       | `SENTIMENT_WORKER_URL`   | Comment sentiment classification (chunked by `SENTIMENT_CHUNK_SIZE`)                                            |
+| Topic model     | [topic.worker.faculytics](https://github.com/CtrlAltElite-Devs/topic.worker.faculytics) (Python/BERTopic) | `topic-model`     | `TOPIC_MODEL_WORKER_URL` | Topic modeling; DTO contract in `src/modules/analysis/dto/topic-model-worker.dto.ts` ⇄ worker's `src/models.py` |
+| Embeddings      | [embedding.worker.faculytics](https://github.com/CtrlAltElite-Devs/embedding.worker.faculytics)           | `embedding`       | `EMBEDDINGS_WORKER_URL`  | 768-dim submission embeddings                                                                                   |
+| Recommendations | In-process (OpenAI, not an external worker)                                                               | `recommendations` | `OPENAI_API_KEY`         | Structured recommendation generation                                                                            |
+
+[worker.smoketests.faculytics](https://github.com/CtrlAltElite-Devs/worker.smoketests.faculytics) is
+a sibling Python CLI that tests the workers directly and does **not** call this API (so it's not in
+the diagram). The full BullMQ queue inventory also includes `moodle-sync`, `analytics-refresh`,
+`audit`, `report-generation`, and `error-log`.
+
+> For the full multi-project system overview (all five repos), see the root [`../CLAUDE.md`](../CLAUDE.md).
+
 ## Prerequisites
 
 - **Node.js:** v22.x or later
